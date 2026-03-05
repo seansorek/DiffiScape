@@ -1,10 +1,36 @@
 Package: DiffiScape
-Title: An R package to build connectivity surface models by combining CircuitScape.jl and Enzyme.jl
-Version: 0.0.0.9000
+Title: Differentiable Landscape Connectivity Optimization via CircuitScape.jl
+    and Enzyme.jl
+Version: 0.1.0
 Authors@R: 
     person("Sean", "Sorek", , "sssorek1@gmail.com", role = c("aut", "cre"))
-Description: DiffiScape is an R package built to enable gradient-based optimization of connectivity surface models by combining the CircuitScape.jl and Enzyme.jl packages. This will allow users to efficiently optimize connectivity surfaces for various applications, such as landscape ecology and conservation planning.
+Description: Gradient-based and surrogate-based optimization of landscape
+    connectivity surfaces. Combines circuit-theory connectivity computation
+    (Omniscape.jl / Circuitscape.jl) with automatic differentiation
+    (Enzyme.jl) to fit Poisson Point Process models of animal movement.
+    Users supply environmental rasters and GPS locations; DiffiScape
+    estimates resistance parameters that best explain observed spatial
+    intensity. Supports negative binomial and GAM-based intensity models
+    via 'mgcv'.
 License: GPL (>= 3)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
+Imports:
+    terra,
+    mgcv,
+    numDeriv,
+    DiceKriging,
+    lhs,
+    Matrix,
+    tools,
+    stats,
+    graphics,
+    grDevices,
+    utils
+Suggests:
+    JuliaConnectoR,
+    ggplot2,
+    spdep,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
