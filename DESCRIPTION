@@ -1,11 +1,10 @@
 Package: DiffiScape
-Title: What the Package Does (One Line, Title Case)
+Title: An R package to build connectivity surface models by combining CircuitScape.jl and Enzyme.jl
 Version: 0.0.0.9000
 Authors@R: 
-    person("First", "Last", , "first.last@example.com", role = c("aut", "cre"))
-Description: What the package does (one paragraph).
-License: `use_mit_license()`, `use_gpl3_license()` or friends to pick a
-    license
+    person("Sean", "Sorek", , "sssorek1@gmail.com", role = c("aut", "cre"))
+Description: DiffiScape is an R package built to enable gradient-based optimization of connectivity surface models by combining the CircuitScape.jl and Enzyme.jl packages. This will allow users to efficiently optimize connectivity surfaces for various applications, such as landscape ecology and conservation planning.
+License: GPL (>= 3)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
