@@ -2,8 +2,16 @@
 # Parameterised resistance surfaces
 #
 # Model:
-#   log R(x) = r_0 + sum_k z_k * phi_k(x)
+#   log R(x) = r_0 + sum_k z_k * phi_k(x) 
 #   R(x)     = clamp( exp(log R(x)), R_min, R_max )
+#
+# TODO 1: Create S3 classes for resistance models.
+# TODO 2: Add compability with ML methods (IRL, CNNs, etc.). We have gradients, so we could theoretically optimize anything fairly quickly.
+# The whole point of this project is to go crazy with the resistance model since we have dConnectivity/d\theta from Enzyme.jl. 
+# So we can be way more complicated.
+# I'm beartrapping that Luveen is correct that IRL is the best way to do this.
+# Maybe using the expert based maps as initial points, then optimizing from there?
+# 
 # ============================================================================
 
 #' Create a resistance surface from parameters and basis functions

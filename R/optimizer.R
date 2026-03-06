@@ -175,6 +175,7 @@ evaluate_full_model <- function(resistance_params,
 
 # --------------- Outer-loop objective ---------------------------------------
 
+# Helper function for the outer-loop surrogate optimisation. Evaluates the full model for a given set of resistance parameters and returns the negative log-likelihood.
 #' @keywords internal
 .outer_objective <- function(theta,
                               basis_stack,
@@ -267,7 +268,7 @@ evaluate_full_model <- function(resistance_params,
     formula    = ~1,
     design     = X,
     response   = y,
-    covtype    = "matern5_2",
+    covtype    = "matern5_2", # TODO make the GP fully configurable
     control    = list(trace = FALSE),
     nugget.estim = TRUE,
     nugget     = 1
@@ -276,15 +277,17 @@ evaluate_full_model <- function(resistance_params,
 
 
 # --------------- Thompson Sampling -----------------------------------------
-
+# Perform Thompson Sampling acquisition by drawing a random sample from the surrogate model.
 #' @keywords internal
 .thompson_sampling <- function(x, model, min_sd = 1e-6) {
+  # TODO 1: try more advanced TS techniques
+  # TODO 2: add an option for Expected Improvement or other acquisition functions (random forests work well).
   if (is.vector(x)) x <- matrix(x, nrow = 1)
   colnames(x) <- colnames(model@X)
   pred <- stats::predict(model, newdata = x, type = "UK")
   mu   <- pred$mean
   sig  <- pmax(pred$sd, min_sd)
-  stats::rnorm(length(mu), mean = mu, sd = sig)
+  stats::rnorm(length(mu), mean = mu, sd = sig) 
 }
 
 
@@ -327,6 +330,8 @@ evaluate_full_model <- function(resistance_params,
 
 # --------------- Hessian-based dimension scaling ----------------------------
 
+# We use different scales for each parameter in the local search to account for different sensitivities. 
+# This function computes scaling factors based on the curvature of the surrogate model at the best point.
 #' @keywords internal
 .compute_dimension_scales <- function(surrogate, best_point, bounds,
                                        max_ratio = 5) {
@@ -394,7 +399,7 @@ optimize_resistance <- function(basis_stack,
                                 covariates_obs   = NULL,
                                 covariates_rasters = NULL,
                                 residualise      = FALSE) {
-
+ # TODO refactor this function to work with more flexible resistance models (e.g. non-linear, non-parametric, ML-based).
   set.seed(config$seed)
 
   n_basis <- terra::nlyr(basis_stack)
