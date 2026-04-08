@@ -2,16 +2,20 @@
 # Parameterised resistance surfaces
 #
 # Model:
-#   log R(x) = r_0 + sum_k z_k * phi_k(x) 
+#   log R(x) = r_0 + sum_k z_k * phi_k(x)
 #   R(x)     = clamp( exp(log R(x)), R_min, R_max )
 #
-# TODO 1: Create S3 classes for resistance models.
-# TODO 2: Add compability with ML methods (IRL, CNNs, etc.). We have gradients, so we could theoretically optimize anything fairly quickly.
-# The whole point of this project is to go crazy with the resistance model since we have dConnectivity/d\theta from Enzyme.jl. 
-# So we can be way more complicated.
-# I'm beartrapping that Luveen is correct that IRL is the best way to do this.
-# Maybe using the expert based maps as initial points, then optimizing from there?
-# 
+# S3 class hierarchy
+#   resistance_model              (base)
+#     resistance_model_parametric (log-linear, existing model)
+#     resistance_model_custom     (user-supplied function; supports ML methods
+#                                  such as IRL, CNNs, GAMs, etc.)
+#
+# The "custom" pathway gives full freedom to use any model that maps a
+# basis SpatRaster to a single-layer resistance SpatRaster.  Because
+# dConnectivity/d\theta is available from Enzyme.jl, gradient-based
+# optimisation works for any differentiable custom model.  Expert-based
+# maps make natural starting points before gradient descent.
 # ============================================================================
 
 #' Create a resistance surface from parameters and basis functions
@@ -206,4 +210,219 @@ resistance_sensitivity <- function(params, basis_stack, delta = 0.1) {
     )
   })
   do.call(rbind, rows)
+}
+
+
+# ============================================================================
+# S3 class: resistance_model
+# ============================================================================
+
+#' Create a resistance model object
+#'
+#' Constructs an S3 object that encapsulates a resistance model together with
+#' its basis stack and clamping bounds.  Two model types are supported:
+#'
+#' * `"parametric"` — the log-linear model
+#'   \eqn{\log R(x) = r_0 + \sum_k z_k \phi_k(x)}{log R(x) = r0 + sum z_k * phi_k(x)}
+#'   (the same model implemented by [create_resistance_surface()]).
+#' * `"custom"` — any user-supplied function
+#'   `f(basis_stack, ...)` that returns a single-layer [terra::SpatRaster].
+#'   This pathway is designed for machine-learning approaches such as
+#'   Inverse Reinforcement Learning (IRL) or convolutional neural networks
+#'   (CNNs): because \eqn{d\mathrm{Connectivity}/d\theta} is available via
+#'   Enzyme.jl, gradient-based optimisation works for any differentiable
+#'   custom model.  Expert-based maps make natural starting points before
+#'   gradient descent.
+#'
+#' @param params
+#'   * **parametric**: named numeric vector or list with elements
+#'     `r_0, z_1, ..., z_K` (see [create_resistance_surface()]).
+#'   * **custom**: a function `f(basis_stack, ...)` returning a
+#'     single-layer [terra::SpatRaster] of resistance values.
+#' @param basis_stack A [terra::SpatRaster] with *K* layers.
+#' @param type `"parametric"` (default) or `"custom"`.
+#' @param R_min,R_max Hard clamping bounds applied after exponentiation in
+#'   the parametric pathway (default 1 / 5000).  Ignored for custom models
+#'   unless the function applies them internally.
+#' @param ... Additional metadata stored on the object (e.g. `name`,
+#'   `description`, or a reference to an external ML model object).
+#' @return An S3 object with classes
+#'   `c("resistance_model_<type>", "resistance_model")`.
+#' @seealso [predict.resistance_model_parametric()],
+#'   [predict.resistance_model_custom()],
+#'   [create_resistance_surface()]
+#' @export
+#' @examples
+#' \dontrun{
+#'   ## Parametric model
+#'   r1 <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+#'                     ymin = 0, ymax = 1)
+#'   terra::values(r1) <- runif(25)
+#'   basis <- create_basis_stack(list(a = r1), rescale = FALSE)
+#'
+#'   m <- resistance_model(c(r_0 = 1, z_1 = 0.5), basis)
+#'   print(m)
+#'   R <- predict(m)
+#'
+#'   ## Custom / ML model (e.g. IRL or CNN wrapper)
+#'   ml_fn <- function(basis_stack, ...) {
+#'     # any model that returns a SpatRaster of resistance values
+#'     terra::app(basis_stack[[1]], function(x) exp(x))
+#'   }
+#'   m_ml <- resistance_model(ml_fn, basis, type = "custom",
+#'                            name = "IRL model v1")
+#'   R_ml <- predict(m_ml)
+#' }
+resistance_model <- function(params,
+                              basis_stack,
+                              type  = c("parametric", "custom"),
+                              R_min = 1,
+                              R_max = 5000,
+                              ...) {
+
+  type <- match.arg(type)
+  validate_basis_stack(basis_stack)
+
+  if (type == "parametric") {
+    n_basis <- terra::nlyr(basis_stack)
+    params  <- .params_to_vector(params, n_basis)   # normalise to numeric vector
+  } else {
+    if (!is.function(params)) {
+      stop(
+        "For type = 'custom', `params` must be a function ",
+        "with signature f(basis_stack, ...) returning a SpatRaster.",
+        call. = FALSE
+      )
+    }
+  }
+
+  structure(
+    list(
+      params      = params,
+      basis_stack = basis_stack,
+      type        = type,
+      R_min       = R_min,
+      R_max       = R_max,
+      extra       = list(...)
+    ),
+    class = c(paste0("resistance_model_", type), "resistance_model")
+  )
+}
+
+
+#' Print a resistance_model object
+#'
+#' @param x A [resistance_model] object.
+#' @param ... Ignored.
+#' @return `x` invisibly.
+#' @export
+print.resistance_model <- function(x, ...) {
+  n_basis <- terra::nlyr(x$basis_stack)
+  cat(sprintf("<resistance_model>  [%s]\n", x$type))
+  cat(sprintf("  Basis layers : %d  (%s)\n",
+              n_basis, paste(names(x$basis_stack), collapse = ", ")))
+  cat(sprintf("  Clamping     : [%.4g, %.4g]\n", x$R_min, x$R_max))
+  if (x$type == "parametric") {
+    nms <- c("r_0", paste0("z_", seq_len(n_basis)))
+    cat("  Parameters   :\n")
+    for (i in seq_along(nms)) {
+      cat(sprintf("    %-8s = %+.4f\n", nms[i], x$params[i]))
+    }
+  } else {
+    cat("  Function     :", deparse(x$params)[1], "\n")
+    if (length(x$extra) > 0) {
+      cat("  Extra fields :", paste(names(x$extra), collapse = ", "), "\n")
+    }
+  }
+  invisible(x)
+}
+
+
+#' Summarise a resistance_model object
+#'
+#' Prints the model and, for parametric models, a numerical sensitivity
+#' analysis (see [resistance_sensitivity()]).
+#'
+#' @param object A [resistance_model] object.
+#' @param ... Ignored.
+#' @return `object` invisibly.
+#' @export
+summary.resistance_model <- function(object, ...) {
+  print(object)
+  if (object$type == "parametric") {
+    cat("\nSensitivity (delta = 0.1):\n")
+    sens <- resistance_sensitivity(object$params, object$basis_stack)
+    print(sens, row.names = FALSE, digits = 4)
+  }
+  invisible(object)
+}
+
+
+#' Compute a resistance surface from a parametric resistance model
+#'
+#' Calls [create_resistance_surface()] with the parameters and basis stack
+#' stored in `object`.
+#'
+#' @param object A `resistance_model_parametric` object (see
+#'   [resistance_model()]).
+#' @param basis_stack Optional replacement [terra::SpatRaster].  Supply
+#'   this to predict onto a different spatial extent or resolution.
+#'   Defaults to the basis stack stored inside `object`.
+#' @param return_log Logical; if `TRUE`, return the log-resistance surface
+#'   instead of the exponentiated, clamped surface.
+#' @param ... Ignored.
+#' @return A single-layer [terra::SpatRaster] named `"resistance"` or
+#'   `"log_resistance"`.
+#' @export
+predict.resistance_model_parametric <- function(object,
+                                                 basis_stack = NULL,
+                                                 return_log  = FALSE,
+                                                 ...) {
+  bs <- if (is.null(basis_stack)) {
+    object$basis_stack
+  } else {
+    validate_basis_stack(basis_stack)
+    basis_stack
+  }
+  create_resistance_surface(
+    params      = object$params,
+    basis_stack = bs,
+    R_min       = object$R_min,
+    R_max       = object$R_max,
+    return_log  = return_log
+  )
+}
+
+
+#' Compute a resistance surface from a custom resistance model
+#'
+#' Calls the user-supplied function stored in `object$params`, enabling
+#' arbitrary model forms including machine-learning methods such as
+#' Inverse Reinforcement Learning (IRL) and convolutional neural networks
+#' (CNNs).
+#'
+#' @param object A `resistance_model_custom` object (see [resistance_model()]).
+#' @param basis_stack Optional replacement [terra::SpatRaster].
+#'   Defaults to the basis stack stored inside `object`.
+#' @param ... Additional arguments forwarded to the custom function.
+#' @return A single-layer [terra::SpatRaster] of resistance values as
+#'   returned by the custom function.
+#' @export
+predict.resistance_model_custom <- function(object,
+                                             basis_stack = NULL,
+                                             ...) {
+  bs <- if (is.null(basis_stack)) {
+    object$basis_stack
+  } else {
+    validate_basis_stack(basis_stack)
+    basis_stack
+  }
+  result <- object$params(bs, ...)
+  if (!inherits(result, "SpatRaster") || terra::nlyr(result) != 1L) {
+    stop(
+      "Custom resistance function must return a single-layer SpatRaster.",
+      call. = FALSE
+    )
+  }
+  result
 }

@@ -82,3 +82,151 @@ test_that("resistance_sensitivity returns a data.frame", {
   expect_true("parameter" %in% names(sens))
   expect_true("mean_pct_change" %in% names(sens))
 })
+
+
+# ============================================================================
+# S3 class: resistance_model
+# ============================================================================
+
+.make_basis <- function(n = 25, rescale = FALSE) {
+  r1 <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                    ymin = 0, ymax = 1)
+  terra::values(r1) <- runif(n)
+  create_basis_stack(list(a = r1), rescale = rescale)
+}
+
+
+test_that("resistance_model() constructs a parametric model correctly", {
+  basis <- .make_basis()
+  m <- resistance_model(c(r_0 = 1, z_1 = 0.5), basis)
+
+  expect_s3_class(m, "resistance_model")
+  expect_s3_class(m, "resistance_model_parametric")
+  expect_equal(m$type, "parametric")
+  expect_equal(m$R_min, 1)
+  expect_equal(m$R_max, 5000)
+  expect_equal(m$params, c(1, 0.5))   # normalised to numeric vector
+})
+
+
+test_that("resistance_model() stores extra metadata via ...", {
+  basis <- .make_basis()
+  m <- resistance_model(c(r_0 = 0, z_1 = 0), basis,
+                        name = "test model", version = 2L)
+  expect_equal(m$extra$name, "test model")
+  expect_equal(m$extra$version, 2L)
+})
+
+
+test_that("resistance_model() constructs a custom model correctly", {
+  basis <- .make_basis()
+  fn <- function(bs, ...) terra::app(bs[[1]], exp)
+  m <- resistance_model(fn, basis, type = "custom")
+
+  expect_s3_class(m, "resistance_model")
+  expect_s3_class(m, "resistance_model_custom")
+  expect_equal(m$type, "custom")
+  expect_true(is.function(m$params))
+})
+
+
+test_that("resistance_model() errors informatively for bad custom params", {
+  basis <- .make_basis()
+  expect_error(resistance_model("not_a_function", basis, type = "custom"),
+               "must be a function")
+})
+
+
+test_that("print.resistance_model() runs without error", {
+  basis <- .make_basis()
+  m <- resistance_model(c(r_0 = 1, z_1 = 0.5), basis)
+  expect_output(print(m), "resistance_model")
+  expect_output(print(m), "parametric")
+  expect_output(print(m), "r_0")
+})
+
+
+test_that("summary.resistance_model() runs without error", {
+  basis <- .make_basis()
+  m <- resistance_model(c(r_0 = 1, z_1 = 0.5), basis)
+  expect_output(summary(m), "Sensitivity")
+})
+
+
+test_that("predict() on parametric model matches create_resistance_surface()", {
+  basis <- .make_basis()
+  params <- c(r_0 = 1, z_1 = 0.5)
+  m <- resistance_model(params, basis)
+
+  R_obj  <- predict(m)
+  R_func <- create_resistance_surface(params, basis)
+
+  expect_s4_class(R_obj, "SpatRaster")
+  expect_equal(terra::values(R_obj), terra::values(R_func), tolerance = 1e-10)
+})
+
+
+test_that("predict() on parametric model accepts return_log = TRUE", {
+  basis <- .make_basis()
+  m <- resistance_model(c(r_0 = 1, z_1 = 0), basis)
+  logR <- predict(m, return_log = TRUE)
+
+  expect_s4_class(logR, "SpatRaster")
+  expect_equal(names(logR), "log_resistance")
+})
+
+
+test_that("predict() on parametric model accepts a replacement basis_stack", {
+  r1 <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                    ymin = 0, ymax = 1)
+  terra::values(r1) <- runif(25)
+  basis_a <- create_basis_stack(list(a = r1), rescale = FALSE)
+
+  r2 <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                    ymin = 0, ymax = 1)
+  terra::values(r2) <- runif(25)
+  basis_b <- create_basis_stack(list(a = r2), rescale = FALSE)
+
+  m <- resistance_model(c(r_0 = 1, z_1 = 0.5), basis_a)
+  R_a <- predict(m)
+  R_b <- predict(m, basis_stack = basis_b)
+
+  expect_false(isTRUE(all.equal(terra::values(R_a), terra::values(R_b))))
+})
+
+
+test_that("predict() on custom model calls the user function", {
+  basis <- .make_basis()
+  called <- FALSE
+  fn <- function(bs, ...) {
+    called <<- TRUE
+    terra::app(bs[[1]], exp)
+  }
+  m <- resistance_model(fn, basis, type = "custom")
+  R <- predict(m)
+
+  expect_true(called)
+  expect_s4_class(R, "SpatRaster")
+  expect_equal(terra::nlyr(R), 1L)
+})
+
+
+test_that("predict() on custom model errors if function returns wrong output", {
+  basis <- .make_basis()
+  fn_bad <- function(bs, ...) terra::values(bs[[1]])   # returns matrix, not SpatRaster
+  m <- resistance_model(fn_bad, basis, type = "custom")
+  expect_error(predict(m), "single-layer SpatRaster")
+})
+
+
+test_that("predict() on custom model accepts extra arguments via ...", {
+  basis <- .make_basis()
+  fn <- function(bs, scale = 1, ...) terra::app(bs[[1]], function(x) exp(x * scale))
+  m <- resistance_model(fn, basis, type = "custom")
+
+  R1 <- predict(m, scale = 1)
+  R2 <- predict(m, scale = 2)
+
+  expect_false(isTRUE(all.equal(terra::values(R1), terra::values(R2))))
+})
+
