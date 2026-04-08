@@ -1,6 +1,6 @@
 # ============================================================================
 # Posterior inference
-#
+# Doing full Bayesian inference through graphical laplacians is a whole can of worms.
 # Laplace approximation for resistance params, Monte Carlo composition
 # for joint posterior, GP emulator validation (LOO-CV).
 # ============================================================================

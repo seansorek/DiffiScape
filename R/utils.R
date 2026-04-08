@@ -75,7 +75,7 @@ extract_raster_values <- function(raster, points) {
 
 
 #' Compute AIC and BIC
-#'
+#' 
 #' @param loglik Log-likelihood value.
 #' @param k Number of estimated parameters.
 #' @param n Number of observations.

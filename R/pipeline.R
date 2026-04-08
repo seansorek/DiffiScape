@@ -7,6 +7,7 @@
 #   ds_posterior   ->  ds_diagnose
 # ============================================================================
 
+# TODO Refactor these functions to use S3 methods, especially for predict and summary functions.
 
 # --------------- Modular step functions -------------------------------------
 
