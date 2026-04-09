@@ -27,7 +27,8 @@ laplace_resistance <- function(opt_result,
                                refit = FALSE,
                                step  = 1e-3) {
 
-  best_vec <- .params_to_vector(opt_result$best_params)
+  n_basis  <- length(opt_result$bounds) - 1L
+  best_vec <- .params_to_vector(opt_result$best_params, n_basis)
   p        <- length(best_vec)
 
   if (!refit && !is.null(opt_result$surrogate)) {
