@@ -475,7 +475,7 @@ plot_profile <- function(profile, level = 0.95, ...) {
     profile$values, deviance,
     type = "l", lwd = 2, col = "steelblue",
     xlab = profile$param,
-    ylab = "Deviance  (2 * [max LL - profile LL])",
+    ylab = "Deviance (2 * [max LL - profile LL])",
     main = paste("Profile likelihood:", profile$param),
     ...
   )
