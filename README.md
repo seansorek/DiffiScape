@@ -1,10 +1,10 @@
 # DiffiScape
 
-**Differentiable Landscape Connectivity Optimization via CircuitScape.jl and Enzyme.jl**
+**Landscape Connectivity Optimization via Circuitscape.jl — a modular R framework for resistance and intensity model experimentation**
 
-DiffiScape is an R package for gradient-based and surrogate-based optimization of landscape connectivity surfaces. It combines circuit-theory connectivity computation ([Omniscape.jl](https://github.com/circuitscape/Omniscape.jl) / [Circuitscape.jl](https://github.com/circuitscape/Circuitscape.jl)) with automatic differentiation ([Enzyme.jl](https://github.com/EnzymeAD/Enzyme.jl)) to fit **Poisson Point Process (PPP) models** of animal movement.
+DiffiScape is an R package designed as a flexible glue layer for experimenting with different resistance and intensity models in landscape connectivity research. It bridges circuit-theory connectivity computation ([Omniscape.jl](https://github.com/circuitscape/Omniscape.jl) / [Circuitscape.jl](https://github.com/circuitscape/Circuitscape.jl)) with a suite of swappable intensity models to fit **Poisson Point Process (PPP) models** of animal movement. Gradient-based optimization via [Enzyme.jl](https://github.com/EnzymeAD/Enzyme.jl) is planned for a future release.
 
-Users supply environmental rasters and GPS locations; DiffiScape estimates resistance parameters that best explain the observed spatial intensity of animal occurrences. Both negative binomial and GAM-based intensity models are supported via [`mgcv`](https://cran.r-project.org/package=mgcv).
+Users supply environmental rasters and GPS locations; DiffiScape estimates resistance parameters that best explain the observed spatial intensity of animal occurrences. Both negative binomial and Poisson intensity models are supported via [`mgcv`](https://cran.r-project.org/package=mgcv).
 
 ---
 
@@ -50,36 +50,15 @@ result$posterior$summary          # Posterior summary table
 
 ---
 
-## The Statistical Model
+## Design Philosophy
 
-### Resistance Surface
+DiffiScape is built around easy **experimentation** with different resistance and intensity model combinations. Rather than committing to a single modelling approach, the package provides a clear interface so you can:
 
-Resistance is parameterised as a log-linear combination of spatial basis functions:
+- **Swap resistance models** — supply any parameterised or data-driven function that maps environmental covariates to a resistance raster. Built-in helpers make it easy to get started with linear or log-linear formulations, and the architecture is open to ML-based or expert-driven alternatives.
+- **Swap intensity models** — choose between parametric (negative binomial, Poisson) and nonparametric (GAM) count models for the inner-loop likelihood, or plug in your own.
+- **Swap connectivity engines** — use Omniscape cumulative current flow, Circuitscape pairwise resistances, or any other raster-valued connectivity surface.
 
-$$\log R(x) = r_0 + \sum_{k=1}^{K} z_k \, \phi_k(x)$$
-
-$$R(x) = \text{clamp}\bigl(\exp(\log R(x)),\; R_{\min},\; R_{\max}\bigr)$$
-
-where $\phi_k(x)$ are environmental rasters (e.g. land cover, elevation, NDVI) and $z_k$ are the coefficients to be estimated.
-
-### Intensity Model
-
-Given a connectivity surface $C(x)$ (cumulative current flow from Omniscape), the spatial intensity of animal observations is modelled as:
-
-$$\log \lambda(x) = \alpha + \gamma \cdot z(x) + \sum_j \beta_j \cdot \text{cov}_j(x)$$
-
-where $z(x)$ is a standardised log-transformation of $C(x)$, and the integral of $\lambda$ is approximated by quadrature for the PPP log-likelihood.
-
-### Optimizer
-
-Resistance parameters are estimated through a two-stage Bayesian optimization loop:
-
-1. **Phase 1 — Latin Hypercube Sampling**: evaluates `n_init` (default 20) design points spread across the parameter space.
-2. **Phase 2 — GP Surrogate + Thompson Sampling**: fits a Gaussian process (Matérn 5/2 kernel via `DiceKriging`) to the evaluated points and uses Thompson Sampling acquisition with adaptive local search for `n_iter` (default 50) further evaluations.
-
-At each outer evaluation, the intensity parameters ($\alpha$, $\gamma$, $\beta_j$, size) are fitted by MLE (inner loop).
-
-> **Note:** The Enzyme.jl automatic differentiation pathway (`optimize_resistance_enzyme()`) is planned but not yet implemented. The current default is the surrogate-based optimizer.
+The surrogate optimizer (Latin Hypercube Sampling → GP + Thompson Sampling) coordinates the outer search over resistance parameters while calling whichever intensity model you choose at each evaluation. A gradient-based pathway via Enzyme.jl is planned to allow arbitrarily complex, differentiable resistance models.
 
 ---
 
@@ -110,14 +89,16 @@ basis <- ds_create_basis("env_rasters/")
 # Start Julia
 ds_init_julia()
 
-# Optimize resistance parameters
-opt <- ds_optimize(basis, pts)
+# Optimize resistance parameters (swap intensity model via config)
+cfg <- default_optimizer_config()
+cfg$distribution <- "negbin"   # or "gam" / "poisson"
+opt <- ds_optimize(basis, pts, config = cfg)
 
-# Fit final model
+# Fit final model at optimized parameters
 fit <- ds_fit_intensity(opt, basis, pts)
 
 # Predict intensity surface
-connectivity <- run_omniscape(create_resistance_surface(opt$best_params, basis))$cum_current
+connectivity  <- run_omniscape(create_resistance_surface(opt$best_params, basis))$cum_current
 intensity_map <- ds_predict(fit, connectivity)
 
 # Posterior inference
@@ -155,7 +136,7 @@ diag <- ds_diagnose(fit, pts, connectivity)
 | Function | Description |
 |----------|-------------|
 | `fit_intensity_nb()` | Negative binomial PPP MLE |
-| `fit_intensity_gam()` | GAM-based intensity via `mgcv::bam()` |
+| `fit_intensity_gam()` | Poisson / GAM intensity via `mgcv::bam()` |
 | `predict_intensity()` | Generate predicted intensity raster |
 | `compute_information_criteria()` | AIC / BIC for model comparison |
 
