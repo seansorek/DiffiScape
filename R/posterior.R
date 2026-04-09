@@ -3,6 +3,7 @@
 # Doing full Bayesian inference through graphical laplacians is a whole can of worms.
 # Laplace approximation for resistance params, Monte Carlo composition
 # for joint posterior, GP emulator validation (LOO-CV).
+# Profile likelihood CIs for resistance params via Wilks' theorem.
 # ============================================================================
 
 # --------------- Laplace approximation for resistance params ----------------
@@ -259,6 +260,255 @@ loo_cv_surrogate <- function(opt_result) {
     r_squared   = r2,
     coverage_95 = coverage
   )
+}
+
+
+# --------------- Profile likelihood for resistance params --------------------
+
+#' Compute profile log-likelihood for one resistance parameter
+#'
+#' For a grid of values of a single resistance parameter, optimises the
+#' remaining parameters via the GP surrogate to obtain the profile
+#' log-likelihood.  The surrogate predicts minus the log-likelihood
+#' returned by the inner-loop MLE, so the profile is obtained by
+#' minimising the surrogate prediction over the nuisance parameters at
+#' each fixed value of the parameter of interest.
+#'
+#' @param opt_result Result from [optimize_resistance()].
+#' @param param Character; name of the parameter to profile (e.g.
+#'   `"r_0"` or `"z_1"`).
+#' @param n_points Integer; number of grid points along the parameter
+#'   axis (default 50).
+#' @param range_mult Numeric; how many profile-likelihood standard
+#'   errors (from the Laplace approximation) to extend the grid
+#'   beyond the MLE in each direction (default 3).
+#' @param grid Optional numeric vector of values at which to evaluate
+#'   the profile.  When supplied, \code{n_points} and
+#'   \code{range_mult} are ignored.
+#' @return A list with components
+#'   \describe{
+#'     \item{param}{Name of the profiled parameter.}
+#'     \item{values}{Numeric vector of parameter values evaluated.}
+#'     \item{profile_loglik}{Profile log-likelihood at each value.}
+#'     \item{max_loglik}{Maximum log-likelihood (at the MLE).}
+#'     \item{mle}{MLE of the profiled parameter.}
+#'   }
+#' @export
+profile_loglik <- function(opt_result,
+                           param,
+                           n_points   = 50L,
+                           range_mult = 3,
+                           grid       = NULL) {
+
+  surrogate <- opt_result$surrogate
+  if (is.null(surrogate)) {
+    stop("No GP surrogate found in opt_result", call. = FALSE)
+  }
+
+  pnames <- names(opt_result$bounds)
+  if (!param %in% pnames) {
+    stop("Parameter '", param, "' not found in bounds (available: ",
+         paste(pnames, collapse = ", "), ")", call. = FALSE)
+  }
+
+  n_basis  <- length(pnames) - 1L
+  best_vec <- .params_to_vector(opt_result$best_params, n_basis)
+  pidx     <- match(param, pnames)
+  mle_val  <- best_vec[pidx]
+
+  # Build the grid --------------------------------------------------------
+  if (is.null(grid)) {
+    # Determine a reasonable range from the Laplace approximation
+    lap <- laplace_resistance(opt_result)
+    se  <- lap$std_error[pidx]
+    if (is.na(se) || se <= 0) se <- 0.1 * abs(mle_val) + 0.01
+
+    lo <- max(opt_result$bounds[[param]][1], mle_val - range_mult * se)
+    hi <- min(opt_result$bounds[[param]][2], mle_val + range_mult * se)
+    grid <- seq(lo, hi, length.out = n_points)
+  }
+
+  # Profile: for each grid value, optimise nuisance params ----------------
+  other_idx <- setdiff(seq_along(pnames), pidx)
+  lower_all <- vapply(opt_result$bounds, `[`, numeric(1), 1)
+  upper_all <- vapply(opt_result$bounds, `[`, numeric(1), 2)
+
+  surrogate_fn <- function(theta_full) {
+    x <- matrix(theta_full, nrow = 1)
+    colnames(x) <- pnames
+    stats::predict(surrogate, newdata = x, type = "UK")$mean
+  }
+
+  prof_ll <- numeric(length(grid))
+
+  for (g in seq_along(grid)) {
+    if (length(other_idx) == 0) {
+      # Only one parameter — no nuisance to optimise
+      theta_full <- best_vec
+      theta_full[pidx] <- grid[g]
+      prof_ll[g] <- -surrogate_fn(theta_full)
+    } else {
+      # Fix the profiled parameter, optimise the rest
+      obj_fn <- function(theta_other) {
+        theta_full <- numeric(length(pnames))
+        theta_full[pidx]      <- grid[g]
+        theta_full[other_idx] <- theta_other
+        surrogate_fn(theta_full)
+      }
+
+      start <- best_vec[other_idx]
+      lo_b  <- lower_all[other_idx]
+      hi_b  <- upper_all[other_idx]
+
+      opt <- tryCatch(
+        stats::optim(
+          par    = start,
+          fn     = obj_fn,
+          method = if (length(other_idx) > 1) "L-BFGS-B" else "Brent",
+          lower  = lo_b,
+          upper  = hi_b
+        ),
+        error = function(e) {
+          list(value = surrogate_fn(best_vec))
+        }
+      )
+
+      prof_ll[g] <- -opt$value
+    }
+  }
+
+  max_ll <- -min(opt_result$y_evaluated)
+
+  list(
+    param          = param,
+    values         = grid,
+    profile_loglik = prof_ll,
+    max_loglik     = max_ll,
+    mle            = mle_val
+  )
+}
+
+
+#' Profile likelihood confidence intervals via Wilks' theorem
+#'
+#' Computes profile-likelihood-based confidence intervals for each
+#' resistance parameter.
+#' By Wilks' theorem, \eqn{2[\ell(\hat\theta) - \ell_P(\theta_i)]}
+#' is asymptotically \eqn{\chi^2(1)}, so the \eqn{(1 - \alpha)} CI
+#' is the set of values where the deviance is below
+#' \code{qchisq(1 - alpha, 1)}.
+#'
+#' @param opt_result Result from [optimize_resistance()].
+#' @param level Confidence level (default 0.95).
+#' @param n_points Grid resolution per parameter (default 50).
+#' @param range_mult Multiplier on the Laplace SE for grid range
+#'   (default 3).
+#' @return A data.frame with one row per parameter and columns
+#'   \code{parameter}, \code{mle}, \code{lower}, \code{upper},
+#'   \code{level}.  An attribute \code{"profiles"} contains the
+#'   full profile-likelihood objects (one per parameter) for further
+#'   inspection.
+#' @export
+profile_ci <- function(opt_result,
+                       level    = 0.95,
+                       n_points = 50L,
+                       range_mult = 3) {
+
+  pnames  <- names(opt_result$bounds)
+  cutoff  <- stats::qchisq(level, df = 1)
+
+  profiles <- stats::setNames(
+    lapply(pnames, function(p) {
+      profile_loglik(opt_result, p,
+                     n_points   = n_points,
+                     range_mult = range_mult)
+    }),
+    pnames
+  )
+
+  rows <- lapply(pnames, function(p) {
+    pr <- profiles[[p]]
+    deviance <- 2 * (pr$max_loglik - pr$profile_loglik)
+    in_ci    <- which(deviance <= cutoff)
+
+    if (length(in_ci) == 0) {
+      lo <- NA_real_; hi <- NA_real_
+    } else {
+      lo <- min(pr$values[in_ci])
+      hi <- max(pr$values[in_ci])
+    }
+
+    data.frame(
+      parameter = p,
+      mle       = pr$mle,
+      lower     = lo,
+      upper     = hi,
+      level     = level,
+      stringsAsFactors = FALSE
+    )
+  })
+
+  out <- do.call(rbind, rows)
+  rownames(out) <- NULL
+  attr(out, "profiles") <- profiles
+  out
+}
+
+
+#' Plot profile log-likelihood for a resistance parameter
+#'
+#' Draws the profile log-likelihood curve together with the
+#' chi-squared cutoff line that defines the confidence interval.
+#'
+#' @param profile Result from [profile_loglik()] for a single
+#'   parameter.
+#' @param level Confidence level for the cutoff line (default 0.95).
+#' @param ... Extra arguments passed to [graphics::plot()].
+#' @return Invisible `NULL`; a plot is produced as a side-effect.
+#' @export
+plot_profile <- function(profile, level = 0.95, ...) {
+
+  deviance <- 2 * (profile$max_loglik - profile$profile_loglik)
+  cutoff   <- stats::qchisq(level, df = 1)
+
+  graphics::plot(
+    profile$values, deviance,
+    type = "l", lwd = 2, col = "steelblue",
+    xlab = profile$param,
+    ylab = "Deviance  (2 * [max LL - profile LL])",
+    main = paste("Profile likelihood:", profile$param),
+    ...
+  )
+  graphics::abline(h = cutoff, lty = 2, col = "red", lwd = 1.5)
+  graphics::abline(v = profile$mle, lty = 3, col = "grey40")
+
+  # Shade the CI region
+  in_ci <- which(deviance <= cutoff)
+  if (length(in_ci) >= 2) {
+    ci_lo <- min(profile$values[in_ci])
+    ci_hi <- max(profile$values[in_ci])
+    graphics::rect(
+      ci_lo, graphics::par("usr")[3],
+      ci_hi, cutoff,
+      col = grDevices::adjustcolor("steelblue", alpha.f = 0.15),
+      border = NA
+    )
+  }
+
+  graphics::legend(
+    "topright",
+    legend = c(
+      "Profile deviance",
+      sprintf("%g%% cutoff (%.3f)", level * 100, cutoff),
+      "MLE"
+    ),
+    col  = c("steelblue", "red", "grey40"),
+    lty  = c(1, 2, 3),
+    lwd  = c(2, 1.5, 1),
+    bg   = "white"
+  )
+
+  invisible(NULL)
 }
 
 

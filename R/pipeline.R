@@ -298,6 +298,45 @@ ds_diagnose <- function(intensity_fit,
 }
 
 
+#' Profile likelihood inference for resistance parameters
+#'
+#' Wrapper around [profile_ci()] and [profile_loglik()] that returns
+#' confidence intervals and the full profile objects for all resistance
+#' parameters.
+#'
+#' @param opt_result Result from [ds_optimize()].
+#' @param level Confidence level (default 0.95).
+#' @param n_points Grid resolution per parameter (default 50).
+#' @param range_mult Multiplier on the Laplace SE for grid range
+#'   (default 3).
+#' @param plot Logical; produce profile-likelihood plots (default
+#'   `TRUE`).
+#' @return A list with `ci` (data.frame of confidence intervals) and
+#'   `profiles` (named list of profile-likelihood objects).
+#' @export
+ds_profile <- function(opt_result,
+                       level      = 0.95,
+                       n_points   = 50L,
+                       range_mult = 3,
+                       plot       = TRUE) {
+
+  ci <- profile_ci(opt_result,
+                    level      = level,
+                    n_points   = n_points,
+                    range_mult = range_mult)
+
+  profiles <- attr(ci, "profiles")
+
+  if (plot) {
+    for (p in names(profiles)) {
+      plot_profile(profiles[[p]], level = level)
+    }
+  }
+
+  list(ci = ci, profiles = profiles)
+}
+
+
 # --------------- One-call wrapper -------------------------------------------
 
 #' Run the full DiffiScape pipeline
