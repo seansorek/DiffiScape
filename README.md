@@ -2,9 +2,9 @@
 
 **Landscape Connectivity Optimization via Circuitscape.jl — a modular R framework for resistance and intensity model experimentation**
 
-DiffiScape is an R package designed as a flexible glue layer for experimenting with different resistance and intensity models in landscape connectivity research. It bridges circuit-theory connectivity computation ([Omniscape.jl](https://github.com/circuitscape/Omniscape.jl) / [Circuitscape.jl](https://github.com/circuitscape/Circuitscape.jl)) with a suite of swappable intensity models to fit **Poisson Point Process (PPP) models** of animal movement. Gradient-based optimization via [Enzyme.jl](https://github.com/EnzymeAD/Enzyme.jl) is planned for a future release.
+DiffiScape is an R package designed as a flexible glue layer for fitting landscape resistance surfaces against animal movement data. It bridges circuit-theory connectivity computation ([Omniscape.jl](https://github.com/circuitscape/Omniscape.jl) / [Circuitscape.jl](https://github.com/circuitscape/Circuitscape.jl)) with a suite of swappable likelihood models, making it easy to experiment with different resistance and intensity model combinations. Point process likelihoods are currently implemented, with the architecture designed to accommodate other movement data likelihoods in the future. Gradient-based optimization via [Enzyme.jl](https://github.com/EnzymeAD/Enzyme.jl) is planned for a future release.
 
-Users supply environmental rasters and GPS locations; DiffiScape estimates resistance parameters that best explain the observed spatial intensity of animal occurrences. Both negative binomial and Poisson intensity models are supported via [`mgcv`](https://cran.r-project.org/package=mgcv).
+Users supply environmental rasters and GPS locations; DiffiScape estimates resistance parameters that best explain the observed spatial distribution of animal occurrences. Negative binomial and Poisson likelihoods are currently supported, with more likelihood types planned.
 
 ---
 
