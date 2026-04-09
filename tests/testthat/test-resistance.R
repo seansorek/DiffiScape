@@ -101,11 +101,13 @@ test_that("resistance_model() constructs a parametric model correctly", {
   m <- resistance_model(c(r_0 = 1, z_1 = 0.5), basis)
 
   expect_s3_class(m, "resistance_model")
-  expect_s3_class(m, "resistance_model_parametric")
+  # Unified class -- no subtype class
+  expect_false(inherits(m, "resistance_model_parametric"))
   expect_equal(m$type, "parametric")
   expect_equal(m$R_min, 1)
   expect_equal(m$R_max, 5000)
   expect_equal(m$params, c(1, 0.5))   # normalised to numeric vector
+  expect_true(is.function(m$fn))       # fn field present for consistent interface
 })
 
 
@@ -124,9 +126,11 @@ test_that("resistance_model() constructs a custom model correctly", {
   m <- resistance_model(fn, basis, type = "custom")
 
   expect_s3_class(m, "resistance_model")
-  expect_s3_class(m, "resistance_model_custom")
+  # Unified class -- no subtype class
+  expect_false(inherits(m, "resistance_model_custom"))
   expect_equal(m$type, "custom")
-  expect_true(is.function(m$params))
+  expect_true(is.function(m$fn))
+  expect_null(m$params)   # no numeric params for custom type
 })
 
 
@@ -195,6 +199,26 @@ test_that("predict() on parametric model accepts a replacement basis_stack", {
 })
 
 
+test_that("parametric and custom models are interchangeable via predict()", {
+  basis <- .make_basis()
+  params <- c(r_0 = 1, z_1 = 0.5)
+
+  m_param  <- resistance_model(params, basis, R_min = 1, R_max = 5000)
+
+  # Wrap the parametric formula as a custom function -- should give same result
+  fn <- function(bs, ...) {
+    create_resistance_surface(params, bs, R_min = 1, R_max = 5000)
+  }
+  m_custom <- resistance_model(fn, basis, type = "custom")
+
+  R_param  <- predict(m_param)
+  R_custom <- predict(m_custom)
+
+  # Same values via the same predict() interface
+  expect_equal(terra::values(R_param), terra::values(R_custom), tolerance = 1e-10)
+})
+
+
 test_that("predict() on custom model calls the user function", {
   basis <- .make_basis()
   called <- FALSE
@@ -211,7 +235,7 @@ test_that("predict() on custom model calls the user function", {
 })
 
 
-test_that("predict() on custom model errors if function returns wrong output", {
+test_that("predict() errors if function returns wrong output", {
   basis <- .make_basis()
   fn_bad <- function(bs, ...) terra::values(bs[[1]])   # returns matrix, not SpatRaster
   m <- resistance_model(fn_bad, basis, type = "custom")

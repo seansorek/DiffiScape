@@ -215,63 +215,71 @@ resistance_sensitivity <- function(params, basis_stack, delta = 0.1) {
 
 # ============================================================================
 # S3 class: resistance_model
+#
+# Both "parametric" and "custom" models store a callable `fn` field that maps
+# a basis SpatRaster to a single-layer resistance SpatRaster.  This makes the
+# two types fully interchangeable: the same predict() / print() / summary()
+# methods work for both without any type-specific dispatch.
 # ============================================================================
 
 #' Create a resistance model object
 #'
-#' Constructs an S3 object that encapsulates a resistance model together with
-#' its basis stack and clamping bounds.  Two model types are supported:
+#' Constructs an S3 object of class \code{resistance_model} that encapsulates a
+#' resistance model together with its basis stack and clamping bounds.
+#' Both model types share a consistent interface and can be used
+#' interchangeably with [predict()], [print()], and [summary()].
 #'
-#' * `"parametric"` — the log-linear model
+#' Two model types are supported:
+#' * \code{"parametric"} — the log-linear model
 #'   \eqn{\log R(x) = r_0 + \sum_k z_k \phi_k(x)}{log R(x) = r0 + sum z_k * phi_k(x)}
 #'   (the same model implemented by [create_resistance_surface()]).
-#' * `"custom"` — any user-supplied function
-#'   `f(basis_stack, ...)` that returns a single-layer [terra::SpatRaster].
-#'   This pathway is designed for machine-learning approaches such as
-#'   Inverse Reinforcement Learning (IRL) or convolutional neural networks
-#'   (CNNs): because \eqn{d\mathrm{Connectivity}/d\theta} is available via
-#'   Enzyme.jl, gradient-based optimisation works for any differentiable
-#'   custom model.  Expert-based maps make natural starting points before
-#'   gradient descent.
+#'   Parameters are stored in \code{object$params}; the model is also wrapped
+#'   as a callable function in \code{object$fn} for consistent interchange.
+#' * \code{"custom"} — any user-supplied function
+#'   \code{f(basis_stack, ...)} that returns a single-layer [terra::SpatRaster].
+#'   This pathway supports machine-learning approaches such as Inverse
+#'   Reinforcement Learning (IRL) or convolutional neural networks (CNNs):
+#'   because \eqn{d\mathrm{Connectivity}/d\theta}{dConnectivity/d-theta} is
+#'   available via Enzyme.jl, gradient-based optimisation works for any
+#'   differentiable custom model.  Expert-based maps make natural starting
+#'   points before gradient descent.
 #'
 #' @param params
-#'   * **parametric**: named numeric vector or list with elements
-#'     `r_0, z_1, ..., z_K` (see [create_resistance_surface()]).
-#'   * **custom**: a function `f(basis_stack, ...)` returning a
+#'   * \strong{parametric}: named numeric vector or list with elements
+#'     \code{r_0, z_1, ..., z_K} (see [create_resistance_surface()]).
+#'   * \strong{custom}: a function \code{f(basis_stack, ...)} returning a
 #'     single-layer [terra::SpatRaster] of resistance values.
-#' @param basis_stack A [terra::SpatRaster] with *K* layers.
-#' @param type `"parametric"` (default) or `"custom"`.
+#' @param basis_stack A [terra::SpatRaster] with \emph{K} layers.
+#' @param type \code{"parametric"} (default) or \code{"custom"}.
 #' @param R_min,R_max Hard clamping bounds applied after exponentiation in
 #'   the parametric pathway (default 1 / 5000).  Ignored for custom models
 #'   unless the function applies them internally.
-#' @param ... Additional metadata stored on the object (e.g. `name`,
-#'   `description`, or a reference to an external ML model object).
-#' @return An S3 object with classes
-#'   `c("resistance_model_<type>", "resistance_model")`.
-#' @seealso [predict.resistance_model_parametric()],
-#'   [predict.resistance_model_custom()],
-#'   [create_resistance_surface()]
+#' @param ... Additional metadata stored on the object (e.g. \code{name},
+#'   \code{description}, or a reference to an external ML model object).
+#' @return An S3 object of class \code{"resistance_model"}.  Both parametric
+#'   and custom objects support the same \code{predict()}, \code{print()},
+#'   and \code{summary()} methods, making them interchangeable.
+#' @seealso [create_resistance_surface()], [resistance_sensitivity()]
 #' @export
 #' @examples
 #' \dontrun{
-#'   ## Parametric model
 #'   r1 <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
 #'                     ymin = 0, ymax = 1)
 #'   terra::values(r1) <- runif(25)
 #'   basis <- create_basis_stack(list(a = r1), rescale = FALSE)
 #'
+#'   ## Parametric model
 #'   m <- resistance_model(c(r_0 = 1, z_1 = 0.5), basis)
 #'   print(m)
 #'   R <- predict(m)
 #'
-#'   ## Custom / ML model (e.g. IRL or CNN wrapper)
+#'   ## Custom / ML model (e.g. IRL or CNN wrapper) -- same interface
 #'   ml_fn <- function(basis_stack, ...) {
-#'     # any model that returns a SpatRaster of resistance values
 #'     terra::app(basis_stack[[1]], function(x) exp(x))
 #'   }
 #'   m_ml <- resistance_model(ml_fn, basis, type = "custom",
 #'                            name = "IRL model v1")
-#'   R_ml <- predict(m_ml)
+#'   R_ml <- predict(m_ml)   # identical call to the parametric case
 #' }
 resistance_model <- function(params,
                               basis_stack,
@@ -285,7 +293,17 @@ resistance_model <- function(params,
 
   if (type == "parametric") {
     n_basis <- terra::nlyr(basis_stack)
-    params  <- .params_to_vector(params, n_basis)   # normalise to numeric vector
+    theta   <- .params_to_vector(params, n_basis)   # normalise to numeric vector
+    # Wrap as a function for a consistent interface with custom models.
+    # Both types are then interchangeable: predict() calls object$fn().
+    fn <- local({
+      th <- theta; rmin <- R_min; rmax <- R_max
+      function(bs, return_log = FALSE, ...) {
+        create_resistance_surface(th, bs, R_min = rmin, R_max = rmax,
+                                  return_log = return_log)
+      }
+    })
+    params_stored <- theta
   } else {
     if (!is.function(params)) {
       stop(
@@ -294,27 +312,30 @@ resistance_model <- function(params,
         call. = FALSE
       )
     }
+    fn            <- params
+    params_stored <- NULL
   }
 
   structure(
     list(
-      params      = params,
+      fn          = fn,
+      params      = params_stored,
       basis_stack = basis_stack,
       type        = type,
       R_min       = R_min,
       R_max       = R_max,
       extra       = list(...)
     ),
-    class = c(paste0("resistance_model_", type), "resistance_model")
+    class = "resistance_model"
   )
 }
 
 
 #' Print a resistance_model object
 #'
-#' @param x A [resistance_model] object.
+#' @param x A [resistance_model()] object.
 #' @param ... Ignored.
-#' @return `x` invisibly.
+#' @return \code{x} invisibly.
 #' @export
 print.resistance_model <- function(x, ...) {
   n_basis <- terra::nlyr(x$basis_stack)
@@ -329,7 +350,7 @@ print.resistance_model <- function(x, ...) {
       cat(sprintf("    %-8s = %+.4f\n", nms[i], x$params[i]))
     }
   } else {
-    cat("  Function     :", deparse(x$params)[1], "\n")
+    cat("  Function     :", deparse(x$fn)[1], "\n")
     if (length(x$extra) > 0) {
       cat("  Extra fields :", paste(names(x$extra), collapse = ", "), "\n")
     }
@@ -343,9 +364,9 @@ print.resistance_model <- function(x, ...) {
 #' Prints the model and, for parametric models, a numerical sensitivity
 #' analysis (see [resistance_sensitivity()]).
 #'
-#' @param object A [resistance_model] object.
+#' @param object A [resistance_model()] object.
 #' @param ... Ignored.
-#' @return `object` invisibly.
+#' @return \code{object} invisibly.
 #' @export
 summary.resistance_model <- function(object, ...) {
   print(object)
@@ -358,69 +379,32 @@ summary.resistance_model <- function(object, ...) {
 }
 
 
-#' Compute a resistance surface from a parametric resistance model
+#' Compute a resistance surface from a resistance model
 #'
-#' Calls [create_resistance_surface()] with the parameters and basis stack
-#' stored in `object`.
+#' Calls \code{object$fn(basis_stack, ...)} and validates the result.
+#' Both parametric and custom [resistance_model()] objects respond to this
+#' method identically, making them interchangeable in any workflow.
 #'
-#' @param object A `resistance_model_parametric` object (see
-#'   [resistance_model()]).
+#' @param object A [resistance_model()] object (parametric or custom).
 #' @param basis_stack Optional replacement [terra::SpatRaster].  Supply
 #'   this to predict onto a different spatial extent or resolution.
-#'   Defaults to the basis stack stored inside `object`.
-#' @param return_log Logical; if `TRUE`, return the log-resistance surface
-#'   instead of the exponentiated, clamped surface.
-#' @param ... Ignored.
-#' @return A single-layer [terra::SpatRaster] named `"resistance"` or
-#'   `"log_resistance"`.
+#'   Defaults to the basis stack stored inside \code{object}.
+#' @param ... Additional arguments forwarded to the underlying model
+#'   function (e.g. \code{return_log = TRUE} for parametric models,
+#'   or any argument expected by a custom function).
+#' @return A single-layer [terra::SpatRaster] of resistance values.
 #' @export
-predict.resistance_model_parametric <- function(object,
-                                                 basis_stack = NULL,
-                                                 return_log  = FALSE,
-                                                 ...) {
+predict.resistance_model <- function(object, basis_stack = NULL, ...) {
   bs <- if (is.null(basis_stack)) {
     object$basis_stack
   } else {
     validate_basis_stack(basis_stack)
     basis_stack
   }
-  create_resistance_surface(
-    params      = object$params,
-    basis_stack = bs,
-    R_min       = object$R_min,
-    R_max       = object$R_max,
-    return_log  = return_log
-  )
-}
-
-
-#' Compute a resistance surface from a custom resistance model
-#'
-#' Calls the user-supplied function stored in `object$params`, enabling
-#' arbitrary model forms including machine-learning methods such as
-#' Inverse Reinforcement Learning (IRL) and convolutional neural networks
-#' (CNNs).
-#'
-#' @param object A `resistance_model_custom` object (see [resistance_model()]).
-#' @param basis_stack Optional replacement [terra::SpatRaster].
-#'   Defaults to the basis stack stored inside `object`.
-#' @param ... Additional arguments forwarded to the custom function.
-#' @return A single-layer [terra::SpatRaster] of resistance values as
-#'   returned by the custom function.
-#' @export
-predict.resistance_model_custom <- function(object,
-                                             basis_stack = NULL,
-                                             ...) {
-  bs <- if (is.null(basis_stack)) {
-    object$basis_stack
-  } else {
-    validate_basis_stack(basis_stack)
-    basis_stack
-  }
-  result <- object$params(bs, ...)
+  result <- object$fn(bs, ...)
   if (!inherits(result, "SpatRaster") || terra::nlyr(result) != 1L) {
     stop(
-      "Custom resistance function must return a single-layer SpatRaster.",
+      "Resistance function must return a single-layer SpatRaster.",
       call. = FALSE
     )
   }
