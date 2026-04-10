@@ -37,6 +37,10 @@ default_optimizer_config <- function() {
 
     # Likelihood model for inner loop
     distribution = "negbin",   # "negbin" or "gam"
+    family       = NULL,       # intensity_family object (overrides distribution)
+
+    # Resistance link
+    resistance_link = NULL,    # resistance_link object (NULL -> link_exp())
 
     # Omniscape / connectivity
     omniscape = list(radius = 13L, block_size = 5L, cleanup = TRUE)
@@ -87,6 +91,8 @@ optimize_resistance_enzyme <- function(basis_stack,
   if (file.exists(log_file)) unlink(log_file)
 
   distribution <- config$distribution %||% "negbin"
+  res_link     <- config$resistance_link %||% link_exp()
+  int_family   <- config$family  # may be NULL (uses default for distribution)
   nrow_grid    <- terra::nrow(basis_stack)
   ncol_grid    <- terra::ncol(basis_stack)
   basis_values <- terra::values(basis_stack)
@@ -106,7 +112,7 @@ optimize_resistance_enzyme <- function(basis_stack,
 
     tryCatch({
       # Resistance
-      R_vec <- quick_resistance(theta, basis_values)
+      R_vec <- quick_resistance(theta, basis_values, link = res_link)
       R_mat <- matrix(R_vec, nrow = nrow_grid, ncol = ncol_grid,
                       byrow = TRUE)
       R_mat[is.na(R_mat)] <- 0
@@ -143,7 +149,7 @@ optimize_resistance_enzyme <- function(basis_stack,
         stop("Unknown distribution: ", distribution, call. = FALSE)
       )
 
-      int_fit <- fit_fn(
+      int_args <- list(
         connectivity_at_obs  = conn_obs_v,
         connectivity_raster  = cum_rast,
         obs_coords           = obs_pts_v,
@@ -152,6 +158,9 @@ optimize_resistance_enzyme <- function(basis_stack,
         residualise          = residualise,
         config               = intensity_config
       )
+      if (distribution != "gam" && !is.null(int_family))
+        int_args$family <- int_family
+      int_fit <- do.call(fit_fn, int_args)
 
       neg_ll <- -int_fit$loglik
       if (!is.finite(neg_ll)) neg_ll <- 1e10
@@ -256,6 +265,9 @@ optimize_resistance_enzyme <- function(basis_stack,
 #' @param covariates_rasters Named list of [terra::SpatRaster] covariates.
 #' @param residualise Logical.
 #' @param verbose Logical.
+#' @param link A [resistance_link] object (default [link_exp()]).
+#' @param family An [intensity_family] object, or `NULL` to use the
+#'   default for the chosen `distribution`.
 #' @return A list with `loglik`, `intensity_params`, `intensity_se`,
 #'   `hessian`, `total_time`, `convergence`, `distribution`.
 #' @export
@@ -268,13 +280,16 @@ evaluate_full_model <- function(resistance_params,
                                 covariates_obs    = NULL,
                                 covariates_rasters = NULL,
                                 residualise       = FALSE,
-                                verbose           = TRUE) {
+                                verbose           = TRUE,
+                                link              = link_exp(),
+                                family            = NULL) {
 
   t0 <- Sys.time()
 
   # Step 1: resistance surface
   if (verbose) message("  Creating resistance surface...")
-  resistance <- create_resistance_surface(resistance_params, basis_stack)
+  resistance <- create_resistance_surface(resistance_params, basis_stack,
+                                          link = link)
 
   # Step 2: connectivity
   if (verbose) message("  Running Omniscape...")
@@ -312,7 +327,7 @@ evaluate_full_model <- function(resistance_params,
   )
 
   if (verbose) message(sprintf("  Fitting intensity (%s)...", distribution))
-  int_fit <- fit_fn(
+  int_args <- list(
     connectivity_at_obs  = conn_obs,
     connectivity_raster  = connectivity,
     obs_coords           = obs_points,
@@ -321,6 +336,9 @@ evaluate_full_model <- function(resistance_params,
     residualise          = residualise,
     config               = intensity_config
   )
+  if (distribution != "gam" && !is.null(family))
+    int_args$family <- family
+  int_fit <- do.call(fit_fn, int_args)
 
   elapsed <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
 
@@ -351,7 +369,9 @@ evaluate_full_model <- function(resistance_params,
                               intensity_config,
                               covariates_obs,
                               covariates_rasters,
-                              residualise) {
+                              residualise,
+                              link = link_exp(),
+                              family = NULL) {
 
   n_basis <- terra::nlyr(basis_stack)
   eval_counter$n <- eval_counter$n + 1L
@@ -375,7 +395,9 @@ evaluate_full_model <- function(resistance_params,
       covariates_obs     = covariates_obs,
       covariates_rasters = covariates_rasters,
       residualise        = residualise,
-      verbose            = TRUE
+      verbose            = TRUE,
+      link               = link,
+      family             = family
     ),
     error = function(e) {
       message("  ERROR: ", conditionMessage(e))
@@ -566,7 +588,7 @@ optimize_resistance <- function(basis_stack,
  # TODO refactor this function to work with more flexible resistance models (e.g. non-linear, non-parametric, ML-based).
   set.seed(config$seed)
 
-  n_basis <- terra::nlyr(basis_stack)
+  n_basis  <- terra::nlyr(basis_stack)
   if (is.null(bounds)) bounds <- get_default_bounds(n_basis)
 
   if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
@@ -580,6 +602,8 @@ optimize_resistance <- function(basis_stack,
   y_eval <- numeric()
 
   distribution <- config$distribution
+  res_link     <- config$resistance_link %||% link_exp()
+  int_family   <- config$family  # may be NULL (uses default for distribution)
 
   # ======= Phase 1: LHS ====================================================
   message("\n", strrep("=", 60))
@@ -594,7 +618,8 @@ optimize_resistance <- function(basis_stack,
     y <- .outer_objective(
       theta, basis_stack, obs_points, config$omniscape,
       eval_counter, log_file, distribution, intensity_config,
-      covariates_obs, covariates_rasters, residualise
+      covariates_obs, covariates_rasters, residualise,
+      link = res_link, family = int_family
     )
     X_eval <- rbind(X_eval, init_design[i, ])
     y_eval <- c(y_eval, y)
@@ -656,7 +681,8 @@ optimize_resistance <- function(basis_stack,
     y <- .outer_objective(
       theta, basis_stack, obs_points, config$omniscape,
       eval_counter, log_file, distribution, intensity_config,
-      covariates_obs, covariates_rasters, residualise
+      covariates_obs, covariates_rasters, residualise,
+      link = res_link, family = int_family
     )
 
     X_eval <- rbind(X_eval, next_pt)

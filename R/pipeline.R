@@ -182,6 +182,8 @@ ds_optimize <- function(basis_stack,
 #' @param residualise Logical.
 #' @param solver Character; `"surrogate"` (Omniscape) or
 #'   `"enzyme"` (differentiable solver).
+#' @param link A [resistance_link] object (default [link_exp()]).
+#' @param family An [intensity_family] object, or `NULL`.
 #' @return Result from [evaluate_full_model()].
 #' @export
 ds_fit_intensity <- function(opt_result,
@@ -192,13 +194,16 @@ ds_fit_intensity <- function(opt_result,
                               covariates_obs     = NULL,
                               covariates_rasters = NULL,
                               residualise        = FALSE,
-                              solver             = c("surrogate", "enzyme")) {
+                              solver             = c("surrogate", "enzyme"),
+                              link               = link_exp(),
+                              family             = NULL) {
 
   solver <- match.arg(solver)
 
   if (solver == "enzyme") {
     # Use the fast in-memory solver
-    resistance <- create_resistance_surface(opt_result$best_params, basis_stack)
+    resistance <- create_resistance_surface(opt_result$best_params, basis_stack,
+                                            link = link)
     omni <- run_cumulative_current(
       resistance,
       radius     = omniscape_settings$radius     %||% 13L,
@@ -212,7 +217,7 @@ ds_fit_intensity <- function(opt_result,
     fit_fn <- switch(distribution,
       negbin = fit_intensity_nb, gam = fit_intensity_gam)
 
-    int_fit <- fit_fn(
+    int_args <- list(
       connectivity_at_obs = conn_obs[valid],
       connectivity_raster = connectivity,
       obs_coords          = obs_points[valid, , drop = FALSE],
@@ -222,6 +227,9 @@ ds_fit_intensity <- function(opt_result,
       residualise         = residualise,
       config              = intensity_config
     )
+    if (distribution != "gam" && !is.null(family))
+      int_args$family <- family
+    int_fit <- do.call(fit_fn, int_args)
 
     return(list(
       loglik           = int_fit$loglik,
@@ -243,7 +251,9 @@ ds_fit_intensity <- function(opt_result,
     intensity_config   = intensity_config,
     covariates_obs     = covariates_obs,
     covariates_rasters = covariates_rasters,
-    residualise        = residualise
+    residualise        = residualise,
+    link               = link,
+    family             = family
   )
 }
 
@@ -286,6 +296,8 @@ ds_predict <- function(intensity_fit,
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param residualise Logical.
+#' @param link A [resistance_link] object (default [link_exp()]).
+#' @param family An [intensity_family] object, or `NULL`.
 #' @return A list with `laplace`, `samples`, `summary`.
 #' @export
 ds_posterior <- function(opt_result,
@@ -297,7 +309,9 @@ ds_posterior <- function(opt_result,
                          intensity_config   = default_intensity_config(),
                          covariates_obs     = NULL,
                          covariates_rasters = NULL,
-                         residualise        = FALSE) {
+                         residualise        = FALSE,
+                         link               = link_exp(),
+                         family             = NULL) {
 
   # Auto-detect: use direct Hessian when no GP surrogate is available
   use_refit <- is.null(opt_result$surrogate)
@@ -310,7 +324,9 @@ ds_posterior <- function(opt_result,
     intensity_config  = intensity_config,
     covariates_obs    = covariates_obs,
     covariates_rasters = covariates_rasters,
-    residualise       = residualise
+    residualise       = residualise,
+    link              = link,
+    family            = family
   )
 
   samp <- posterior_sample(
@@ -325,7 +341,9 @@ ds_posterior <- function(opt_result,
     intensity_config   = intensity_config,
     covariates_obs     = covariates_obs,
     covariates_rasters = covariates_rasters,
-    residualise        = residualise
+    residualise        = residualise,
+    link               = link,
+    family             = family
   )
 
   summ <- posterior_summary(samp)
@@ -343,6 +361,7 @@ ds_posterior <- function(opt_result,
 #' @param connectivity A [terra::SpatRaster].
 #' @param intensity_config Intensity config.
 #' @param covariates_rasters Named list of covariate rasters.
+#' @param family An [intensity_family] object, or `NULL`.
 #' @param plot Logical; produce diagnostic plots.
 #' @return Result from [diagnose_model()].
 #' @export
@@ -351,6 +370,7 @@ ds_diagnose <- function(intensity_fit,
                         connectivity,
                         intensity_config   = default_intensity_config(),
                         covariates_rasters = NULL,
+                        family             = NULL,
                         plot               = TRUE) {
 
   diagnose_model(
@@ -359,6 +379,7 @@ ds_diagnose <- function(intensity_fit,
     connectivity       = connectivity,
     intensity_config   = intensity_config,
     covariates_rasters = covariates_rasters,
+    family             = family,
     plot               = plot
   )
 }
@@ -411,6 +432,10 @@ diffiscape <- function(obs_data,
 
   solver <- match.arg(solver)
 
+  # Extract link and family from configs
+  res_link   <- optimizer_config$resistance_link %||% link_exp()
+  int_family <- optimizer_config$family %||% intensity_config$family
+
   t0 <- Sys.time()
   if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
 
@@ -461,7 +486,9 @@ diffiscape <- function(obs_data,
     covariates_obs     = covariates_obs,
     covariates_rasters = covariates_rasters,
     residualise        = residualise,
-    solver             = solver
+    solver             = solver,
+    link               = res_link,
+    family             = int_family
   )
 
   # --- Step 6: Posterior ---
@@ -476,7 +503,9 @@ diffiscape <- function(obs_data,
       intensity_config   = intensity_config,
       covariates_obs     = covariates_obs,
       covariates_rasters = covariates_rasters,
-      residualise        = residualise
+      residualise        = residualise,
+      link               = res_link,
+      family             = int_family
     )
   } else {
     message("\n[6/7] Posterior inference... SKIPPED")
@@ -484,7 +513,8 @@ diffiscape <- function(obs_data,
 
   # --- Step 7: Diagnostics ---
   message("\n[7/7] Diagnostics...")
-  final_resistance  <- create_resistance_surface(opt_result$best_params, basis_stack)
+  final_resistance  <- create_resistance_surface(opt_result$best_params,
+                                                   basis_stack, link = res_link)
   if (solver == "enzyme") {
     final_omni <- run_cumulative_current(final_resistance)
   } else {
@@ -498,6 +528,7 @@ diffiscape <- function(obs_data,
     connectivity       = final_connectivity,
     intensity_config   = intensity_config,
     covariates_rasters = covariates_rasters,
+    family             = int_family,
     plot               = plot
   )
 

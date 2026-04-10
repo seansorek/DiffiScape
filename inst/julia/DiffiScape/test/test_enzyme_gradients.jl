@@ -111,6 +111,76 @@ using Test
         @test all(grad .== 0.0)
     end
 
+    # ====================== resistance_gradient_generic =======================
+
+    @testset "resistance_gradient_generic matches resistance_gradient (exp link)" begin
+        cfg = SolverConfig(R_min=0.1, R_max=1000.0)
+        params = [1.0, 0.5, -0.3]
+        basis_values = [0.1 0.2; 0.3 0.4; 0.5 0.6; 0.7 0.8]
+
+        n_cells = 4
+        R_flat = zeros(n_cells)
+        for i in 1:n_cells
+            log_r = params[1] + params[2] * basis_values[i, 1] + params[3] * basis_values[i, 2]
+            R_flat[i] = clamp(exp(log_r), cfg.R_min, cfg.R_max)
+        end
+
+        dR_flat = [1.0, 2.0, 3.0, 4.0]
+
+        grad_old = resistance_gradient(params, basis_values, dR_flat, R_flat, cfg)
+
+        # Build dR_deta the same way the old code did internally
+        dR_deta = zeros(n_cells)
+        for i in 1:n_cells
+            ri = R_flat[i]
+            if ri > cfg.R_min && ri < cfg.R_max
+                dR_deta[i] = ri
+            end
+        end
+
+        grad_new = resistance_gradient_generic(basis_values, dR_flat, dR_deta)
+        @test grad_new ≈ grad_old atol=1e-10
+    end
+
+    @testset "resistance_gradient_generic with identity link (dR/deta = 1)" begin
+        basis_values = reshape([0.2, 0.5, 0.8], 3, 1)
+        dR_flat = [1.0, 2.0, 3.0]
+        dR_deta = [1.0, 1.0, 1.0]  # identity link: dR/deta = 1
+
+        grad = resistance_gradient_generic(basis_values, dR_flat, dR_deta)
+        @test length(grad) == 2
+        @test grad[1] ≈ sum(dR_flat) atol=1e-10
+        @test grad[2] ≈ sum(dR_flat .* basis_values[:, 1]) atol=1e-10
+    end
+
+    @testset "resistance_gradient_generic with zero dR_deta at clamped cells" begin
+        basis_values = reshape([0.1, 0.3, 0.5], 3, 1)
+        dR_flat = [1.0, 2.0, 3.0]
+        dR_deta = [0.0, 5.0, 0.0]  # only middle cell unclamped
+
+        grad = resistance_gradient_generic(basis_values, dR_flat, dR_deta)
+        @test grad[1] ≈ 2.0 * 5.0 atol=1e-10
+        @test grad[2] ≈ 2.0 * 5.0 * 0.3 atol=1e-10
+    end
+
+    # ====================== enzyme_gradient_generic (skip if Enzyme unavailable)
+
+    @testset "enzyme_gradient_generic smoke test" begin
+        if !enzyme_available()
+            @info "Skipping enzyme_gradient_generic tests — Enzyme.jl not available"
+        else
+            cfg = SolverConfig(radius=2, block_size=1, cg_tol=1e-8)
+            R_flat = fill(5.0, 25)
+            dR_deta = fill(5.0, 25)  # exp link: dR/deta = R
+            basis_values = reshape(Float64[], 25, 0)
+
+            grad = enzyme_gradient_generic(R_flat, dR_deta, basis_values,
+                                            5, 5, cfg)
+            @test length(grad) == 1
+            @test isfinite(grad[1])
+        end
+    end
+
     # ====================== enzyme_gradient (skip if Enzyme unavailable) ====
 
     @testset "enzyme_gradient smoke test" begin

@@ -27,6 +27,8 @@
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param residualise Logical.
+#' @param link A [resistance_link] object (default [link_exp()]).
+#' @param family An [intensity_family] object, or `NULL`.
 #' @return A list with `mode`, `covariance`, `precision`, `std_error`.
 #' @export
 laplace_resistance <- function(opt_result,
@@ -37,7 +39,9 @@ laplace_resistance <- function(opt_result,
                                intensity_config  = default_intensity_config(),
                                covariates_obs    = NULL,
                                covariates_rasters = NULL,
-                               residualise       = FALSE) {
+                               residualise       = FALSE,
+                               link              = link_exp(),
+                               family            = NULL) {
 
   best_vec <- .params_to_vector(opt_result$best_params)
   p        <- length(best_vec)
@@ -70,7 +74,7 @@ laplace_resistance <- function(opt_result,
     solver_block  <- 5L
 
     refit_fn <- function(theta) {
-      R_vec <- quick_resistance(theta, basis_vals)
+      R_vec <- quick_resistance(theta, basis_vals, link = link)
       R_mat <- matrix(R_vec, nrow = nrow_grid, ncol = ncol_grid,
                       byrow = TRUE)
       R_mat[is.na(R_mat)] <- 0
@@ -88,7 +92,7 @@ laplace_resistance <- function(opt_result,
       fit_fn <- switch(distribution,
         negbin = fit_intensity_nb, gam = fit_intensity_gam)
 
-      int_fit <- fit_fn(
+      int_args <- list(
         connectivity_at_obs = conn_obs[valid],
         connectivity_raster = cum_rast,
         obs_coords          = obs_points[valid, , drop = FALSE],
@@ -98,6 +102,9 @@ laplace_resistance <- function(opt_result,
         residualise         = residualise,
         config              = intensity_config
       )
+      if (distribution != "gam" && !is.null(family))
+        int_args$family <- family
+      int_fit <- do.call(fit_fn, int_args)
 
       neg_ll <- -int_fit$loglik
       if (!is.finite(neg_ll)) 1e10 else neg_ll
@@ -156,6 +163,8 @@ laplace_resistance <- function(opt_result,
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param residualise Logical.
+#' @param link A [resistance_link] object (default [link_exp()]).
+#' @param family An [intensity_family] object, or `NULL`.
 #' @param seed Random seed.
 #' @return A data.frame with posterior samples (one row per draw).
 #' @export
@@ -171,6 +180,8 @@ posterior_sample <- function(laplace,
                              covariates_obs     = NULL,
                              covariates_rasters = NULL,
                              residualise        = FALSE,
+                             link               = link_exp(),
+                             family             = NULL,
                              seed               = 42L) {
 
   set.seed(seed)
@@ -214,7 +225,9 @@ posterior_sample <- function(laplace,
         covariates_obs     = covariates_obs,
         covariates_rasters = covariates_rasters,
         residualise        = residualise,
-        verbose            = FALSE
+        verbose            = FALSE,
+        link               = link,
+        family             = family
       ),
       error = function(e) {
         message("  ERROR in posterior draw: ", conditionMessage(e))

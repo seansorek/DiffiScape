@@ -28,6 +28,9 @@ default_intensity_config <- function() {
     min_connectivity     = 0,
     c_scale              = NULL,   # NULL --> median(C_obs)
 
+    # Intensity family (NULL -> infer from distribution for backward compat)
+    family               = NULL,
+
     # GAM knots
     k_connectivity = 10L,
     k_covariate    = 8L,
@@ -228,6 +231,8 @@ compute_intensity <- function(z, alpha, gamma,
 #' @param residualise Logical; residualise connectivity against
 #'   covariates before fitting (default `FALSE`).
 #' @param config List from [default_intensity_config()].
+#' @param family An [intensity_family] object.  If `NULL` (default),
+#'   uses [family_negbin()] for backward compatibility.
 #' @return A list with `estimates`, `se`, `loglik`, `convergence`,
 #'   `c_scale`, `log_conn_mean`, `log_conn_sd`,
 #'   `residualisation_info`.
@@ -238,7 +243,10 @@ fit_intensity_nb <- function(connectivity_at_obs,
                              covariates_obs     = NULL,
                              covariates_rasters = NULL,
                              residualise        = FALSE,
-                             config             = default_intensity_config()) {
+                             config             = default_intensity_config(),
+                             family             = NULL) {
+
+  family <- resolve_family(family %||% config$family, "negbin")
 
   # ---- extract integration grid -------------------------------------------
   C_all_raw   <- terra::values(connectivity_raster)
@@ -302,17 +310,14 @@ fit_intensity_nb <- function(connectivity_at_obs,
 
   # ---- optimise -----------------------------------------------------------
   n_cov   <- length(cov_names)
-  # theta = c(alpha, gamma, betas..., log_nb_theta)
-  start   <- c(0, 1, rep(0, n_cov), log(1))   # nb_theta=1 initially
-  lower_b <- c(-10, -10, rep(-10, n_cov), log(0.01))
-  upper_b <- c( 10,  10, rep( 10, n_cov), log(1e6))
+  inits   <- family$init_fn(n_cov)
 
   opt <- stats::optim(
-    par    = start,
-    fn     = .nb_negloglik_cached,
+    par    = inits$start,
+    fn     = family$negloglik_fn,
     method = "L-BFGS-B",
-    lower  = lower_b,
-    upper  = upper_b,
+    lower  = inits$lower,
+    upper  = inits$upper,
     z_obs  = z_obs, z_int = z_int,
     int_weights = int_weights, obs_weights = obs_weights,
     cov_obs = cov_obs, cov_int = cov_int, cov_names = cov_names,
@@ -320,12 +325,23 @@ fit_intensity_nb <- function(connectivity_at_obs,
   )
 
   # ---- extract results ----------------------------------------------------
+  n_extra   <- family$n_extra_params
   est_names <- c("alpha", "gamma")
   if (n_cov > 0) est_names <- c(est_names, paste0("beta_", cov_names))
-  est_names <- c(est_names, "theta")
+  if (n_extra > 0) est_names <- c(est_names, family$extra_param_names)
 
   estimates <- opt$par
-  estimates[length(estimates)] <- exp(estimates[length(estimates)])
+  # Transform extra params to natural scale
+  if (n_extra > 0) {
+    extra_idx <- seq(length(estimates) - n_extra + 1L, length(estimates))
+    for (ei in extra_idx) {
+      estimates[ei] <- exp(estimates[ei])
+    }
+  }
+  # Alias: first extra param is conventionally "size" / "theta"
+  if (n_extra > 0 && family$name %in% c("negbin", "zinb")) {
+    est_names[length(est_names) - n_extra + 1L] <- "size"
+  }
   names(estimates) <- est_names
 
   se <- rep(NA_real_, length(estimates))
@@ -333,8 +349,12 @@ fit_intensity_nb <- function(connectivity_at_obs,
     H  <- opt$hessian
     V  <- solve(H)
     se <- sqrt(pmax(diag(V), 0))
-    # delta-method for exp(log_theta)
-    se[length(se)] <- se[length(se)] * estimates[length(estimates)]
+    # delta-method for exp-transformed extra params
+    if (n_extra > 0) {
+      for (ei in extra_idx) {
+        se[ei] <- se[ei] * estimates[ei]
+      }
+    }
   }, error = function(e) NULL)
   names(se) <- est_names
 

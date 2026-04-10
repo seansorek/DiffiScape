@@ -20,9 +20,11 @@
 
 #' Create a resistance surface from parameters and basis functions
 #'
-#' Computes the resistance raster using an exponential (log) link:
-#' \deqn{\log R(x) = r_0 + \sum_{k=1}^{K} z_k \phi_k(x)}{
-#'   log R(x) = r0 + z1*phi1(x) + ... + zK*phiK(x)}
+#' Computes the resistance raster by applying a link function to the
+#' linear predictor \eqn{\eta(x) = r_0 + \sum_{k} z_k \phi_k(x)}.
+#' The default exponential link gives
+#' \eqn{R(x) = \text{clamp}(\exp(\eta), R_{\min}, R_{\max})}.
+#' Supply a different [resistance_link] to change the mapping.
 #'
 #' @param params Named numeric vector **or** list with elements
 #'   `r_0, z_1, z_2, ..., z_K` where *K* = number of basis layers.
@@ -31,8 +33,9 @@
 #' @param basis_stack A [terra::SpatRaster] with *K* layers (from
 #'   [create_basis_stack()]).
 #' @param R_min,R_max Numeric.
-#'   Hard floor / ceiling applied after exponentiation (default 1 / 5000).
-#' @param return_log If `TRUE`, return the log-resistance surface instead.
+#'   Hard floor / ceiling applied after the link (default 1 / 5000).
+#' @param return_log If `TRUE`, return the linear predictor (eta) instead.
+#' @param link A [resistance_link] object (default [link_exp()]).
 #' @return A single-layer [terra::SpatRaster] named `"resistance"` or
 #'   `"log_resistance"`.
 #' @export
@@ -42,12 +45,18 @@
 #'     params = c(r_0 = 3, z_1 = -0.5, z_2 = 0.5),
 #'     basis_stack = basis
 #'   )
+#'   # With a different link:
+#'   R2 <- create_resistance_surface(
+#'     params = c(r_0 = 3, z_1 = -0.5, z_2 = 0.5),
+#'     basis_stack = basis, link = link_softplus()
+#'   )
 #' }
 create_resistance_surface <- function(params,
                                        basis_stack,
                                        R_min = 1,
                                        R_max = 5000,
-                                       return_log = FALSE) {
+                                       return_log = FALSE,
+                                       link = link_exp()) {
 
   validate_basis_stack(basis_stack)
   n_basis <- terra::nlyr(basis_stack)
@@ -55,22 +64,16 @@ create_resistance_surface <- function(params,
   # Normalise params to numeric vector
   theta <- .params_to_vector(params, n_basis)
 
-  r_0 <- theta[1]
-  z   <- theta[-1]
-
-  # Linear predictor (log-resistance)
-  log_R <- r_0
-  for (k in seq_len(n_basis)) {
-    log_R <- log_R + z[k] * basis_stack[[k]]
-  }
+  # Linear predictor
+  eta <- compute_eta(link, theta, basis_stack)
 
   if (return_log) {
-    names(log_R) <- "log_resistance"
-    return(log_R)
+    names(eta) <- "log_resistance"
+    return(eta)
   }
 
-  R <- terra::app(log_R, function(x) {
-    pmin(pmax(exp(x), R_min), R_max)
+  R <- terra::app(eta, function(x) {
+    link$forward_fn(x, R_min, R_max)
   })
   names(R) <- "resistance"
   R
@@ -85,18 +88,20 @@ create_resistance_surface <- function(params,
 #' @param basis_values A matrix with *K* columns (one per basis function),
 #'   rows = cells.
 #' @param R_min,R_max Clamping bounds.
+#' @param link A [resistance_link] object (default [link_exp()]).
 #' @return Numeric vector of resistance values.
 #' @export
-quick_resistance <- function(theta, basis_values, R_min = 1, R_max = 5000) {
+quick_resistance <- function(theta, basis_values, R_min = 1, R_max = 5000,
+                             link = link_exp()) {
 
   n_basis <- ncol(basis_values)
-  if (length(theta) != n_basis + 1L) {
+  if (is.null(link$eta_fn) && length(theta) != n_basis + 1L) {
     stop(sprintf("theta length (%d) must equal n_basis + 1 (%d).",
                  length(theta), n_basis + 1L), call. = FALSE)
   }
 
-  log_R <- theta[1] + basis_values %*% theta[-1]
-  as.vector(pmin(pmax(exp(log_R), R_min), R_max))
+  eta <- as.vector(compute_eta(link, theta, basis_values))
+  as.vector(link$forward_fn(eta, R_min, R_max))
 }
 
 
@@ -251,9 +256,11 @@ resistance_sensitivity <- function(params, basis_stack, delta = 0.1) {
 #'     single-layer [terra::SpatRaster] of resistance values.
 #' @param basis_stack A [terra::SpatRaster] with \emph{K} layers.
 #' @param type \code{"parametric"} (default) or \code{"custom"}.
-#' @param R_min,R_max Hard clamping bounds applied after exponentiation in
+#' @param R_min,R_max Hard clamping bounds applied after the link in
 #'   the parametric pathway (default 1 / 5000).  Ignored for custom models
 #'   unless the function applies them internally.
+#' @param link A [resistance_link] object (default [link_exp()]).
+#'   Ignored for custom models.
 #' @param ... Additional metadata stored on the object (e.g. \code{name},
 #'   \code{description}, or a reference to an external ML model object).
 #' @return An S3 object of class \code{"resistance_model"}.  Both parametric
@@ -273,6 +280,10 @@ resistance_sensitivity <- function(params, basis_stack, delta = 0.1) {
 #'   print(m)
 #'   R <- predict(m)
 #'
+#'   ## With a different link
+#'   m2 <- resistance_model(c(r_0 = 1, z_1 = 0.5), basis,
+#'                          link = link_softplus())
+#'
 #'   ## Custom / ML model (e.g. IRL or CNN wrapper) -- same interface
 #'   ml_fn <- function(basis_stack, ...) {
 #'     terra::app(basis_stack[[1]], function(x) exp(x))
@@ -286,6 +297,7 @@ resistance_model <- function(params,
                               type  = c("parametric", "custom"),
                               R_min = 1,
                               R_max = 5000,
+                              link  = link_exp(),
                               ...) {
 
   type <- match.arg(type)
@@ -297,10 +309,10 @@ resistance_model <- function(params,
     # Wrap as a function for a consistent interface with custom models.
     # Both types are then interchangeable: predict() calls object$fn().
     fn <- local({
-      th <- theta; rmin <- R_min; rmax <- R_max
+      th <- theta; rmin <- R_min; rmax <- R_max; lk <- link
       function(bs, return_log = FALSE, ...) {
         create_resistance_surface(th, bs, R_min = rmin, R_max = rmax,
-                                  return_log = return_log)
+                                  return_log = return_log, link = lk)
       }
     })
     params_stored <- theta
@@ -324,6 +336,7 @@ resistance_model <- function(params,
       type        = type,
       R_min       = R_min,
       R_max       = R_max,
+      link        = link,
       extra       = list(...)
     ),
     class = "resistance_model"
@@ -340,6 +353,7 @@ resistance_model <- function(params,
 print.resistance_model <- function(x, ...) {
   n_basis <- terra::nlyr(x$basis_stack)
   cat(sprintf("<resistance_model>  [%s]\n", x$type))
+  cat(sprintf("  Link         : %s\n", x$link$name))
   cat(sprintf("  Basis layers : %d  (%s)\n",
               n_basis, paste(names(x$basis_stack), collapse = ", ")))
   cat(sprintf("  Clamping     : [%.4g, %.4g]\n", x$R_min, x$R_max))

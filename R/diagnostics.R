@@ -74,13 +74,15 @@ compute_deviance_residuals_gam <- function(gam_fit) {
 #' @param connectivity A [terra::SpatRaster] of connectivity values.
 #' @param intensity_config Intensity config.
 #' @param covariates_rasters Named list of covariate rasters.
+#' @param family An [intensity_family] object, or `NULL` (uses NB default).
 #' @return A [terra::SpatRaster] of deviance residuals.
 #' @export
 rasterise_deviance_residuals <- function(intensity_fit,
                                          obs_points,
                                          connectivity,
                                          intensity_config   = default_intensity_config(),
-                                         covariates_rasters = NULL) {
+                                         covariates_rasters = NULL,
+                                         family             = NULL) {
 
   # Template raster
   template <- connectivity
@@ -103,16 +105,23 @@ rasterise_deviance_residuals <- function(intensity_fit,
   )
   fitted_vals <- terra::values(pred_rast)[, 1]
 
-  # NB size -- extract from fit
-  size <- intensity_fit$intensity_params["size"]
-  if (is.null(size) || is.na(size)) size <- 1  # default
-
   # Deviance residuals
   valid <- !is.na(fitted_vals) & fitted_vals > 0
   dev_resid <- rep(NA_real_, n_cells)
-  dev_resid[valid] <- compute_deviance_residuals(
-    counts[valid], fitted_vals[valid], size
-  )
+
+  if (!is.null(family)) {
+    ep_names <- family$extra_param_names
+    extra_p  <- intensity_fit$intensity_params[ep_names]
+    dev_resid[valid] <- family$deviance_residuals_fn(
+      counts[valid], fitted_vals[valid], extra_p
+    )
+  } else {
+    size <- intensity_fit$intensity_params["size"]
+    if (is.null(size) || is.na(size)) size <- 1
+    dev_resid[valid] <- compute_deviance_residuals(
+      counts[valid], fitted_vals[valid], size
+    )
+  }
 
   result <- terra::rast(template)
   terra::values(result) <- dev_resid
@@ -167,13 +176,22 @@ moran_test <- function(residuals, coords, k = 8L) {
 #'
 #' @param observed Integer vector of observed counts.
 #' @param fitted Numeric vector of fitted means.
-#' @param size NB size parameter.
+#' @param size NB size parameter (ignored when `family` is given).
+#' @param family An [intensity_family] object, or `NULL`.
+#' @param extra_params Named vector of extra distribution parameters
+#'   (used with `family`).
 #' @param ... Extra arguments passed to [graphics::plot()].
 #' @return Invisible `NULL`.
 #' @export
-plot_deviance_residuals <- function(observed, fitted, size, ...) {
+plot_deviance_residuals <- function(observed, fitted, size = NULL,
+                                    family = NULL, extra_params = NULL,
+                                    ...) {
 
-  dev_r <- compute_deviance_residuals(observed, fitted, size)
+  dev_r <- if (!is.null(family)) {
+    family$deviance_residuals_fn(observed, fitted, extra_params)
+  } else {
+    compute_deviance_residuals(observed, fitted, size)
+  }
 
   graphics::plot(fitted, dev_r,
                  pch = 16, cex = 0.5, col = grDevices::adjustcolor("black", 0.3),
@@ -189,13 +207,21 @@ plot_deviance_residuals <- function(observed, fitted, size, ...) {
 #'
 #' @param observed Integer vector of observed counts.
 #' @param fitted Numeric vector of fitted means.
-#' @param size NB size parameter.
+#' @param size NB size parameter (ignored when `family` is given).
+#' @param family An [intensity_family] object, or `NULL`.
+#' @param extra_params Named vector of extra distribution parameters
+#'   (used with `family`).
 #' @param ... Extra arguments passed to [stats::qqnorm()].
 #' @return Invisible `NULL`.
 #' @export
-plot_qq_deviance <- function(observed, fitted, size, ...) {
+plot_qq_deviance <- function(observed, fitted, size = NULL,
+                             family = NULL, extra_params = NULL, ...) {
 
-  dev_r <- compute_deviance_residuals(observed, fitted, size)
+  dev_r <- if (!is.null(family)) {
+    family$deviance_residuals_fn(observed, fitted, extra_params)
+  } else {
+    compute_deviance_residuals(observed, fitted, size)
+  }
 
   stats::qqnorm(dev_r, main = "QQ-Plot: Deviance Residuals",
                 pch = 16, cex = 0.5, ...)
@@ -237,6 +263,7 @@ plot_residual_map <- function(resid_raster, obs_points = NULL, ...) {
 #' @param connectivity A [terra::SpatRaster].
 #' @param intensity_config Intensity config.
 #' @param covariates_rasters Named list of covariate rasters.
+#' @param family An [intensity_family] object, or `NULL` (uses NB default).
 #' @param plot Logical; produce diagnostic plots.
 #' @return A list with `residual_raster`, `moran`, `mean_deviance`,
 #'   `prop_large` (proportion of |resid| > 2).
@@ -246,11 +273,12 @@ diagnose_model <- function(intensity_fit,
                            connectivity,
                            intensity_config   = default_intensity_config(),
                            covariates_rasters = NULL,
+                           family             = NULL,
                            plot               = TRUE) {
 
   resid_rast <- rasterise_deviance_residuals(
     intensity_fit, obs_points, connectivity,
-    intensity_config, covariates_rasters
+    intensity_config, covariates_rasters, family = family
   )
 
   resid_vals <- terra::values(resid_rast)[, 1]
@@ -287,10 +315,15 @@ diagnose_model <- function(intensity_fit,
     size <- intensity_fit$intensity_params["size"]
     if (is.null(size) || is.na(size)) size <- 1
 
+    ep_names    <- if (!is.null(family)) family$extra_param_names else NULL
+    extra_p_plt <- intensity_fit$intensity_params[ep_names]
+
     grDevices::dev.new()
     graphics::par(mfrow = c(2, 2))
-    plot_deviance_residuals(counts[valid], fitted[valid], size)
-    plot_qq_deviance(counts[valid], fitted[valid], size)
+    plot_deviance_residuals(counts[valid], fitted[valid], size,
+                            family = family, extra_params = extra_p_plt)
+    plot_qq_deviance(counts[valid], fitted[valid], size,
+                     family = family, extra_params = extra_p_plt)
     plot_residual_map(resid_rast, obs_points)
 
     # Histogram

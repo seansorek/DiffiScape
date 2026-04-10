@@ -13,7 +13,8 @@ by the window size rather than the full grid.
 """
 
 export enzyme_gradient, enzyme_available, enzyme_hvp,
-       cumulative_current_vjp, resistance_gradient
+       cumulative_current_vjp, resistance_gradient,
+       enzyme_gradient_generic, resistance_gradient_generic
 
 
 """
@@ -136,18 +137,48 @@ function resistance_gradient(params::Vector{Float64},
                               dR_flat::Vector{Float64},
                               R_flat::Vector{Float64},
                               config::SolverConfig)
-    n_params = length(params)
-    n_basis = n_params - 1
-    grad = zeros(n_params)
-
-    @inbounds for i in eachindex(dR_flat, R_flat)
+    # Delegate to generic form with dR/dη = R (exp link)
+    n_cells = length(R_flat)
+    dR_deta = zeros(n_cells)
+    @inbounds for i in 1:n_cells
         ri = R_flat[i]
         if ri > config.R_min && ri < config.R_max
-            dlog_r = dR_flat[i] * ri
-            grad[1] += dlog_r
-            for k in 1:n_basis
-                grad[k + 1] += dlog_r * basis_values[i, k]
-            end
+            dR_deta[i] = ri
+        end
+    end
+    return resistance_gradient_generic(basis_values, dR_flat, dR_deta)
+end
+
+
+"""
+    resistance_gradient_generic(basis_values, dR_flat, dR_deta)
+
+Link-agnostic chain rule from `∂loss/∂R` to `∂loss/∂params`.
+
+The gradient w.r.t. additive parameters `[r₀, z₁, ..., zₖ]` is:
+    `∂loss/∂r₀ = Σᵢ (∂loss/∂Rᵢ)·(dR/dη)ᵢ`
+    `∂loss/∂zₖ = Σᵢ (∂loss/∂Rᵢ)·(dR/dη)ᵢ·φₖ(i)`
+
+R is responsible for computing `dR_deta` via the link object's `deriv_fn`.
+This function only applies the chain rule with the provided derivative.
+
+# Arguments
+- `basis_values`: `n_cells × K` matrix of basis function values
+- `dR_flat`: `∂loss/∂R` as a flat vector
+- `dR_deta`: `dR/dη` as a flat vector (precomputed by R-side link)
+"""
+function resistance_gradient_generic(basis_values::Matrix{Float64},
+                                      dR_flat::Vector{Float64},
+                                      dR_deta::Vector{Float64})
+    n_basis = size(basis_values, 2)
+    n_params = n_basis + 1
+    grad = zeros(n_params)
+
+    @inbounds for i in eachindex(dR_flat, dR_deta)
+        chain = dR_flat[i] * dR_deta[i]
+        grad[1] += chain
+        for k in 1:n_basis
+            grad[k + 1] += chain * basis_values[i, k]
         end
     end
 
@@ -161,19 +192,9 @@ end
     enzyme_gradient(params, basis_values, nrows, ncols, config)
 
 Compute the gradient of `sum(log1p(cumulative_current))` w.r.t.
-resistance `params` using Enzyme.jl.
+resistance `params` using Enzyme.jl.  Uses the hardcoded exp link.
 
-This differentiates through the full chain:
-`params → R → conductances → CG solves → current → objective`
-
-# Arguments
-- `params`: `[r₀, z₁, ..., zₖ]`
-- `basis_values`: `n_cells × K` (row-major order matching terra cells)
-- `nrows, ncols`: grid dimensions
-- `config`: solver configuration
-
-# Returns
-Gradient vector of length `K+1`.
+See also [`enzyme_gradient_generic`](@ref) for the link-agnostic version.
 
 Requires Enzyme.jl.
 """
@@ -184,7 +205,7 @@ function enzyme_gradient(params::Vector{Float64},
     n_cells = nrows * ncols
     n_basis = size(basis_values, 2)
 
-    # Forward: params → R (flat, row-major)
+    # Forward: params → R (flat, row-major) — exp link
     R_flat = zeros(n_cells)
     @inbounds for i in 1:n_cells
         log_r = params[1]
@@ -193,6 +214,42 @@ function enzyme_gradient(params::Vector{Float64},
         end
         R_flat[i] = clamp(exp(log_r), config.R_min, config.R_max)
     end
+
+    return enzyme_gradient_generic(R_flat, R_flat, basis_values,
+                                    nrows, ncols, config)
+end
+
+
+"""
+    enzyme_gradient_generic(R_flat, dR_deta, basis_values, nrows, ncols, config)
+
+Link-agnostic gradient of `sum(log1p(cumulative_current))` w.r.t.
+resistance parameters.
+
+R precomputes:
+- `R_flat`: resistance values (flat, row-major)
+- `dR_deta`: derivative of the link function `dR/dη` at each cell
+
+Julia computes the VJP through the solver and applies the chain rule
+with the provided `dR_deta`.
+
+Requires Enzyme.jl.
+
+# Arguments
+- `R_flat`: precomputed resistance as a flat vector (row-major)
+- `dR_deta`: precomputed dR/dη as a flat vector (row-major)
+- `basis_values`: `n_cells × K` matrix
+- `nrows, ncols`: grid dimensions
+- `config`: solver configuration
+
+# Returns
+Gradient vector of length `K+1`.
+"""
+function enzyme_gradient_generic(R_flat::Vector{Float64},
+                                  dR_deta::Vector{Float64},
+                                  basis_values::Matrix{Float64},
+                                  nrows::Int, ncols::Int,
+                                  config::SolverConfig)
 
     # Reshape to column-major matrix (row-major vec → matrix)
     R_mat = Matrix(reshape(R_flat, ncols, nrows)')
@@ -217,16 +274,17 @@ function enzyme_gradient(params::Vector{Float64},
     dR_flat = vec(dR_mat')
 
     # Chain rule: ∂obj/∂params
-    return resistance_gradient(params, basis_values, dR_flat, R_flat, config)
+    return resistance_gradient_generic(basis_values, dR_flat, dR_deta)
 end
 
 
-# ========================== Hessian-Vector Product ==========================
+# ========================== Hessian-Vector Product ==================================================
 
 """
     enzyme_hvp(params, v, basis_values, nrows, ncols, config; eps=1e-5)
 
 Hessian-vector product `H·v` via central finite differences on the gradient.
+Uses the hardcoded exp link path.
 
 `H·v ≈ (∇f(params + ε·v) - ∇f(params - ε·v)) / (2ε)`
 

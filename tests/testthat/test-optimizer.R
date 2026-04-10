@@ -11,10 +11,9 @@ test_that("default_optimizer_config has required fields", {
 })
 
 
-test_that("optimize_resistance_enzyme errors informatively", {
+test_that("optimize_resistance_enzyme errors on NULL inputs", {
   expect_error(
-    optimize_resistance_enzyme(NULL, NULL),
-    "Enzyme.jl gradient pathway is not yet implemented"
+    optimize_resistance_enzyme(NULL, NULL)
   )
 })
 
