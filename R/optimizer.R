@@ -47,30 +47,194 @@ default_optimizer_config <- function() {
 # --------------- Enzyme stub ------------------------------------------------
 
 #' Optimise resistance via Enzyme.jl automatic differentiation
+#' Optimise resistance via the differentiable Julia solver
 #'
-#' **Not yet implemented.**
-#' This function will use Enzyme.jl to compute gradients of
-#' connectivity with respect to resistance parameters and run L-BFGS
-#' optimisation.
+#' Uses L-BFGS-B optimisation with the in-memory circuit solver
+#' ([run_cumulative_current()]) instead of the GP surrogate.  A small
+#' Latin Hypercube warmstart finds a good starting point, then L-BFGS-B
+#' refines using finite-difference gradients through the fast solver.
 #'
 #' @param basis_stack A [terra::SpatRaster] of basis functions.
 #' @param obs_points Data.frame with `x, y` columns.
-#' @param bounds Named list of `c(lower, upper)` per parameter.
-#' @param config Optimiser configuration (list).
-#' @param ... Additional arguments (reserved for future use).
-#' @return Currently errors with an informative message.
+#' @param bounds Named list of `c(lower, upper)` per parameter (or
+#'   `NULL` for defaults).
+#' @param config Optimiser configuration (see [default_optimizer_config()]).
+#' @param intensity_config Intensity config (see [default_intensity_config()]).
+#' @param output_dir Directory for logs and results.
+#' @param covariates_obs Named list of covariate vectors at obs.
+#' @param covariates_rasters Named list of [terra::SpatRaster] covariates.
+#' @param residualise Logical; residualise connectivity.
+#' @return A list with `best_params`, `best_loglik`, `bounds`,
+#'   `n_evaluations`, `distribution`, `convergence`.
 #' @export
 optimize_resistance_enzyme <- function(basis_stack,
                                        obs_points,
-                                       bounds = NULL,
-                                       config = list(),
-                                       ...) {
+                                       bounds           = NULL,
+                                       config           = default_optimizer_config(),
+                                       intensity_config = default_intensity_config(),
+                                       output_dir       = tempdir(),
+                                       covariates_obs   = NULL,
+                                       covariates_rasters = NULL,
+                                       residualise      = FALSE) {
 
-  stop(
-    "Enzyme.jl gradient pathway is not yet implemented.\n",
-    "Use optimize_resistance() with method = 'surrogate' instead.\n",
-    "See ?optimize_resistance for details.",
-    call. = FALSE
+  set.seed(config$seed)
+
+  n_basis <- terra::nlyr(basis_stack)
+  if (is.null(bounds)) bounds <- get_default_bounds(n_basis)
+
+  if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+  log_file <- file.path(output_dir, "optimization_log.csv")
+  if (file.exists(log_file)) unlink(log_file)
+
+  distribution <- config$distribution %||% "negbin"
+  nrow_grid    <- terra::nrow(basis_stack)
+  ncol_grid    <- terra::ncol(basis_stack)
+  basis_values <- terra::values(basis_stack)
+  template     <- basis_stack[[1]]
+
+  solver_radius <- config$omniscape$radius     %||% 13L
+  solver_block  <- config$omniscape$block_size  %||% 5L
+
+  eval_counter      <- new.env(parent = emptyenv())
+  eval_counter$n    <- 0L
+  eval_counter$best <- Inf
+
+  # ---- objective: theta -> negative profiled log-likelihood ----------------
+  obj_fn <- function(theta) {
+
+    eval_counter$n <- eval_counter$n + 1L
+
+    tryCatch({
+      # Resistance
+      R_vec <- quick_resistance(theta, basis_values)
+      R_mat <- matrix(R_vec, nrow = nrow_grid, ncol = ncol_grid,
+                      byrow = TRUE)
+      R_mat[is.na(R_mat)] <- 0
+
+      # Julia solver
+      cum_mat <- ds_julia_call("DiffiScapeMod.cumulative_current",
+                                R_mat,
+                                as.integer(solver_radius),
+                                as.integer(solver_block))
+
+      # Back to SpatRaster
+      cum_vec <- as.vector(t(cum_mat))
+      cum_rast <- terra::rast(template)
+      terra::values(cum_rast) <- cum_vec
+      names(cum_rast) <- "cum_current"
+
+      # Extract at obs
+      conn_obs <- extract_connectivity(cum_rast, obs_points)
+      valid    <- !is.na(conn_obs)
+      if (sum(valid) < 3) {
+        message(sprintf("  Eval %d: too few valid obs", eval_counter$n))
+        return(1e10)
+      }
+
+      obs_pts_v  <- obs_points[valid, , drop = FALSE]
+      conn_obs_v <- conn_obs[valid]
+      cov_obs_v  <- if (!is.null(covariates_obs))
+        lapply(covariates_obs, function(v) v[valid]) else NULL
+
+      # Inner-loop intensity fit
+      fit_fn <- switch(distribution,
+        negbin = fit_intensity_nb,
+        gam    = fit_intensity_gam,
+        stop("Unknown distribution: ", distribution, call. = FALSE)
+      )
+
+      int_fit <- fit_fn(
+        connectivity_at_obs  = conn_obs_v,
+        connectivity_raster  = cum_rast,
+        obs_coords           = obs_pts_v,
+        covariates_obs       = cov_obs_v,
+        covariates_rasters   = covariates_rasters,
+        residualise          = residualise,
+        config               = intensity_config
+      )
+
+      neg_ll <- -int_fit$loglik
+      if (!is.finite(neg_ll)) neg_ll <- 1e10
+
+      if (neg_ll < eval_counter$best) eval_counter$best <- neg_ll
+
+      # Log
+      entry <- data.frame(eval = eval_counter$n, r_0 = theta[1])
+      for (k in seq_len(n_basis)) entry[[paste0("z_", k)]] <- theta[k + 1]
+      entry$alpha     <- int_fit$estimates["alpha"]
+      entry$gamma     <- int_fit$estimates["gamma"]
+      entry$loglik    <- int_fit$loglik
+      entry$converged <- int_fit$convergence == 0
+
+      exists_ <- file.exists(log_file)
+      utils::write.table(entry, log_file, append = exists_,
+                         row.names = FALSE, col.names = !exists_, sep = ",")
+
+      message(sprintf("  Eval %d: loglik = %.2f  (best = %.2f)",
+                      eval_counter$n, int_fit$loglik, -eval_counter$best))
+      neg_ll
+
+    }, error = function(e) {
+      message(sprintf("  Eval %d ERROR: %s", eval_counter$n,
+                       conditionMessage(e)))
+      1e10
+    })
+  }
+
+  # ---- bounds --------------------------------------------------------------
+  pnames  <- names(bounds)
+  lower_b <- vapply(bounds, `[`, numeric(1), 1)
+  upper_b <- vapply(bounds, `[`, numeric(1), 2)
+
+  # ---- Phase 1: LHS warmstart ---------------------------------------------
+  n_warmstart <- min(config$n_init %||% 10L, 10L)
+  message("\n", strrep("=", 60))
+  message(sprintf("PHASE 1: Warmstart (%d LHS evaluations)", n_warmstart))
+  message(strrep("=", 60))
+
+  warmstart <- .create_lhs_design(n_warmstart, bounds)
+  best_y     <- Inf
+  best_theta <- (lower_b + upper_b) / 2
+
+  for (i in seq_len(n_warmstart)) {
+    theta <- as.numeric(warmstart[i, ])
+    y     <- obj_fn(theta)
+    if (y < best_y) {
+      best_y     <- y
+      best_theta <- theta
+    }
+  }
+
+  # ---- Phase 2: L-BFGS-B --------------------------------------------------
+  n_lbfgs <- config$n_iter %||% 50L
+  message("\n", strrep("=", 60))
+  message(sprintf("PHASE 2: L-BFGS-B (max %d iterations)", n_lbfgs))
+  message(strrep("=", 60))
+
+  opt <- stats::optim(
+    par     = best_theta,
+    fn      = obj_fn,
+    method  = "L-BFGS-B",
+    lower   = lower_b,
+    upper   = upper_b,
+    control = list(maxit = n_lbfgs, trace = 0)
+  )
+
+  best_params <- params_vector_to_list(opt$par, n_basis)
+
+  message(sprintf("\nOptimisation complete: %d evaluations, loglik = %.2f",
+                  eval_counter$n, -opt$value))
+
+  list(
+    best_params   = best_params,
+    best_loglik   = -opt$value,
+    X_evaluated   = NULL,
+    y_evaluated   = NULL,
+    surrogate     = NULL,
+    bounds        = bounds,
+    n_evaluations = eval_counter$n,
+    distribution  = distribution,
+    convergence   = opt$convergence
   )
 }
 

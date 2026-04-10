@@ -119,7 +119,9 @@ ds_init_julia <- function(julia_home = NULL, force = FALSE) {
 
 #' Optimise resistance parameters
 #'
-#' Wrapper around [optimize_resistance()] with sensible defaults.
+#' Wrapper that dispatches to [optimize_resistance()] (GP surrogate) or
+#' [optimize_resistance_enzyme()] (L-BFGS via differentiable solver)
+#' depending on `solver`.
 #'
 #' @param basis_stack Basis function stack.
 #' @param obs_points Data.frame with `x, y`.
@@ -130,7 +132,10 @@ ds_init_julia <- function(julia_home = NULL, force = FALSE) {
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param residualise Logical.
-#' @return Result from [optimize_resistance()].
+#' @param solver Character; `"surrogate"` (GP + Thompson Sampling,
+#'   default) or `"enzyme"` (L-BFGS via differentiable Julia solver).
+#' @return Result from [optimize_resistance()] or
+#'   [optimize_resistance_enzyme()].
 #' @export
 ds_optimize <- function(basis_stack,
                         obs_points,
@@ -140,9 +145,15 @@ ds_optimize <- function(basis_stack,
                         output_dir       = tempdir(),
                         covariates_obs   = NULL,
                         covariates_rasters = NULL,
-                        residualise      = FALSE) {
+                        residualise      = FALSE,
+                        solver           = c("surrogate", "enzyme")) {
 
-  optimize_resistance(
+  solver <- match.arg(solver)
+
+  opt_fn <- if (solver == "enzyme") optimize_resistance_enzyme
+            else optimize_resistance
+
+  opt_fn(
     basis_stack        = basis_stack,
     obs_points         = obs_points,
     bounds             = bounds,
@@ -169,6 +180,8 @@ ds_optimize <- function(basis_stack,
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param residualise Logical.
+#' @param solver Character; `"surrogate"` (Omniscape) or
+#'   `"enzyme"` (differentiable solver).
 #' @return Result from [evaluate_full_model()].
 #' @export
 ds_fit_intensity <- function(opt_result,
@@ -178,7 +191,48 @@ ds_fit_intensity <- function(opt_result,
                               intensity_config   = default_intensity_config(),
                               covariates_obs     = NULL,
                               covariates_rasters = NULL,
-                              residualise        = FALSE) {
+                              residualise        = FALSE,
+                              solver             = c("surrogate", "enzyme")) {
+
+  solver <- match.arg(solver)
+
+  if (solver == "enzyme") {
+    # Use the fast in-memory solver
+    resistance <- create_resistance_surface(opt_result$best_params, basis_stack)
+    omni <- run_cumulative_current(
+      resistance,
+      radius     = omniscape_settings$radius     %||% 13L,
+      block_size = omniscape_settings$block_size  %||% 5L
+    )
+    connectivity <- omni$cum_current
+    conn_obs <- extract_connectivity(connectivity, obs_points)
+
+    valid <- !is.na(conn_obs)
+    distribution <- opt_result$distribution %||% "negbin"
+    fit_fn <- switch(distribution,
+      negbin = fit_intensity_nb, gam = fit_intensity_gam)
+
+    int_fit <- fit_fn(
+      connectivity_at_obs = conn_obs[valid],
+      connectivity_raster = connectivity,
+      obs_coords          = obs_points[valid, , drop = FALSE],
+      covariates_obs      = if (!is.null(covariates_obs))
+        lapply(covariates_obs, function(v) v[valid]) else NULL,
+      covariates_rasters  = covariates_rasters,
+      residualise         = residualise,
+      config              = intensity_config
+    )
+
+    return(list(
+      loglik           = int_fit$loglik,
+      intensity_params = int_fit$estimates,
+      intensity_se     = int_fit$se,
+      hessian          = int_fit$hessian,
+      convergence      = int_fit$convergence,
+      distribution     = distribution,
+      total_time       = omni$elapsed_seconds
+    ))
+  }
 
   evaluate_full_model(
     resistance_params  = opt_result$best_params,
@@ -245,7 +299,19 @@ ds_posterior <- function(opt_result,
                          covariates_rasters = NULL,
                          residualise        = FALSE) {
 
-  lap <- laplace_resistance(opt_result)
+  # Auto-detect: use direct Hessian when no GP surrogate is available
+  use_refit <- is.null(opt_result$surrogate)
+
+  lap <- laplace_resistance(
+    opt_result,
+    basis_stack       = basis_stack,
+    obs_points        = obs_points,
+    refit             = use_refit,
+    intensity_config  = intensity_config,
+    covariates_obs    = covariates_obs,
+    covariates_rasters = covariates_rasters,
+    residualise       = residualise
+  )
 
   samp <- posterior_sample(
     laplace            = lap,
@@ -340,7 +406,10 @@ diffiscape <- function(obs_data,
                        plot              = TRUE,
                        crs               = NULL,
                        rescale_basis     = TRUE,
-                       pattern           = "*.tif") {
+                       pattern           = "*.tif",
+                       solver            = c("surrogate", "enzyme")) {
+
+  solver <- match.arg(solver)
 
   t0 <- Sys.time()
   if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
@@ -378,7 +447,8 @@ diffiscape <- function(obs_data,
     output_dir         = output_dir,
     covariates_obs     = covariates_obs,
     covariates_rasters = covariates_rasters,
-    residualise        = residualise
+    residualise        = residualise,
+    solver             = solver
   )
 
   # --- Step 5: Final intensity fit ---
@@ -390,7 +460,8 @@ diffiscape <- function(obs_data,
     intensity_config   = intensity_config,
     covariates_obs     = covariates_obs,
     covariates_rasters = covariates_rasters,
-    residualise        = residualise
+    residualise        = residualise,
+    solver             = solver
   )
 
   # --- Step 6: Posterior ---
@@ -414,7 +485,11 @@ diffiscape <- function(obs_data,
   # --- Step 7: Diagnostics ---
   message("\n[7/7] Diagnostics...")
   final_resistance  <- create_resistance_surface(opt_result$best_params, basis_stack)
-  final_omni        <- run_omniscape(final_resistance)
+  if (solver == "enzyme") {
+    final_omni <- run_cumulative_current(final_resistance)
+  } else {
+    final_omni <- run_omniscape(final_resistance)
+  }
   final_connectivity <- final_omni$cum_current
 
   diagnostics <- ds_diagnose(

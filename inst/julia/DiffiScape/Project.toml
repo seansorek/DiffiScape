@@ -4,9 +4,11 @@ version = "0.1.0"
 
 [deps]
 Circuitscape = "00cb2430-530b-11e9-35a1-e52950c89647"
+Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 Omniscape = "a38d37ab-3fee-4a3d-8067-e8b90a476944"
 
 [compat]
 julia = ">= 1.9"
 Circuitscape = ">= 5.0"
+Enzyme = ">= 0.12"
 Omniscape = ">= 0.6"

@@ -201,3 +201,62 @@ extract_connectivity <- function(connectivity, points, buffer = NULL) {
     terra::extract(connectivity, pts_vect, buffer = buffer, fun = mean)[, 2]
   }
 }
+
+
+# ===================== In-Memory Differentiable Solver ======================
+
+#' Compute cumulative current using the differentiable Julia solver
+#'
+#' Replaces [run_omniscape()] with a pure-Julia, in-memory solver that
+#' requires no file I/O.  The solver uses conjugate gradient on a
+#' matrix-free grid Laplacian with threaded window parallelism.
+#'
+#' @param resistance A single-layer [terra::SpatRaster] of resistance.
+#' @param radius Integer; moving-window radius in pixels (default 13).
+#' @param block_size Integer; source-block side length (default 5).
+#' @return A list matching the [run_omniscape()] interface:
+#'   \describe{
+#'     \item{cum_current}{[terra::SpatRaster] of cumulative current.}
+#'     \item{flow_potential}{`NULL` (not computed by this solver).}
+#'     \item{elapsed_seconds}{Wall-clock time.}
+#'   }
+#' @export
+run_cumulative_current <- function(resistance,
+                                   radius     = 13L,
+                                   block_size = 5L) {
+
+  if (!ds_julia_check()) {
+    stop("Julia not initialised. Call ds_julia_setup() first.",
+         call. = FALSE)
+  }
+
+  nrow_grid <- terra::nrow(resistance)
+  ncol_grid <- terra::ncol(resistance)
+
+  # terra values → R matrix (row-major → column-major)
+  R_vec <- as.numeric(terra::values(resistance))
+  R_mat <- matrix(R_vec, nrow = nrow_grid, ncol = ncol_grid, byrow = TRUE)
+  R_mat[is.na(R_mat)] <- 0  # nodata → zero resistance → zero conductance
+
+  start <- Sys.time()
+
+  cum_mat <- ds_julia_call("DiffiScapeMod.cumulative_current",
+                            R_mat,
+                            as.integer(radius),
+                            as.integer(block_size))
+
+  elapsed <- as.numeric(difftime(Sys.time(), start, units = "secs"))
+  message(sprintf("Differentiable solver completed in %.1f s", elapsed))
+
+  # Julia matrix → terra raster (column-major → row-major)
+  cum_vec <- as.vector(t(cum_mat))
+  cum_rast <- terra::rast(resistance)
+  terra::values(cum_rast) <- cum_vec
+  names(cum_rast) <- "cum_current"
+
+  list(
+    cum_current     = cum_rast,
+    flow_potential  = NULL,
+    elapsed_seconds = elapsed
+  )
+}

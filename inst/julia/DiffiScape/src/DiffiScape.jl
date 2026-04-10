@@ -6,6 +6,7 @@ for Enzyme.jl automatic differentiation of connectivity w.r.t. resistance.
 """
 module DiffiScapeMod
 
+include("differentiable_solver.jl")
 include("connectivity.jl")
 include("enzyme_gradients.jl")
 include("setup.jl")

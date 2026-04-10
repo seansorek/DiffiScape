@@ -13,21 +13,37 @@
 #' resistance parameters by evaluating (or re-using) the GP surrogate
 #' at the MAP estimate.
 #'
-#' @param opt_result Result from [optimize_resistance()].
-#' @param basis_stack A [terra::SpatRaster] of basis functions (used to
-#'   count dimensions; not re-run unless `refit = TRUE`).
-#' @param refit Logical; re-evaluate the Hessian around the MAP using the
-#'   full model instead of the surrogate.
-#' @param step Finite-difference step size for Hessian computation if refitting.
+#' @param opt_result Result from [optimize_resistance()] or
+#'   [optimize_resistance_enzyme()].
+#' @param basis_stack A [terra::SpatRaster] of basis functions (required
+#'   when `refit = TRUE` or when no surrogate is available).
+#' @param obs_points Data.frame with `x, y` (required when `refit = TRUE`).
+#' @param refit Logical; use `numDeriv::hessian()` on the full model
+#'   instead of the GP surrogate.  Automatically set to `TRUE` when
+#'   `opt_result` has no `$surrogate` (i.e., from
+#'   [optimize_resistance_enzyme()]).
+#' @param step Finite-difference step size for Hessian computation.
+#' @param intensity_config Optional [default_intensity_config()] list.
+#' @param covariates_obs Named list of covariate vectors.
+#' @param covariates_rasters Named list of covariate rasters.
+#' @param residualise Logical.
 #' @return A list with `mode`, `covariance`, `precision`, `std_error`.
 #' @export
 laplace_resistance <- function(opt_result,
-                               basis_stack = NULL,
-                               refit = FALSE,
-                               step  = 1e-3) {
+                               basis_stack       = NULL,
+                               obs_points        = NULL,
+                               refit             = FALSE,
+                               step              = 1e-3,
+                               intensity_config  = default_intensity_config(),
+                               covariates_obs    = NULL,
+                               covariates_rasters = NULL,
+                               residualise       = FALSE) {
 
   best_vec <- .params_to_vector(opt_result$best_params)
   p        <- length(best_vec)
+
+  # Auto-refit when no surrogate is available (Enzyme/direct path)
+  if (is.null(opt_result$surrogate)) refit <- TRUE
 
   if (!refit && !is.null(opt_result$surrogate)) {
     # Use the GP surrogate's predicted mean as the log-likelihood
@@ -42,12 +58,55 @@ laplace_resistance <- function(opt_result,
 
     H <- numDeriv::hessian(surrogate_fn, best_vec, method.args = list(eps = step))
 
-  } else if (refit && !is.null(basis_stack)) {
-    stop("Full-model Hessian refit not implemented yet. ",
-         "Use refit = FALSE to approximate from the surrogate.",
-         call. = FALSE)
+  } else if (refit && !is.null(basis_stack) && !is.null(obs_points)) {
+    # Direct Hessian via the fast Julia solver
+    distribution <- opt_result$distribution %||% "negbin"
+    n_basis      <- terra::nlyr(basis_stack)
+    nrow_grid    <- terra::nrow(basis_stack)
+    ncol_grid    <- terra::ncol(basis_stack)
+    basis_vals   <- terra::values(basis_stack)
+    template     <- basis_stack[[1]]
+    solver_radius <- 13L
+    solver_block  <- 5L
+
+    refit_fn <- function(theta) {
+      R_vec <- quick_resistance(theta, basis_vals)
+      R_mat <- matrix(R_vec, nrow = nrow_grid, ncol = ncol_grid,
+                      byrow = TRUE)
+      R_mat[is.na(R_mat)] <- 0
+
+      cum_mat  <- ds_julia_call("DiffiScapeMod.cumulative_current",
+                                 R_mat, solver_radius, solver_block)
+      cum_vec  <- as.vector(t(cum_mat))
+      cum_rast <- terra::rast(template)
+      terra::values(cum_rast) <- cum_vec
+
+      conn_obs <- extract_connectivity(cum_rast, obs_points)
+      valid    <- !is.na(conn_obs)
+      if (sum(valid) < 3) return(1e10)
+
+      fit_fn <- switch(distribution,
+        negbin = fit_intensity_nb, gam = fit_intensity_gam)
+
+      int_fit <- fit_fn(
+        connectivity_at_obs = conn_obs[valid],
+        connectivity_raster = cum_rast,
+        obs_coords          = obs_points[valid, , drop = FALSE],
+        covariates_obs      = if (!is.null(covariates_obs))
+          lapply(covariates_obs, function(v) v[valid]) else NULL,
+        covariates_rasters  = covariates_rasters,
+        residualise         = residualise,
+        config              = intensity_config
+      )
+
+      neg_ll <- -int_fit$loglik
+      if (!is.finite(neg_ll)) 1e10 else neg_ll
+    }
+
+    H <- numDeriv::hessian(refit_fn, best_vec,
+                            method.args = list(eps = step))
   } else {
-    stop("Must supply either opt_result$surrogate or basis_stack with refit=TRUE",
+    stop("Must supply either opt_result$surrogate, or basis_stack + obs_points with refit=TRUE",
          call. = FALSE)
   }
 
