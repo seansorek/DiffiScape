@@ -425,6 +425,8 @@ ds_diagnose <- function(intensity_fit,
 #' @param crs Target CRS for reprojection (if input is spatial file).
 #' @param rescale_basis Logical; rescale basis rasters.
 #' @param pattern File pattern for raster directory.
+#' @param solver Character; `"surrogate"` (default, GP surrogate optimiser) or
+#'   `"enzyme"` (L-BFGS via differentiable Julia solver).
 #' @return A list with `obs_points`, `basis_stack`, `opt_result`,
 #'   `intensity_fit`, `posterior`, `diagnostics`.
 #' @export

@@ -55,6 +55,9 @@ with \verb{x, y} columns.}
 \item{rescale_basis}{Logical; rescale basis rasters.}
 
 \item{pattern}{File pattern for raster directory.}
+
+\item{solver}{Character; \code{"surrogate"} (default, GP surrogate optimiser) or
+\code{"enzyme"} (L-BFGS via differentiable Julia solver).}
 }
 \value{
 A list with \code{obs_points}, \code{basis_stack}, \code{opt_result},

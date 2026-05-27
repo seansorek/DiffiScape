@@ -825,6 +825,7 @@ run_bayesian_sampling <- function(basis_stack,
 #' MAP checkpoint produced by [run_torch_pipeline()].
 #'
 #' @inheritParams run_bayesian_sampling
+#' @param n_samples Integer; number of posterior draws.
 #' @param warmup Integer; warm-up iterations (adapts step size / mass).
 #' @param max_treedepth Integer; NUTS max tree depth.
 #' @param init_step_size Numeric or `NULL` for auto.
@@ -936,6 +937,9 @@ run_bayesian_sampling_hmc <- function(basis_stack,
 #' the variational family.
 #'
 #' @inheritParams run_bayesian_sampling_hmc
+#' @param n_samples Integer; number of posterior draws.
+#' @param lambda_min Numeric; floor on smoothing parameters.
+#' @param cg_tol Numeric; CG solver tolerance.
 #' @param max_iter Integer; ADVI iterations.
 #' @param lr Numeric; ELBO Adam learning rate.
 #' @param n_elbo_samples Integer; MC samples per ELBO gradient.
