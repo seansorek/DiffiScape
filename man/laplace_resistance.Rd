@@ -10,6 +10,7 @@ laplace_resistance(
   obs_points = NULL,
   refit = FALSE,
   step = 0.001,
+  omniscape_settings = list(),
   intensity_config = default_intensity_config(),
   covariates_obs = NULL,
   covariates_rasters = NULL,
@@ -33,6 +34,9 @@ instead of the GP surrogate.  Automatically set to \code{TRUE} when
 \code{\link[=optimize_resistance_enzyme]{optimize_resistance_enzyme()}}).}
 
 \item{step}{Finite-difference step size for Hessian computation.}
+
+\item{omniscape_settings}{Named list of solver overrides: \code{radius}
+(default \code{13L}) and \code{block_size} (default \code{5L}). Used when \code{refit = TRUE}.}
 
 \item{intensity_config}{Optional \code{\link[=default_intensity_config]{default_intensity_config()}} list.}
 

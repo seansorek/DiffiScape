@@ -23,6 +23,8 @@
 #'   `opt_result` has no `$surrogate` (i.e., from
 #'   [optimize_resistance_enzyme()]).
 #' @param step Finite-difference step size for Hessian computation.
+#' @param omniscape_settings Named list of solver overrides: `radius`
+#'   (default `13L`) and `block_size` (default `5L`). Used when `refit = TRUE`.
 #' @param intensity_config Optional [default_intensity_config()] list.
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
@@ -32,16 +34,17 @@
 #' @return A list with `mode`, `covariance`, `precision`, `std_error`.
 #' @export
 laplace_resistance <- function(opt_result,
-                               basis_stack       = NULL,
-                               obs_points        = NULL,
-                               refit             = FALSE,
-                               step              = 1e-3,
-                               intensity_config  = default_intensity_config(),
-                               covariates_obs    = NULL,
-                               covariates_rasters = NULL,
-                               residualise       = FALSE,
-                               link              = link_exp(),
-                               family            = NULL) {
+                               basis_stack        = NULL,
+                               obs_points         = NULL,
+                               refit              = FALSE,
+                               step               = 1e-3,
+                               omniscape_settings = list(),
+                               intensity_config   = default_intensity_config(),
+                               covariates_obs     = NULL,
+                               covariates_rasters  = NULL,
+                               residualise        = FALSE,
+                               link               = link_exp(),
+                               family             = NULL) {
 
   best_vec <- .params_to_vector(opt_result$best_params)
   p        <- length(best_vec)
@@ -70,8 +73,10 @@ laplace_resistance <- function(opt_result,
     ncol_grid    <- terra::ncol(basis_stack)
     basis_vals   <- terra::values(basis_stack)
     template     <- basis_stack[[1]]
-    solver_radius <- 13L
-    solver_block  <- 5L
+    omni_def      <- list(radius = 13L, block_size = 5L)
+    omni_cfg      <- utils::modifyList(omni_def, omniscape_settings)
+    solver_radius <- omni_cfg$radius
+    solver_block  <- omni_cfg$block_size
 
     refit_fn <- function(theta) {
       R_vec <- quick_resistance(theta, basis_vals, link = link)

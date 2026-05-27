@@ -43,6 +43,12 @@ stack used for the MAP run).}
 \item{model_dir}{Character; directory containing \code{resistance_nn.pt}
 (the MAP checkpoint produced by \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}).}
 
+\item{n_samples}{Integer; number of posterior draws.}
+
+\item{lambda_min}{Numeric; floor on smoothing parameters.}
+
+\item{cg_tol}{Numeric; CG solver tolerance.}
+
 \item{max_iter}{Integer; ADVI iterations.}
 
 \item{lr}{Numeric; ELBO Adam learning rate.}

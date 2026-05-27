@@ -13,7 +13,73 @@
 
 #' Default surrogate optimisation configuration
 #'
+#' Returns a named list of tuning parameters for the GP surrogate optimisation
+#' loop.  Modify individual elements and pass the result via the `config`
+#' argument of [optimize_resistance()] or [diffiscape()].
+#'
+#' @section Sampling budget:
+#' \describe{
+#'   \item{`n_init`}{Integer. Latin Hypercube Sampling design points used for
+#'     the initial space-filling exploration. Default: `20`.}
+#'   \item{`n_iter`}{Integer. Surrogate-guided (GP + acquisition) iterations
+#'     after the initial LHS phase. Default: `50`.}
+#'   \item{`seed`}{Integer. RNG seed for reproducibility. Default: `42`.}
+#' }
+#'
+#' @section Acquisition function:
+#' \describe{
+#'   \item{`acquisition`}{Character. `"TS"` (Thompson Sampling, default) or
+#'     `"EI"` (Expected Improvement).}
+#'   \item{`ts_min_sd`}{Numeric. Floor on GP predictive SD for Thompson
+#'     Sampling, preventing numerical collapse. Default: `1e-6`.}
+#'   \item{`ei_xi_scale_factor`}{Numeric. EI exploration scaling — the initial
+#'     xi is `(max(y) - min(y)) * ei_xi_scale_factor`. Default: `0.1`.}
+#'   \item{`ei_xi_min`}{Numeric. Minimum xi for EI (exploitation floor).
+#'     Default: `0.02`.}
+#'   \item{`ei_decay_rate_divisor`}{Numeric. Controls the xi decay rate;
+#'     `decay_rate = n_iter / ei_decay_rate_divisor`. Default: `5`.}
+#' }
+#'
+#' @section Adaptive local search:
+#' \describe{
+#'   \item{`sigma_initial`}{Numeric. Initial neighbourhood radius (in
+#'     standardised parameter space). Default: `0.15`.}
+#'   \item{`sigma_min`}{Numeric. Minimum neighbourhood radius. Default: `0.02`.}
+#'   \item{`stall_threshold`}{Integer. Iterations without improvement before
+#'     sigma is shrunk. Default: `3`.}
+#'   \item{`decay_factor`}{Numeric. Multiplicative sigma reduction on stall.
+#'     Default: `0.7`.}
+#'   \item{`local_frac_initial`}{Numeric. Initial fraction of candidates drawn
+#'     from the local neighbourhood. Default: `0.5`.}
+#'   \item{`local_frac_max`}{Numeric. Maximum local fraction. Default: `0.8`.}
+#'   \item{`local_frac_increment`}{Numeric. Per-stall increment to the local
+#'     fraction. Default: `0.05`.}
+#'   \item{`restart_threshold`}{Integer. Stall count that triggers a hard
+#'     restart from the best parameters found so far. Default: `5`.}
+#'   \item{`n_candidates`}{Integer. Candidate points sampled per iteration.
+#'     Default: `3000`.}
+#' }
+#'
+#' @section Likelihood model:
+#' \describe{
+#'   \item{`distribution`}{Character. Likelihood for the inner MLE step:
+#'     `"negbin"` (negative-binomial, default) or `"gam"` (GAM via mgcv).}
+#'   \item{`family`}{An [intensity_family] object, or `NULL` (inferred from
+#'     `distribution`). Overrides `distribution` when set.}
+#'   \item{`resistance_link`}{A [resistance_link] object, or `NULL` (uses
+#'     [link_exp()]). Controls how raw parameters map to resistance values.}
+#' }
+#'
+#' @section Connectivity solver:
+#' \describe{
+#'   \item{`omniscape`}{Named list passed to the Omniscape solver:
+#'     `radius` (focal radius in cells, default `13`),
+#'     `block_size` (focal block size, default `5`),
+#'     `cleanup` (remove temp files after each run, default `TRUE`).}
+#' }
+#'
 #' @return A named list of tuning parameters.
+#' @seealso [optimize_resistance()], [diffiscape()]
 #' @export
 default_optimizer_config <- function() {
   list(
