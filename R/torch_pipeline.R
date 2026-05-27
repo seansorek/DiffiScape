@@ -63,6 +63,84 @@
 }
 
 
+# --------------- Torch pipeline configuration --------------------------------
+
+#' Default PyTorch pipeline configuration
+#'
+#' Returns a named list of model hyperparameters used by
+#' [run_torch_pipeline()]. All parameters may be overridden by modifying
+#' the returned list and passing it via the `config` argument.
+#'
+#' Workflow/output parameters (`verbose`, `output_dir`, `warm_start_theta`,
+#' `absorption_schedule`, `compute_uq`, `uq_block_only`) are intentionally
+#' excluded — pass those directly to [run_torch_pipeline()].
+#'
+#' @return A named list of hyperparameters.
+#' @export
+default_torch_config <- function() {
+  list(
+    # --- Neural-network architecture ---
+    hidden_dim              = 32L,
+    n_hidden_layers         = 2L,
+
+    # --- Optimiser ---
+    lr                      = 0.01,
+    weight_decay            = 1e-4,
+    n_epochs                = 300L,
+    patience                = 30L,
+    grad_clip               = 10.0,
+    warmup_epochs           = 10L,
+
+    # --- Solver ---
+    solver                  = "diff_omniscape",
+    radius                  = 15L,
+    block_size              = 10L,
+    focal_fraction          = 0.5,
+    absorption              = 0.01,
+    cg_tol                  = 1e-6,
+    source_spacing          = 5L,
+    source_from_resistance  = TRUE,
+
+    # --- Regularisation ---
+    reg_mean                = 1.0,
+    reg_var                 = 0.1,
+    target_logR_var         = 1.0,
+    reg_skip                = 0.1,
+    log_R_baseline          = 3.0,
+
+    # --- Misc ---
+    seed                    = 42L,
+    device                  = "auto",
+
+    # --- Conv architecture ---
+    use_conv                = FALSE,
+    n_conv_layers           = 3L,
+    conv_channels           = 16L,
+    conv_kernel_size        = 3L,
+    dropout                 = 0.0,
+    use_dilated             = TRUE,
+    intensity_hidden        = 0L,
+
+    # --- Spline-GAM model ---
+    model_type              = "mlp",
+    n_knots                 = 10L,
+    spline_degree           = 3L,
+    include_interactions    = TRUE,
+    penalty_scale           = 1.0,
+    lambda_init_marginal    = 0.0,
+    lambda_init_interaction = 2.0,
+    lambda_min              = 0.0,
+
+    # --- Intensity spline ---
+    intensity_spline        = FALSE,
+    intensity_n_knots       = 5L,
+    intensity_degree        = 3L,
+    lambda_init_intensity   = 2.0,
+    intensity_log1p_max     = 10.0
+  )
+}
+
+
 # --------------- MAP optimisation -------------------------------------------
 
 #' Optimise resistance with a PyTorch neural network
@@ -77,6 +155,8 @@
 #'
 #' @param basis_stack A [terra::SpatRaster] with K covariate layers.
 #' @param obs_points Data.frame with `x, y` columns (projected coords).
+#' @param config A named list of hyperparameters; see [default_torch_config()].
+#'   Individual parameters may still be overridden by passing them directly.
 #' @param hidden_dim Integer; MLP hidden width.
 #' @param n_hidden_layers Integer; number of MLP hidden layers.
 #' @param lr Numeric; Adam learning rate.
@@ -141,55 +221,56 @@
 #' @export
 run_torch_pipeline <- function(basis_stack,
                                 obs_points,
-                                hidden_dim       = 32L,
-                                n_hidden_layers  = 2L,
-                                lr               = 0.01,
-                                weight_decay     = 1e-4,
-                                n_epochs         = 300L,
-                                patience         = 30L,
-                                grad_clip        = 10.0,
-                                cg_tol           = 1e-6,
-                                source_spacing   = 5L,
-                                source_from_resistance = TRUE,
-                                reg_mean         = 1.0,
-                                reg_var          = 0.1,
-                                target_logR_var  = 1.0,
-                                reg_skip         = 0.1,
-                                log_R_baseline   = 3.0,
-                                warm_start_theta = NULL,
-                                output_dir       = "output/torch",
-                                seed             = 42L,
-                                verbose          = TRUE,
-                                solver           = "diff_omniscape",
-                                radius           = 15L,
-                                block_size       = 10L,
-                                focal_fraction   = 0.5,
-                                absorption       = 0.01,
-                                device           = "auto",
-                                use_conv         = FALSE,
-                                n_conv_layers    = 3L,
-                                conv_channels    = 16L,
-                                conv_kernel_size = 3L,
-                                dropout          = 0.0,
-                                use_dilated      = TRUE,
-                                intensity_hidden = 0L,
-                                warmup_epochs    = 10L,
-                                absorption_schedule    = NULL,
-                                model_type             = "mlp",
-                                n_knots                = 10L,
-                                spline_degree          = 3L,
-                                include_interactions   = TRUE,
-                                penalty_scale          = 1.0,
-                                lambda_init_marginal   = 0.0,
-                                lambda_init_interaction = 2.0,
-                                lambda_min             = 0.0,
-                                compute_uq             = FALSE,
-                                uq_block_only          = TRUE,
-                                intensity_spline       = FALSE,
-                                intensity_n_knots      = 5L,
-                                intensity_degree       = 3L,
-                                lambda_init_intensity  = 2.0,
-                                intensity_log1p_max    = 10.0) {
+                                config                  = default_torch_config(),
+                                hidden_dim              = config$hidden_dim,
+                                n_hidden_layers         = config$n_hidden_layers,
+                                lr                      = config$lr,
+                                weight_decay            = config$weight_decay,
+                                n_epochs                = config$n_epochs,
+                                patience                = config$patience,
+                                grad_clip               = config$grad_clip,
+                                cg_tol                  = config$cg_tol,
+                                source_spacing          = config$source_spacing,
+                                source_from_resistance  = config$source_from_resistance,
+                                reg_mean                = config$reg_mean,
+                                reg_var                 = config$reg_var,
+                                target_logR_var         = config$target_logR_var,
+                                reg_skip                = config$reg_skip,
+                                log_R_baseline          = config$log_R_baseline,
+                                warm_start_theta        = NULL,
+                                output_dir              = "output/torch",
+                                seed                    = config$seed,
+                                verbose                 = TRUE,
+                                solver                  = config$solver,
+                                radius                  = config$radius,
+                                block_size              = config$block_size,
+                                focal_fraction          = config$focal_fraction,
+                                absorption              = config$absorption,
+                                device                  = config$device,
+                                use_conv                = config$use_conv,
+                                n_conv_layers           = config$n_conv_layers,
+                                conv_channels           = config$conv_channels,
+                                conv_kernel_size        = config$conv_kernel_size,
+                                dropout                 = config$dropout,
+                                use_dilated             = config$use_dilated,
+                                intensity_hidden        = config$intensity_hidden,
+                                warmup_epochs           = config$warmup_epochs,
+                                absorption_schedule     = NULL,
+                                model_type              = config$model_type,
+                                n_knots                 = config$n_knots,
+                                spline_degree           = config$spline_degree,
+                                include_interactions    = config$include_interactions,
+                                penalty_scale           = config$penalty_scale,
+                                lambda_init_marginal    = config$lambda_init_marginal,
+                                lambda_init_interaction = config$lambda_init_interaction,
+                                lambda_min              = config$lambda_min,
+                                compute_uq              = FALSE,
+                                uq_block_only           = TRUE,
+                                intensity_spline        = config$intensity_spline,
+                                intensity_n_knots       = config$intensity_n_knots,
+                                intensity_degree        = config$intensity_degree,
+                                lambda_init_intensity   = config$lambda_init_intensity,
+                                intensity_log1p_max     = config$intensity_log1p_max) {
 
   if (!.ds_env$torch_initialized) ds_torch_setup()
 
