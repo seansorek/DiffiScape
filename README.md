@@ -1,6 +1,6 @@
 # DiffiScape
 
-**Landscape Connectivity Optimization via Circuitscape.jl — a modular R framework for resistance and intensity model experimentation**
+**Landscape Connectivity Optimization — a modular R framework for resistance and intensity model experimentation**
 
 DiffiScape is an R package designed as a flexible glue layer for fitting landscape resistance surfaces against animal movement data. It bridges circuit-theory connectivity computation ([Omniscape.jl](https://github.com/circuitscape/Omniscape.jl) / [Circuitscape.jl](https://github.com/circuitscape/Circuitscape.jl)) with a suite of swappable likelihood models, making it easy to experiment with different resistance and intensity model combinations. Point process likelihoods are currently implemented, with the architecture designed to accommodate other movement data likelihoods in the future.
 
