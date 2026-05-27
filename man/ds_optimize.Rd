@@ -13,7 +13,8 @@ ds_optimize(
   output_dir = tempdir(),
   covariates_obs = NULL,
   covariates_rasters = NULL,
-  residualise = FALSE
+  residualise = FALSE,
+  solver = c("surrogate", "enzyme", "torch")
 )
 }
 \arguments{
@@ -23,7 +24,9 @@ ds_optimize(
 
 \item{bounds}{Optional parameter bounds.}
 
-\item{config}{Optimiser config (see \code{\link[=default_optimizer_config]{default_optimizer_config()}}).}
+\item{config}{Optimiser config (see \code{\link[=default_optimizer_config]{default_optimizer_config()}}).
+For \code{solver = "torch"}, may contain a \code{torch} sublist whose entries
+are forwarded to \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.}
 
 \item{intensity_config}{Intensity config (see \code{\link[=default_intensity_config]{default_intensity_config()}}).}
 
@@ -34,10 +37,18 @@ ds_optimize(
 \item{covariates_rasters}{Named list of covariate rasters.}
 
 \item{residualise}{Logical.}
+
+\item{solver}{Character; \code{"surrogate"} (GP + Thompson Sampling or
+Expected Improvement, default), \code{"enzyme"} (L-BFGS via differentiable
+Julia solver), or \code{"torch"} (PyTorch neural-network resistance).}
 }
 \value{
-Result from \code{\link[=optimize_resistance]{optimize_resistance()}}.
+Result from \code{\link[=optimize_resistance]{optimize_resistance()}}, \code{\link[=optimize_resistance_enzyme]{optimize_resistance_enzyme()}},
+or \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.
 }
 \description{
-Wrapper around \code{\link[=optimize_resistance]{optimize_resistance()}} with sensible defaults.
+Wrapper that dispatches to \code{\link[=optimize_resistance]{optimize_resistance()}} (GP surrogate),
+\code{\link[=optimize_resistance_enzyme]{optimize_resistance_enzyme()}} (L-BFGS via differentiable Julia
+solver), or \code{\link[=run_torch_pipeline]{run_torch_pipeline()}} (PyTorch neural-network resistance)
+depending on \code{solver}.
 }

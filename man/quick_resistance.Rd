@@ -4,7 +4,13 @@
 \alias{quick_resistance}
 \title{Fast resistance computation on raw values (matrix form)}
 \usage{
-quick_resistance(theta, basis_values, R_min = 1, R_max = 5000)
+quick_resistance(
+  theta,
+  basis_values,
+  R_min = 1,
+  R_max = 5000,
+  link = link_exp()
+)
 }
 \arguments{
 \item{theta}{Numeric vector \code{c(r_0, z_1, ..., z_K)}.}
@@ -13,6 +19,8 @@ quick_resistance(theta, basis_values, R_min = 1, R_max = 5000)
 rows = cells.}
 
 \item{R_min, R_max}{Clamping bounds.}
+
+\item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}
 }
 \value{
 Numeric vector of resistance values.

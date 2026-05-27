@@ -2,14 +2,19 @@
 % Please edit documentation in R/optimizer.R
 \name{optimize_resistance_enzyme}
 \alias{optimize_resistance_enzyme}
-\title{Optimise resistance via Enzyme.jl automatic differentiation}
+\title{Optimise resistance via Enzyme.jl automatic differentiation
+Optimise resistance via the differentiable Julia solver}
 \usage{
 optimize_resistance_enzyme(
   basis_stack,
   obs_points,
   bounds = NULL,
-  config = list(),
-  ...
+  config = default_optimizer_config(),
+  intensity_config = default_intensity_config(),
+  output_dir = tempdir(),
+  covariates_obs = NULL,
+  covariates_rasters = NULL,
+  residualise = FALSE
 )
 }
 \arguments{
@@ -17,18 +22,28 @@ optimize_resistance_enzyme(
 
 \item{obs_points}{Data.frame with \verb{x, y} columns.}
 
-\item{bounds}{Named list of \code{c(lower, upper)} per parameter.}
+\item{bounds}{Named list of \code{c(lower, upper)} per parameter (or
+\code{NULL} for defaults).}
 
-\item{config}{Optimiser configuration (list).}
+\item{config}{Optimiser configuration (see \code{\link[=default_optimizer_config]{default_optimizer_config()}}).}
 
-\item{...}{Additional arguments (reserved for future use).}
+\item{intensity_config}{Intensity config (see \code{\link[=default_intensity_config]{default_intensity_config()}}).}
+
+\item{output_dir}{Directory for logs and results.}
+
+\item{covariates_obs}{Named list of covariate vectors at obs.}
+
+\item{covariates_rasters}{Named list of \link[terra:SpatRaster-class]{terra::SpatRaster} covariates.}
+
+\item{residualise}{Logical; residualise connectivity.}
 }
 \value{
-Currently errors with an informative message.
+A list with \code{best_params}, \code{best_loglik}, \code{bounds},
+\code{n_evaluations}, \code{distribution}, \code{convergence}.
 }
 \description{
-\strong{Not yet implemented.}
-This function will use Enzyme.jl to compute gradients of
-connectivity with respect to resistance parameters and run L-BFGS
-optimisation.
+Uses L-BFGS-B optimisation with the in-memory circuit solver
+(\code{\link[=run_cumulative_current]{run_cumulative_current()}}) instead of the GP surrogate.  A small
+Latin Hypercube warmstart finds a good starting point, then L-BFGS-B
+refines using finite-difference gradients through the fast solver.
 }

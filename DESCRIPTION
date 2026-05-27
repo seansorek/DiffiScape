@@ -30,6 +30,7 @@ Imports:
     utils
 Suggests:
     JuliaConnectoR,
+    reticulate,
     ggplot2,
     spdep,
     testthat (>= 3.0.0)

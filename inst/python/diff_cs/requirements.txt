@@ -1,0 +1,8 @@
+numpy>=1.24
+scipy>=1.10
+pyamg>=5.0
+pytest>=7.0
+# GPU support (optional — install matching your CUDA version):
+#   pip install cupy-cuda12x   # for CUDA 12.x
+#   pip install cupy-cuda11x   # for CUDA 11.x
+# cupy is auto-detected at runtime; CPU fallback is seamless.

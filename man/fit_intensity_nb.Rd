@@ -11,7 +11,8 @@ fit_intensity_nb(
   covariates_obs = NULL,
   covariates_rasters = NULL,
   residualise = FALSE,
-  config = default_intensity_config()
+  config = default_intensity_config(),
+  family = NULL
 )
 }
 \arguments{
@@ -32,6 +33,9 @@ integration-grid covariates (\code{NULL} to omit).}
 covariates before fitting (default \code{FALSE}).}
 
 \item{config}{List from \code{\link[=default_intensity_config]{default_intensity_config()}}.}
+
+\item{family}{An \link{intensity_family} object.  If \code{NULL} (default),
+uses \code{\link[=family_negbin]{family_negbin()}} for backward compatibility.}
 }
 \value{
 A list with \code{estimates}, \code{se}, \code{loglik}, \code{convergence},

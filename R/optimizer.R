@@ -21,8 +21,19 @@ default_optimizer_config <- function() {
     n_iter    = 50L,    # Surrogate-guided iterations
     seed      = 42L,
 
+    # Acquisition: "TS" (Thompson Sampling, default) or "EI" (Expected Improvement)
+    acquisition = "TS",
+
     # Thompson Sampling
     ts_min_sd = 1e-6,   # floor on GP predictive SD
+
+    # Expected Improvement: dynamic xi decay (exploration-exploitation balance)
+    # xi_initial = (max(y) - min(y)) * ei_xi_scale_factor (scaled from LHS scores)
+    # xi_eff(iter) = max(xi_initial * exp(-iter / decay_rate), ei_xi_min)
+    # decay_rate = n_iter / ei_decay_rate_divisor
+    ei_xi_scale_factor    = 0.1,
+    ei_xi_min             = 0.02,
+    ei_decay_rate_divisor = 5,
 
     # Adaptive local search
     sigma_initial       = 0.15,
@@ -467,13 +478,52 @@ evaluate_full_model <- function(resistance_params,
 #' @keywords internal
 .thompson_sampling <- function(x, model, min_sd = 1e-6) {
   # TODO 1: try more advanced TS techniques
-  # TODO 2: add an option for Expected Improvement or other acquisition functions (random forests work well).
   if (is.vector(x)) x <- matrix(x, nrow = 1)
   colnames(x) <- colnames(model@X)
   pred <- stats::predict(model, newdata = x, type = "UK")
   mu   <- pred$mean
   sig  <- pmax(pred$sd, min_sd)
-  stats::rnorm(length(mu), mean = mu, sd = sig) 
+  stats::rnorm(length(mu), mean = mu, sd = sig)
+}
+
+
+# --------------- Expected Improvement --------------------------------------
+# Vectorised EI acquisition with dynamic xi decay.
+# Returns one EI value per candidate row in `x`; caller selects argmax.
+# For minimisation (we minimise negative log-likelihood):
+#   improvement = (y_best - mu - xi)
+#   EI = improvement * Phi(z) + sigma * phi(z),  z = improvement / sigma
+#' @keywords internal
+.expected_improvement <- function(x, model, y_best,
+                                   xi_initial    = 0.1,
+                                   iter          = NULL,
+                                   n_iter        = NULL,
+                                   xi_min        = 0.02,
+                                   decay_divisor = 5,
+                                   min_sd        = 1e-10) {
+  if (is.vector(x)) x <- matrix(x, nrow = 1)
+  colnames(x) <- colnames(model@X)
+
+  pred  <- stats::predict(model, newdata = x, type = "UK")
+  mu    <- pred$mean
+  sigma <- pred$sd
+
+  # Dynamic xi: decays exponentially toward xi_min across the surrogate phase.
+  if (!is.null(iter) && !is.null(n_iter) && n_iter > 0) {
+    decay_rate   <- n_iter / decay_divisor
+    xi_effective <- max(xi_initial * exp(-iter / decay_rate), xi_min)
+  } else {
+    xi_effective <- xi_initial
+  }
+
+  improvement <- y_best - mu - xi_effective
+  ei <- ifelse(
+    sigma < min_sd,
+    0,
+    improvement * stats::pnorm(improvement / sigma) +
+      sigma * stats::dnorm(improvement / sigma)
+  )
+  ei
 }
 
 
@@ -626,10 +676,25 @@ optimize_resistance <- function(basis_stack,
   }
 
   # ======= Phase 2: Surrogate-guided =======================================
+  acquisition <- match.arg(config$acquisition %||% "TS", c("TS", "EI"))
+
   message("\n", strrep("=", 60))
-  message(sprintf("PHASE 2: Thompson Sampling (%d iterations)",
+  message(sprintf("PHASE 2: %s acquisition (%d iterations)",
+                  if (acquisition == "EI") "Expected Improvement" else "Thompson Sampling",
                   config$n_iter))
   message(strrep("=", 60))
+
+  # EI hyperparameters (only used when acquisition = "EI")
+  xi_initial <- NULL
+  decay_rate <- NULL
+  if (acquisition == "EI") {
+    score_range <- max(y_eval) - min(y_eval)
+    xi_initial  <- score_range * (config$ei_xi_scale_factor %||% 0.1)
+    decay_rate  <- (config$n_iter %||% 50L) /
+      (config$ei_decay_rate_divisor %||% 5)
+    message(sprintf("  EI xi_initial: %.4f (score range: %.2f), decay_rate: %.2f",
+                    xi_initial, score_range, decay_rate))
+  }
 
   # Adaptive state
   sigma_vec <- rep(config$sigma_initial, length(bounds))
@@ -672,10 +737,24 @@ optimize_resistance <- function(basis_stack,
       config$n_candidates, bounds, best_point, eff_sigma, local_frac
     )
 
-    ts_vals  <- .thompson_sampling(as.matrix(candidates), surrogate,
-                                    config$ts_min_sd)
-    next_idx <- which.min(ts_vals)
-    next_pt  <- candidates[next_idx, ]
+    if (acquisition == "EI") {
+      ei_vals <- .expected_improvement(
+        as.matrix(candidates), surrogate, y_best,
+        xi_initial    = xi_initial,
+        iter          = iter,
+        n_iter        = config$n_iter,
+        xi_min        = config$ei_xi_min %||% 0.02,
+        decay_divisor = config$ei_decay_rate_divisor %||% 5
+      )
+      next_idx <- which.max(ei_vals)
+      next_pt  <- candidates[next_idx, ]
+      message(sprintf("    EI (best candidate): %.4f", ei_vals[next_idx]))
+    } else {
+      ts_vals  <- .thompson_sampling(as.matrix(candidates), surrogate,
+                                      config$ts_min_sd)
+      next_idx <- which.min(ts_vals)
+      next_pt  <- candidates[next_idx, ]
+    }
 
     theta <- as.numeric(next_pt)
     y <- .outer_objective(
@@ -740,6 +819,9 @@ optimize_resistance <- function(basis_stack,
     surrogate     = final_surrogate,
     bounds        = bounds,
     distribution  = distribution,
+    acquisition   = acquisition,
+    xi_initial    = xi_initial,
+    decay_rate    = decay_rate,
     config        = config
   )
 

@@ -14,7 +14,9 @@ ds_posterior(
   intensity_config = default_intensity_config(),
   covariates_obs = NULL,
   covariates_rasters = NULL,
-  residualise = FALSE
+  residualise = FALSE,
+  link = link_exp(),
+  family = NULL
 )
 }
 \arguments{
@@ -37,6 +39,10 @@ ds_posterior(
 \item{covariates_rasters}{Named list of covariate rasters.}
 
 \item{residualise}{Logical.}
+
+\item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}
+
+\item{family}{An \link{intensity_family} object, or \code{NULL}.}
 }
 \value{
 A list with \code{laplace}, \code{samples}, \code{summary}.

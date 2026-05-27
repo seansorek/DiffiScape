@@ -12,7 +12,10 @@ ds_fit_intensity(
   intensity_config = default_intensity_config(),
   covariates_obs = NULL,
   covariates_rasters = NULL,
-  residualise = FALSE
+  residualise = FALSE,
+  solver = c("surrogate", "enzyme"),
+  link = link_exp(),
+  family = NULL
 )
 }
 \arguments{
@@ -31,6 +34,13 @@ ds_fit_intensity(
 \item{covariates_rasters}{Named list of covariate rasters.}
 
 \item{residualise}{Logical.}
+
+\item{solver}{Character; \code{"surrogate"} (Omniscape) or
+\code{"enzyme"} (differentiable solver).}
+
+\item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}
+
+\item{family}{An \link{intensity_family} object, or \code{NULL}.}
 }
 \value{
 Result from \code{\link[=evaluate_full_model]{evaluate_full_model()}}.

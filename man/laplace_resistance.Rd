@@ -4,18 +4,47 @@
 \alias{laplace_resistance}
 \title{Laplace approximation at the optimised resistance parameters}
 \usage{
-laplace_resistance(opt_result, basis_stack = NULL, refit = FALSE, step = 0.001)
+laplace_resistance(
+  opt_result,
+  basis_stack = NULL,
+  obs_points = NULL,
+  refit = FALSE,
+  step = 0.001,
+  intensity_config = default_intensity_config(),
+  covariates_obs = NULL,
+  covariates_rasters = NULL,
+  residualise = FALSE,
+  link = link_exp(),
+  family = NULL
+)
 }
 \arguments{
-\item{opt_result}{Result from \code{\link[=optimize_resistance]{optimize_resistance()}}.}
+\item{opt_result}{Result from \code{\link[=optimize_resistance]{optimize_resistance()}} or
+\code{\link[=optimize_resistance_enzyme]{optimize_resistance_enzyme()}}.}
 
-\item{basis_stack}{A \link[terra:SpatRaster-class]{terra::SpatRaster} of basis functions (used to
-count dimensions; not re-run unless \code{refit = TRUE}).}
+\item{basis_stack}{A \link[terra:SpatRaster-class]{terra::SpatRaster} of basis functions (required
+when \code{refit = TRUE} or when no surrogate is available).}
 
-\item{refit}{Logical; re-evaluate the Hessian around the MAP using the
-full model instead of the surrogate.}
+\item{obs_points}{Data.frame with \verb{x, y} (required when \code{refit = TRUE}).}
 
-\item{step}{Finite-difference step size for Hessian computation if refitting.}
+\item{refit}{Logical; use \code{numDeriv::hessian()} on the full model
+instead of the GP surrogate.  Automatically set to \code{TRUE} when
+\code{opt_result} has no \verb{$surrogate} (i.e., from
+\code{\link[=optimize_resistance_enzyme]{optimize_resistance_enzyme()}}).}
+
+\item{step}{Finite-difference step size for Hessian computation.}
+
+\item{intensity_config}{Optional \code{\link[=default_intensity_config]{default_intensity_config()}} list.}
+
+\item{covariates_obs}{Named list of covariate vectors.}
+
+\item{covariates_rasters}{Named list of covariate rasters.}
+
+\item{residualise}{Logical.}
+
+\item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}
+
+\item{family}{An \link{intensity_family} object, or \code{NULL}.}
 }
 \value{
 A list with \code{mode}, \code{covariance}, \code{precision}, \code{std_error}.

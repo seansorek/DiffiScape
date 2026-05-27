@@ -9,7 +9,8 @@ rasterise_deviance_residuals(
   obs_points,
   connectivity,
   intensity_config = default_intensity_config(),
-  covariates_rasters = NULL
+  covariates_rasters = NULL,
+  family = NULL
 )
 }
 \arguments{
@@ -23,6 +24,8 @@ rasterise_deviance_residuals(
 \item{intensity_config}{Intensity config.}
 
 \item{covariates_rasters}{Named list of covariate rasters.}
+
+\item{family}{An \link{intensity_family} object, or \code{NULL} (uses NB default).}
 }
 \value{
 A \link[terra:SpatRaster-class]{terra::SpatRaster} of deviance residuals.

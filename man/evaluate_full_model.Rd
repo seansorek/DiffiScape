@@ -14,7 +14,9 @@ evaluate_full_model(
   covariates_obs = NULL,
   covariates_rasters = NULL,
   residualise = FALSE,
-  verbose = TRUE
+  verbose = TRUE,
+  link = link_exp(),
+  family = NULL
 )
 }
 \arguments{
@@ -37,6 +39,11 @@ evaluate_full_model(
 \item{residualise}{Logical.}
 
 \item{verbose}{Logical.}
+
+\item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}
+
+\item{family}{An \link{intensity_family} object, or \code{NULL} to use the
+default for the chosen \code{distribution}.}
 }
 \value{
 A list with \code{loglik}, \code{intensity_params}, \code{intensity_se},

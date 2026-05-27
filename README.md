@@ -2,9 +2,13 @@
 
 **Landscape Connectivity Optimization via Circuitscape.jl — a modular R framework for resistance and intensity model experimentation**
 
-DiffiScape is an R package designed as a flexible glue layer for fitting landscape resistance surfaces against animal movement data. It bridges circuit-theory connectivity computation ([Omniscape.jl](https://github.com/circuitscape/Omniscape.jl) / [Circuitscape.jl](https://github.com/circuitscape/Circuitscape.jl)) with a suite of swappable likelihood models, making it easy to experiment with different resistance and intensity model combinations. Point process likelihoods are currently implemented, with the architecture designed to accommodate other movement data likelihoods in the future. Gradient-based optimization via [Enzyme.jl](https://github.com/EnzymeAD/Enzyme.jl) is planned for a future release.
+DiffiScape is an R package designed as a flexible glue layer for fitting landscape resistance surfaces against animal movement data. It bridges circuit-theory connectivity computation ([Omniscape.jl](https://github.com/circuitscape/Omniscape.jl) / [Circuitscape.jl](https://github.com/circuitscape/Circuitscape.jl)) with a suite of swappable likelihood models, making it easy to experiment with different resistance and intensity model combinations. Point process likelihoods are currently implemented, with the architecture designed to accommodate other movement data likelihoods in the future.
 
-Users supply environmental rasters and GPS locations; DiffiScape estimates resistance parameters that best explain the observed spatial distribution of animal occurrences. Negative binomial and Poisson likelihoods are currently supported, with more likelihood types planned.
+Users supply environmental rasters and GPS locations; DiffiScape estimates resistance parameters that best explain the observed spatial distribution of animal occurrences. Negative binomial and Poisson likelihoods are currently supported. The package ships two optimization back-ends and a full neural-network resistance pipeline:
+
+- **Surrogate BO** — Latin Hypercube Sampling → GP emulator → Thompson Sampling or Expected Improvement (selectable)
+- **Enzyme.jl L-BFGS** — gradient-based optimization via automatic differentiation in Julia
+- **PyTorch pipeline** — MLP / convolutional / spline-GAM resistance networks trained with a differentiable circuit solver, plus MAP optimization and full Bayesian posterior sampling (Langevin/MALA, NUTS, ADVI)
 
 ---
 
@@ -58,7 +62,7 @@ DiffiScape is built around easy **experimentation** with different resistance an
 - **Swap intensity models** — choose between parametric (negative binomial, Poisson) and nonparametric (GAM) count models for the inner-loop likelihood, or plug in your own.
 - **Swap connectivity engines** — use Omniscape cumulative current flow, Circuitscape pairwise resistances, or any other raster-valued connectivity surface.
 
-The surrogate optimizer (Latin Hypercube Sampling → GP + Thompson Sampling) coordinates the outer search over resistance parameters while calling whichever intensity model you choose at each evaluation. A gradient-based pathway via Enzyme.jl is planned to allow arbitrarily complex, differentiable resistance models.
+The surrogate optimizer (Latin Hypercube Sampling → GP + Thompson Sampling or Expected Improvement) coordinates the outer search over resistance parameters while calling whichever intensity model you choose at each evaluation. A gradient-based pathway via Enzyme.jl allows arbitrarily complex, differentiable resistance models. The PyTorch back-end adds neural-network resistance surfaces with full Bayesian posterior sampling.
 
 ---
 
@@ -170,10 +174,20 @@ diag <- ds_diagnose(fit, pts, connectivity)
 ```r
 cfg <- default_optimizer_config()
 # Key fields:
-#   n_init    = 20L      # LHS design points
-#   n_iter    = 50L      # Surrogate iterations
-#   distribution = "negbin"  # or "gam"
-#   omniscape = list(radius = 13L, block_size = 5L)
+#   n_init       = 20L         # LHS design points
+#   n_iter       = 50L         # Surrogate iterations
+#   acquisition  = "TS"        # "TS" (Thompson Sampling) or "EI" (Expected Improvement)
+#   distribution = "negbin"    # or "gam" / "poisson"
+#   omniscape    = list(radius = 13L, block_size = 5L)
+#
+# EI-specific knobs (used when acquisition = "EI"):
+#   ei_xi_scale_factor  = 0.1   # xi = score_range * scale_factor at iteration 1
+#   ei_xi_min           = 0.02  # floor xi decays toward
+#   ei_decay_rate_divisor = 5   # controls how quickly xi decays
+
+# Use Expected Improvement acquisition instead of Thompson Sampling:
+cfg$acquisition <- "EI"
+opt <- ds_optimize(basis, pts, config = cfg)
 ```
 
 ### Intensity Config
@@ -189,13 +203,86 @@ int_cfg <- default_intensity_config()
 
 ---
 
+## PyTorch Pipeline
+
+DiffiScape ships a fully self-contained neural-network resistance back-end. The Python code is vendored inside the package (`inst/python/diff_cs/`) — no external files or research-repository clone is needed.
+
+### Setup
+
+```r
+# Install Python dependencies into the active reticulate environment:
+ds_install_torch_deps()           # CPU — installs torch, numpy, scipy, pyamg
+ds_install_torch_deps(gpu = TRUE) # GPU — additionally installs cupy-cuda12x
+
+# Initialise the Python session (done once per R session):
+ds_torch_setup()
+ds_torch_check()  # TRUE when ready
+```
+
+### MAP Optimization (Adam)
+
+```r
+result <- run_torch_pipeline(
+  basis_stack = basis,
+  obs_points  = pts,
+  model_type  = "mlp",        # "mlp", "conv", or "spline_gam"
+  n_epochs    = 500L,
+  output_dir  = "torch_results/"
+)
+
+result$resistance_raster   # SpatRaster — optimized resistance surface
+result$connectivity_raster # SpatRaster — resulting current flow
+result$intensity_raster    # SpatRaster — predicted intensity surface
+result$best_loglik         # scalar — best log-likelihood achieved
+```
+
+### Bayesian Posterior Sampling
+
+```r
+# Langevin / MALA sampler:
+mcmc <- run_bayesian_sampling(
+  basis_stack = basis, obs_points = pts,
+  n_samples = 1000L, burnin = 200L
+)
+
+# NUTS (No-U-Turn Sampler):
+nuts <- run_bayesian_sampling_hmc(
+  basis_stack = basis, obs_points = pts,
+  n_samples = 500L, n_chains = 2L
+)
+
+# ADVI (Automatic Differentiation Variational Inference):
+vi <- run_advi(basis_stack = basis, obs_points = pts, n_iter = 2000L)
+```
+
+### Gradient Checks
+
+```r
+verify_torch_gradient(basis, pts)    # MLP gradient check
+verify_conv_gradient(basis, pts)     # convolutional resistance gradient
+verify_spline_gradient(basis, pts)   # spline-GAM gradient
+```
+
+### Using the Torch Back-end via `ds_optimize()`
+
+```r
+opt <- ds_optimize(basis, pts, solver = "torch",
+                   config = list(torch = list(
+                     model_type = "mlp", n_epochs = 300L
+                   )))
+```
+
+---
+
 ## Dependencies
 
 **R Imports:** `terra`, `mgcv`, `numDeriv`, `DiceKriging`, `lhs`, `Matrix`
 
-**R Suggests:** `JuliaConnectoR` (required for connectivity computation), `ggplot2`, `spdep`, `testthat`
+**R Suggests:** `JuliaConnectoR` (required for Julia/connectivity back-end), `reticulate` (required for PyTorch back-end), `ggplot2`, `spdep`, `testthat`
 
 **Julia:** Circuitscape.jl ≥ 5.0, Omniscape.jl ≥ 0.6 (Julia ≥ 1.9)
+
+**Python (optional, for PyTorch back-end):** Python ≥ 3.9, `torch`, `numpy`, `scipy`, `pyamg` — installed via `ds_install_torch_deps()`
 
 ---
 

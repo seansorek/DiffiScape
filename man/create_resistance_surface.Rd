@@ -9,7 +9,8 @@ create_resistance_surface(
   basis_stack,
   R_min = 1,
   R_max = 5000,
-  return_log = FALSE
+  return_log = FALSE,
+  link = link_exp()
 )
 }
 \arguments{
@@ -22,24 +23,33 @@ coefficients for each basis function.}
 \code{\link[=create_basis_stack]{create_basis_stack()}}).}
 
 \item{R_min, R_max}{Numeric.
-Hard floor / ceiling applied after exponentiation (default 1 / 5000).}
+Hard floor / ceiling applied after the link (default 1 / 5000).}
 
-\item{return_log}{If \code{TRUE}, return the log-resistance surface instead.}
+\item{return_log}{If \code{TRUE}, return the linear predictor (eta) instead.}
+
+\item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}
 }
 \value{
 A single-layer \link[terra:SpatRaster-class]{terra::SpatRaster} named \code{"resistance"} or
 \code{"log_resistance"}.
 }
 \description{
-Computes the resistance raster using an exponential (log) link:
-\deqn{\log R(x) = r_0 + \sum_{k=1}^{K} z_k \phi_k(x)}{
-  log R(x) = r0 + z1*phi1(x) + ... + zK*phiK(x)}
+Computes the resistance raster by applying a link function to the
+linear predictor \eqn{\eta(x) = r_0 + \sum_{k} z_k \phi_k(x)}.
+The default exponential link gives
+\eqn{R(x) = \text{clamp}(\exp(\eta), R_{\min}, R_{\max})}.
+Supply a different \link{resistance_link} to change the mapping.
 }
 \examples{
 \dontrun{
   R <- create_resistance_surface(
     params = c(r_0 = 3, z_1 = -0.5, z_2 = 0.5),
     basis_stack = basis
+  )
+  # With a different link:
+  R2 <- create_resistance_surface(
+    params = c(r_0 = 3, z_1 = -0.5, z_2 = 0.5),
+    basis_stack = basis, link = link_softplus()
   )
 }
 }

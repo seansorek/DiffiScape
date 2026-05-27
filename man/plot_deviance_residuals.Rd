@@ -4,14 +4,26 @@
 \alias{plot_deviance_residuals}
 \title{Diagnostic plot: deviance residuals vs fitted values}
 \usage{
-plot_deviance_residuals(observed, fitted, size, ...)
+plot_deviance_residuals(
+  observed,
+  fitted,
+  size = NULL,
+  family = NULL,
+  extra_params = NULL,
+  ...
+)
 }
 \arguments{
 \item{observed}{Integer vector of observed counts.}
 
 \item{fitted}{Numeric vector of fitted means.}
 
-\item{size}{NB size parameter.}
+\item{size}{NB size parameter (ignored when \code{family} is given).}
+
+\item{family}{An \link{intensity_family} object, or \code{NULL}.}
+
+\item{extra_params}{Named vector of extra distribution parameters
+(used with \code{family}).}
 
 \item{...}{Extra arguments passed to \code{\link[graphics:plot.default]{graphics::plot()}}.}
 }

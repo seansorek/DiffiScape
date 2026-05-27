@@ -2,9 +2,6 @@
 % Please edit documentation in R/resistance.R
 \name{resistance_model}
 \alias{resistance_model}
-\alias{print.resistance_model}
-\alias{summary.resistance_model}
-\alias{predict.resistance_model}
 \title{Create a resistance model object}
 \usage{
 resistance_model(
@@ -13,58 +10,46 @@ resistance_model(
   type = c("parametric", "custom"),
   R_min = 1,
   R_max = 5000,
+  link = link_exp(),
   ...
 )
-
-\method{print}{resistance_model}(x, ...)
-
-\method{summary}{resistance_model}(object, ...)
-
-\method{predict}{resistance_model}(object, basis_stack = NULL, ...)
 }
 \arguments{
 \item{params}{\itemize{
 \item \strong{parametric}: named numeric vector or list with elements
 \code{r_0, z_1, ..., z_K} (see \code{\link[=create_resistance_surface]{create_resistance_surface()}}).
+\itemize{
 \item \strong{custom}: a function \code{f(basis_stack, ...)} returning a
 single-layer \link[terra:SpatRaster-class]{terra::SpatRaster} of resistance values.
+}
 }}
 
 \item{basis_stack}{A \link[terra:SpatRaster-class]{terra::SpatRaster} with \emph{K} layers.}
 
 \item{type}{\code{"parametric"} (default) or \code{"custom"}.}
 
-\item{R_min, R_max}{Hard clamping bounds applied after exponentiation in
+\item{R_min, R_max}{Hard clamping bounds applied after the link in
 the parametric pathway (default 1 / 5000).  Ignored for custom models
 unless the function applies them internally.}
 
+\item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).
+Ignored for custom models.}
+
 \item{...}{Additional metadata stored on the object (e.g. \code{name},
-\code{description}, or a reference to an external ML model object).
-For \code{predict()}, additional arguments are forwarded to the underlying
-model function (e.g. \code{return_log = TRUE} for parametric models).}
-
-\item{x}{A \code{\link[=resistance_model]{resistance_model()}} object.}
-
-\item{object}{A \code{\link[=resistance_model]{resistance_model()}} object.}
+\code{description}, or a reference to an external ML model object).}
 }
 \value{
-\code{resistance_model()} returns an S3 object of class
-\code{"resistance_model"}.  Both parametric and custom objects support
-the same \code{predict()}, \code{print()}, and \code{summary()} methods,
-making them interchangeable.
-
-\code{predict.resistance_model()} returns a single-layer
-\link[terra:SpatRaster-class]{terra::SpatRaster} of resistance values.
-
-\code{print.resistance_model()} and \code{summary.resistance_model()} return
-their first argument invisibly.
+An S3 object of class \code{"resistance_model"}.  Both parametric
+and custom objects support the same \code{predict()}, \code{print()},
+and \code{summary()} methods, making them interchangeable.
 }
 \description{
 Constructs an S3 object of class \code{resistance_model} that encapsulates a
 resistance model together with its basis stack and clamping bounds.
 Both model types share a consistent interface and can be used
 interchangeably with \code{\link[=predict]{predict()}}, \code{\link[=print]{print()}}, and \code{\link[=summary]{summary()}}.
-
+}
+\details{
 Two model types are supported:
 \itemize{
 \item \code{"parametric"} — the log-linear model
@@ -82,9 +67,6 @@ differentiable custom model.  Expert-based maps make natural starting
 points before gradient descent.
 }
 }
-\seealso{
-\code{\link[=create_resistance_surface]{create_resistance_surface()}}, \code{\link[=resistance_sensitivity]{resistance_sensitivity()}}
-}
 \examples{
 \dontrun{
   r1 <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
@@ -97,6 +79,10 @@ points before gradient descent.
   print(m)
   R <- predict(m)
 
+  ## With a different link
+  m2 <- resistance_model(c(r_0 = 1, z_1 = 0.5), basis,
+                         link = link_softplus())
+
   ## Custom / ML model (e.g. IRL or CNN wrapper) -- same interface
   ml_fn <- function(basis_stack, ...) {
     terra::app(basis_stack[[1]], function(x) exp(x))
@@ -105,4 +91,7 @@ points before gradient descent.
                            name = "IRL model v1")
   R_ml <- predict(m_ml)   # identical call to the parametric case
 }
+}
+\seealso{
+\code{\link[=create_resistance_surface]{create_resistance_surface()}}, \code{\link[=resistance_sensitivity]{resistance_sensitivity()}}
 }

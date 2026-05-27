@@ -19,7 +19,8 @@ diffiscape(
   plot = TRUE,
   crs = NULL,
   rescale_basis = TRUE,
-  pattern = "*.tif"
+  pattern = "*.tif",
+  solver = c("surrogate", "enzyme")
 )
 }
 \arguments{

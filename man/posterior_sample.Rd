@@ -17,6 +17,8 @@ posterior_sample(
   covariates_obs = NULL,
   covariates_rasters = NULL,
   residualise = FALSE,
+  link = link_exp(),
+  family = NULL,
   seed = 42L
 )
 }
@@ -44,6 +46,10 @@ posterior_sample(
 \item{covariates_rasters}{Named list of covariate rasters.}
 
 \item{residualise}{Logical.}
+
+\item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}
+
+\item{family}{An \link{intensity_family} object, or \code{NULL}.}
 
 \item{seed}{Random seed.}
 }

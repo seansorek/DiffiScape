@@ -11,6 +11,9 @@
   .ds_env$julia_con <- NULL
   .ds_env$julia_project_path <- system.file("julia", "DiffiScape",
                                              package = "DiffiScape")
+
+  .ds_env$torch_initialized <- FALSE
+  .ds_env$torch_module      <- NULL
 }
 
 .onAttach <- function(libname, pkgname) {
@@ -26,6 +29,15 @@
       "Note: JuliaConnectoR not installed. ",
       "Install with install.packages('JuliaConnectoR') ",
       "and ensure Julia is on your PATH."
+    )
+  }
+
+  reticulate_ok <- requireNamespace("reticulate", quietly = TRUE)
+  if (!reticulate_ok) {
+    packageStartupMessage(
+      "Note: reticulate not installed. ",
+      "Install with install.packages('reticulate') ",
+      "to enable the PyTorch backend (run_torch_pipeline, run_bayesian_sampling, ...)."
     )
   }
 }

@@ -10,6 +10,7 @@ diagnose_model(
   connectivity,
   intensity_config = default_intensity_config(),
   covariates_rasters = NULL,
+  family = NULL,
   plot = TRUE
 )
 }
@@ -24,6 +25,8 @@ diagnose_model(
 \item{intensity_config}{Intensity config.}
 
 \item{covariates_rasters}{Named list of covariate rasters.}
+
+\item{family}{An \link{intensity_family} object, or \code{NULL} (uses NB default).}
 
 \item{plot}{Logical; produce diagnostic plots.}
 }

@@ -119,23 +119,27 @@ ds_init_julia <- function(julia_home = NULL, force = FALSE) {
 
 #' Optimise resistance parameters
 #'
-#' Wrapper that dispatches to [optimize_resistance()] (GP surrogate) or
-#' [optimize_resistance_enzyme()] (L-BFGS via differentiable solver)
+#' Wrapper that dispatches to [optimize_resistance()] (GP surrogate),
+#' [optimize_resistance_enzyme()] (L-BFGS via differentiable Julia
+#' solver), or [run_torch_pipeline()] (PyTorch neural-network resistance)
 #' depending on `solver`.
 #'
 #' @param basis_stack Basis function stack.
 #' @param obs_points Data.frame with `x, y`.
 #' @param bounds Optional parameter bounds.
 #' @param config Optimiser config (see [default_optimizer_config()]).
+#'   For `solver = "torch"`, may contain a `torch` sublist whose entries
+#'   are forwarded to [run_torch_pipeline()].
 #' @param intensity_config Intensity config (see [default_intensity_config()]).
 #' @param output_dir Directory for logs.
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param residualise Logical.
-#' @param solver Character; `"surrogate"` (GP + Thompson Sampling,
-#'   default) or `"enzyme"` (L-BFGS via differentiable Julia solver).
-#' @return Result from [optimize_resistance()] or
-#'   [optimize_resistance_enzyme()].
+#' @param solver Character; `"surrogate"` (GP + Thompson Sampling or
+#'   Expected Improvement, default), `"enzyme"` (L-BFGS via differentiable
+#'   Julia solver), or `"torch"` (PyTorch neural-network resistance).
+#' @return Result from [optimize_resistance()], [optimize_resistance_enzyme()],
+#'   or [run_torch_pipeline()].
 #' @export
 ds_optimize <- function(basis_stack,
                         obs_points,
@@ -146,9 +150,20 @@ ds_optimize <- function(basis_stack,
                         covariates_obs   = NULL,
                         covariates_rasters = NULL,
                         residualise      = FALSE,
-                        solver           = c("surrogate", "enzyme")) {
+                        solver           = c("surrogate", "enzyme", "torch")) {
 
   solver <- match.arg(solver)
+
+  if (solver == "torch") {
+    torch_args <- config$torch %||% list()
+    torch_args$basis_stack <- basis_stack
+    torch_args$obs_points  <- obs_points
+    if (is.null(torch_args$output_dir)) torch_args$output_dir <- output_dir
+    if (is.null(torch_args$seed) && !is.null(config$seed)) {
+      torch_args$seed <- config$seed
+    }
+    return(do.call(run_torch_pipeline, torch_args))
+  }
 
   opt_fn <- if (solver == "enzyme") optimize_resistance_enzyme
             else optimize_resistance
