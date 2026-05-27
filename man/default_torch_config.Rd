@@ -10,12 +10,138 @@ default_torch_config()
 A named list of hyperparameters.
 }
 \description{
-Returns a named list of model hyperparameters used by
-\code{\link[=run_torch_pipeline]{run_torch_pipeline()}}. All parameters may be overridden by modifying
-the returned list and passing it via the \code{config} argument.
-}
-\details{
+Returns a named list of model hyperparameters for \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.
+Modify individual elements and pass the result via the \code{config} argument.
 Workflow/output parameters (\code{verbose}, \code{output_dir}, \code{warm_start_theta},
-\code{absorption_schedule}, \code{compute_uq}, \code{uq_block_only}) are intentionally
-excluded — pass those directly to \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.
+\code{absorption_schedule}, \code{compute_uq}, \code{uq_block_only}) are excluded — pass
+those directly to \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.
+}
+\section{Neural-network architecture}{
+
+\describe{
+  \item{\code{hidden_dim}}{Integer. Width of each MLP hidden layer.
+    Default: \code{32}.}
+  \item{\code{n_hidden_layers}}{Integer. Number of MLP hidden layers.
+    Default: \code{2}.}
+}
+}
+
+\section{Optimiser}{
+
+\describe{
+  \item{\code{lr}}{Numeric. Adam learning rate. Default: \code{0.01}.}
+  \item{\code{weight_decay}}{Numeric. L2 weight decay (AdamW). Default: \code{1e-4}.}
+  \item{\code{n_epochs}}{Integer. Maximum training epochs. Default: \code{300}.}
+  \item{\code{patience}}{Integer. Early-stopping patience in epochs.
+    Default: \code{30}.}
+  \item{\code{grad_clip}}{Numeric. Gradient-norm clipping threshold.
+    Default: \code{10}.}
+  \item{\code{warmup_epochs}}{Integer. Linear LR warm-up duration in epochs.
+    Default: \code{10}.}
+}
+}
+
+\section{Connectivity solver}{
+
+\describe{
+  \item{\code{solver}}{Character. Circuit solver: \code{"diff_omniscape"} (focal
+    Omniscape, default), \code{"global"} (all-pairs), or
+    \code{"global_absorption"} (all-pairs with absorption).}
+  \item{\code{radius}}{Integer. Omniscape focal radius in cells. Default: \code{15}.}
+  \item{\code{block_size}}{Integer. Omniscape focal block size. Default: \code{10}.}
+  \item{\code{focal_fraction}}{Numeric. Fraction of focal cells sampled
+    stochastically per gradient step. Default: \code{0.5}.}
+  \item{\code{absorption}}{Numeric. Absorption rate for the global solver.
+    Default: \code{0.01}.}
+  \item{\code{cg_tol}}{Numeric. Conjugate-gradient solver tolerance.
+    Default: \code{1e-6}.}
+  \item{\code{source_spacing}}{Integer. Lattice spacing in cells between circuit
+    sources for the global solver. Default: \code{5}.}
+  \item{\code{source_from_resistance}}{Logical. Weight source strength by inverse
+    resistance. Default: \code{TRUE}.}
+}
+}
+
+\section{Regularisation}{
+
+\describe{
+  \item{\code{reg_mean}}{Numeric. Weight on the \code{(mean(log R) - log_R_baseline)^2}
+    penalty, anchoring the overall resistance level. Default: \code{1.0}.}
+  \item{\code{reg_var}}{Numeric. Weight on a variance hinge that discourages
+    \code{var(log R)} from falling below \code{target_logR_var}. Default: \code{0.1}.}
+  \item{\code{target_logR_var}}{Numeric. Variance threshold below which the
+    hinge activates. Default: \code{1.0}.}
+  \item{\code{reg_skip}}{Numeric. Weight on skip-connection magnitude penalty
+    (MLP only). Default: \code{0.1}.}
+  \item{\code{log_R_baseline}}{Numeric. Target mean of \code{log R} used in the mean
+    penalty. Default: \code{3.0}.}
+}
+}
+
+\section{Miscellaneous}{
+
+\describe{
+  \item{\code{seed}}{Integer. RNG seed for reproducibility. Default: \code{42}.}
+  \item{\code{device}}{Character. \code{"auto"} (GPU if available), \code{"cuda"}, or
+    \code{"cpu"}. Default: \code{"auto"}.}
+}
+}
+
+\section{Convolutional architecture (use_conv = TRUE)}{
+
+\describe{
+  \item{\code{use_conv}}{Logical. Use ConvResistanceNet instead of MLP.
+    Default: \code{FALSE}.}
+  \item{\code{n_conv_layers}}{Integer. Number of Conv2d residual blocks.
+    Default: \code{3}.}
+  \item{\code{conv_channels}}{Integer. Convolutional feature channels.
+    Default: \code{16}.}
+  \item{\code{conv_kernel_size}}{Integer. Convolution kernel size. Default: \code{3}.}
+  \item{\code{dropout}}{Numeric. Dropout rate applied in the MLP head.
+    Default: \code{0.0}.}
+  \item{\code{use_dilated}}{Logical. Use dilated convolutions for a larger
+    receptive field. Default: \code{TRUE}.}
+  \item{\code{intensity_hidden}}{Integer. Width of the learned intensity MLP;
+    \code{0} uses a linear mapping. Default: \code{0}.}
+}
+}
+
+\section{Spline-GAM model (model_type = "spline_gam")}{
+
+\describe{
+  \item{\code{model_type}}{Character. \code{"mlp"} (default) or \code{"spline_gam"} for
+    an interpretable B-spline resistance model.}
+  \item{\code{n_knots}}{Integer. Spline knots per covariate. Default: \code{10}.}
+  \item{\code{spline_degree}}{Integer. B-spline degree. Default: \code{3} (cubic).}
+  \item{\code{include_interactions}}{Logical. Add tensor-product interaction terms
+    between pairs of covariates. Default: \code{TRUE}.}
+  \item{\code{penalty_scale}}{Numeric. Global multiplier on all smoothing
+    penalties. Default: \code{1.0}.}
+  \item{\code{lambda_init_marginal}}{Numeric. Initial smoothing parameter for
+    marginal (main-effect) terms. Default: \code{0.0}.}
+  \item{\code{lambda_init_interaction}}{Numeric. Initial smoothing parameter for
+    interaction terms. Default: \code{2.0}.}
+  \item{\code{lambda_min}}{Numeric. Minimum smoothing parameter floor.
+    Default: \code{0.0}.}
+}
+}
+
+\section{Intensity spline (intensity_spline = TRUE)}{
+
+\describe{
+  \item{\code{intensity_spline}}{Logical. Apply a learned spline transform on
+    connectivity in the intensity model. Default: \code{FALSE}.}
+  \item{\code{intensity_n_knots}}{Integer. Spline knots for the intensity
+    connectivity term. Default: \code{5}.}
+  \item{\code{intensity_degree}}{Integer. B-spline degree for intensity spline.
+    Default: \code{3}.}
+  \item{\code{lambda_init_intensity}}{Numeric. Initial smoothing parameter for
+    the intensity spline. Default: \code{2.0}.}
+  \item{\code{intensity_log1p_max}}{Numeric. Clamp applied to
+    \code{log1p(connectivity)} before the intensity spline. Default: \code{10.0}.}
+}
+}
+
+\seealso{
+\code{\link[=run_torch_pipeline]{run_torch_pipeline()}}, \code{\link[=run_advi]{run_advi()}}, \code{\link[=run_bayesian_sampling_hmc]{run_bayesian_sampling_hmc()}}
 }

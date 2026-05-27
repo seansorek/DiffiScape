@@ -67,15 +67,124 @@
 
 #' Default PyTorch pipeline configuration
 #'
-#' Returns a named list of model hyperparameters used by
-#' [run_torch_pipeline()]. All parameters may be overridden by modifying
-#' the returned list and passing it via the `config` argument.
-#'
+#' Returns a named list of model hyperparameters for [run_torch_pipeline()].
+#' Modify individual elements and pass the result via the `config` argument.
 #' Workflow/output parameters (`verbose`, `output_dir`, `warm_start_theta`,
-#' `absorption_schedule`, `compute_uq`, `uq_block_only`) are intentionally
-#' excluded — pass those directly to [run_torch_pipeline()].
+#' `absorption_schedule`, `compute_uq`, `uq_block_only`) are excluded — pass
+#' those directly to [run_torch_pipeline()].
+#'
+#' @section Neural-network architecture:
+#' \describe{
+#'   \item{`hidden_dim`}{Integer. Width of each MLP hidden layer.
+#'     Default: `32`.}
+#'   \item{`n_hidden_layers`}{Integer. Number of MLP hidden layers.
+#'     Default: `2`.}
+#' }
+#'
+#' @section Optimiser:
+#' \describe{
+#'   \item{`lr`}{Numeric. Adam learning rate. Default: `0.01`.}
+#'   \item{`weight_decay`}{Numeric. L2 weight decay (AdamW). Default: `1e-4`.}
+#'   \item{`n_epochs`}{Integer. Maximum training epochs. Default: `300`.}
+#'   \item{`patience`}{Integer. Early-stopping patience in epochs.
+#'     Default: `30`.}
+#'   \item{`grad_clip`}{Numeric. Gradient-norm clipping threshold.
+#'     Default: `10`.}
+#'   \item{`warmup_epochs`}{Integer. Linear LR warm-up duration in epochs.
+#'     Default: `10`.}
+#' }
+#'
+#' @section Connectivity solver:
+#' \describe{
+#'   \item{`solver`}{Character. Circuit solver: `"diff_omniscape"` (focal
+#'     Omniscape, default), `"global"` (all-pairs), or
+#'     `"global_absorption"` (all-pairs with absorption).}
+#'   \item{`radius`}{Integer. Omniscape focal radius in cells. Default: `15`.}
+#'   \item{`block_size`}{Integer. Omniscape focal block size. Default: `10`.}
+#'   \item{`focal_fraction`}{Numeric. Fraction of focal cells sampled
+#'     stochastically per gradient step. Default: `0.5`.}
+#'   \item{`absorption`}{Numeric. Absorption rate for the global solver.
+#'     Default: `0.01`.}
+#'   \item{`cg_tol`}{Numeric. Conjugate-gradient solver tolerance.
+#'     Default: `1e-6`.}
+#'   \item{`source_spacing`}{Integer. Lattice spacing in cells between circuit
+#'     sources for the global solver. Default: `5`.}
+#'   \item{`source_from_resistance`}{Logical. Weight source strength by inverse
+#'     resistance. Default: `TRUE`.}
+#' }
+#'
+#' @section Regularisation:
+#' \describe{
+#'   \item{`reg_mean`}{Numeric. Weight on the `(mean(log R) - log_R_baseline)^2`
+#'     penalty, anchoring the overall resistance level. Default: `1.0`.}
+#'   \item{`reg_var`}{Numeric. Weight on a variance hinge that discourages
+#'     `var(log R)` from falling below `target_logR_var`. Default: `0.1`.}
+#'   \item{`target_logR_var`}{Numeric. Variance threshold below which the
+#'     hinge activates. Default: `1.0`.}
+#'   \item{`reg_skip`}{Numeric. Weight on skip-connection magnitude penalty
+#'     (MLP only). Default: `0.1`.}
+#'   \item{`log_R_baseline`}{Numeric. Target mean of `log R` used in the mean
+#'     penalty. Default: `3.0`.}
+#' }
+#'
+#' @section Miscellaneous:
+#' \describe{
+#'   \item{`seed`}{Integer. RNG seed for reproducibility. Default: `42`.}
+#'   \item{`device`}{Character. `"auto"` (GPU if available), `"cuda"`, or
+#'     `"cpu"`. Default: `"auto"`.}
+#' }
+#'
+#' @section Convolutional architecture (use_conv = TRUE):
+#' \describe{
+#'   \item{`use_conv`}{Logical. Use ConvResistanceNet instead of MLP.
+#'     Default: `FALSE`.}
+#'   \item{`n_conv_layers`}{Integer. Number of Conv2d residual blocks.
+#'     Default: `3`.}
+#'   \item{`conv_channels`}{Integer. Convolutional feature channels.
+#'     Default: `16`.}
+#'   \item{`conv_kernel_size`}{Integer. Convolution kernel size. Default: `3`.}
+#'   \item{`dropout`}{Numeric. Dropout rate applied in the MLP head.
+#'     Default: `0.0`.}
+#'   \item{`use_dilated`}{Logical. Use dilated convolutions for a larger
+#'     receptive field. Default: `TRUE`.}
+#'   \item{`intensity_hidden`}{Integer. Width of the learned intensity MLP;
+#'     `0` uses a linear mapping. Default: `0`.}
+#' }
+#'
+#' @section Spline-GAM model (model_type = "spline_gam"):
+#' \describe{
+#'   \item{`model_type`}{Character. `"mlp"` (default) or `"spline_gam"` for
+#'     an interpretable B-spline resistance model.}
+#'   \item{`n_knots`}{Integer. Spline knots per covariate. Default: `10`.}
+#'   \item{`spline_degree`}{Integer. B-spline degree. Default: `3` (cubic).}
+#'   \item{`include_interactions`}{Logical. Add tensor-product interaction terms
+#'     between pairs of covariates. Default: `TRUE`.}
+#'   \item{`penalty_scale`}{Numeric. Global multiplier on all smoothing
+#'     penalties. Default: `1.0`.}
+#'   \item{`lambda_init_marginal`}{Numeric. Initial smoothing parameter for
+#'     marginal (main-effect) terms. Default: `0.0`.}
+#'   \item{`lambda_init_interaction`}{Numeric. Initial smoothing parameter for
+#'     interaction terms. Default: `2.0`.}
+#'   \item{`lambda_min`}{Numeric. Minimum smoothing parameter floor.
+#'     Default: `0.0`.}
+#' }
+#'
+#' @section Intensity spline (intensity_spline = TRUE):
+#' \describe{
+#'   \item{`intensity_spline`}{Logical. Apply a learned spline transform on
+#'     connectivity in the intensity model. Default: `FALSE`.}
+#'   \item{`intensity_n_knots`}{Integer. Spline knots for the intensity
+#'     connectivity term. Default: `5`.}
+#'   \item{`intensity_degree`}{Integer. B-spline degree for intensity spline.
+#'     Default: `3`.}
+#'   \item{`lambda_init_intensity`}{Numeric. Initial smoothing parameter for
+#'     the intensity spline. Default: `2.0`.}
+#'   \item{`intensity_log1p_max`}{Numeric. Clamp applied to
+#'     `log1p(connectivity)` before the intensity spline. Default: `10.0`.}
+#' }
 #'
 #' @return A named list of hyperparameters.
+#' @seealso [run_torch_pipeline()], [run_advi()], [run_bayesian_sampling_hmc()]
 #' @export
 default_torch_config <- function() {
   list(

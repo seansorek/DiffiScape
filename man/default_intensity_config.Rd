@@ -7,9 +7,66 @@
 default_intensity_config()
 }
 \value{
-A named list.
+A named list of intensity model settings.
 }
 \description{
-Returns a list of tuning knobs used internally by \code{\link[=fit_intensity_nb]{fit_intensity_nb()}} and
-\code{\link[=fit_intensity_gam]{fit_intensity_gam()}}.
+Returns a named list of tuning knobs for the point-process intensity model
+used by \code{\link[=fit_intensity_nb]{fit_intensity_nb()}} and \code{\link[=fit_intensity_gam]{fit_intensity_gam()}}.  Modify individual
+elements and pass the result via the \code{intensity_config} argument of
+\code{\link[=optimize_resistance]{optimize_resistance()}}, \code{\link[=evaluate_full_model]{evaluate_full_model()}}, or \code{\link[=diffiscape]{diffiscape()}}.
+}
+\section{Connectivity scaling}{
+
+\describe{
+  \item{\code{min_connectivity}}{Numeric. Connectivity values below this
+    threshold are clipped to zero before standardisation. Default: \code{0}.}
+  \item{\code{c_scale}}{Numeric or \code{NULL}. Scale divisor applied as
+    \code{log1p(C / c_scale)} before z-scoring. \code{NULL} uses the median of
+    positive observed connectivity values. Default: \code{NULL}.}
+  \item{\code{family}}{An \link{intensity_family} object, or \code{NULL} (inferred from
+    the optimizer config's \code{distribution} field). Default: \code{NULL}.}
+}
+}
+
+\section{GAM basis dimensions}{
+
+\describe{
+  \item{\code{k_connectivity}}{Integer. Basis dimension (number of spline knots)
+    for the connectivity smooth. Increase for highly non-linear responses.
+    Default: \code{10}.}
+  \item{\code{k_covariate}}{Integer. Basis dimension per covariate smooth.
+    Default: \code{8}.}
+  \item{\code{k_spatial}}{Integer. Basis dimension for the 2-D spatial random
+    effect (only used when \code{include_spatial_re = TRUE}). Default: \code{30}.}
+}
+}
+
+\section{GAM options}{
+
+\describe{
+  \item{\code{covariate_type}}{Character. \code{"smooth"} (penalised spline term,
+    default) or \code{"linear"} for fixed-slope covariate effects.}
+  \item{\code{include_spatial_re}}{Logical. Add a 2-D spatial random effect
+    \code{te(x, y)} to absorb unmeasured spatial structure. Default: \code{FALSE}.}
+  \item{\code{spatial_bs}}{Character. Marginal basis for \code{te(x, y)}, passed
+    directly to \code{mgcv}. Default: \code{"cr"} (cubic regression spline).}
+  \item{\code{spatial_tensor}}{Logical. Use a tensor-product \code{te(x, y)} rather
+    than an isotropic \code{s(x, y)} for the spatial term. Default: \code{TRUE}.}
+}
+}
+
+\section{Quadrature}{
+
+\describe{
+  \item{\code{integration_subsample}}{Numeric in \code{(0, 1]}. Fraction of raster
+    cells used to approximate the PPP log-likelihood integral.  Smaller
+    values speed up fitting at the cost of quadrature accuracy.
+    Default: \code{0.25}.}
+  \item{\code{seed}}{Integer. RNG seed for integration subsampling.
+    Default: \code{42}.}
+}
+}
+
+\seealso{
+\code{\link[=fit_intensity_nb]{fit_intensity_nb()}}, \code{\link[=fit_intensity_gam]{fit_intensity_gam()}}, \code{\link[=diffiscape]{diffiscape()}}
 }

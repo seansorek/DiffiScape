@@ -17,10 +17,57 @@
 
 #' Default intensity model configuration
 #'
-#' Returns a list of tuning knobs used internally by [fit_intensity_nb()] and
-#' [fit_intensity_gam()].
+#' Returns a named list of tuning knobs for the point-process intensity model
+#' used by [fit_intensity_nb()] and [fit_intensity_gam()].  Modify individual
+#' elements and pass the result via the `intensity_config` argument of
+#' [optimize_resistance()], [evaluate_full_model()], or [diffiscape()].
 #'
-#' @return A named list.
+#' @section Connectivity scaling:
+#' \describe{
+#'   \item{`min_connectivity`}{Numeric. Connectivity values below this
+#'     threshold are clipped to zero before standardisation. Default: `0`.}
+#'   \item{`c_scale`}{Numeric or `NULL`. Scale divisor applied as
+#'     `log1p(C / c_scale)` before z-scoring. `NULL` uses the median of
+#'     positive observed connectivity values. Default: `NULL`.}
+#'   \item{`family`}{An [intensity_family] object, or `NULL` (inferred from
+#'     the optimizer config's `distribution` field). Default: `NULL`.}
+#' }
+#'
+#' @section GAM basis dimensions:
+#' \describe{
+#'   \item{`k_connectivity`}{Integer. Basis dimension (number of spline knots)
+#'     for the connectivity smooth. Increase for highly non-linear responses.
+#'     Default: `10`.}
+#'   \item{`k_covariate`}{Integer. Basis dimension per covariate smooth.
+#'     Default: `8`.}
+#'   \item{`k_spatial`}{Integer. Basis dimension for the 2-D spatial random
+#'     effect (only used when `include_spatial_re = TRUE`). Default: `30`.}
+#' }
+#'
+#' @section GAM options:
+#' \describe{
+#'   \item{`covariate_type`}{Character. `"smooth"` (penalised spline term,
+#'     default) or `"linear"` for fixed-slope covariate effects.}
+#'   \item{`include_spatial_re`}{Logical. Add a 2-D spatial random effect
+#'     `te(x, y)` to absorb unmeasured spatial structure. Default: `FALSE`.}
+#'   \item{`spatial_bs`}{Character. Marginal basis for `te(x, y)`, passed
+#'     directly to `mgcv`. Default: `"cr"` (cubic regression spline).}
+#'   \item{`spatial_tensor`}{Logical. Use a tensor-product `te(x, y)` rather
+#'     than an isotropic `s(x, y)` for the spatial term. Default: `TRUE`.}
+#' }
+#'
+#' @section Quadrature:
+#' \describe{
+#'   \item{`integration_subsample`}{Numeric in `(0, 1]`. Fraction of raster
+#'     cells used to approximate the PPP log-likelihood integral.  Smaller
+#'     values speed up fitting at the cost of quadrature accuracy.
+#'     Default: `0.25`.}
+#'   \item{`seed`}{Integer. RNG seed for integration subsampling.
+#'     Default: `42`.}
+#' }
+#'
+#' @return A named list of intensity model settings.
+#' @seealso [fit_intensity_nb()], [fit_intensity_gam()], [diffiscape()]
 #' @export
 default_intensity_config <- function() {
   list(
