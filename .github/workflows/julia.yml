@@ -22,9 +22,6 @@ jobs:
         with:
           version: ${{ matrix.julia-version }}
 
-      - name: Install Enzyme into default environment
-        run: julia -e 'import Pkg; Pkg.add("Enzyme")'
-
       - name: Run tests with coverage
         run: julia --code-coverage=all inst/julia/DiffiScape/test/runtests.jl
 
