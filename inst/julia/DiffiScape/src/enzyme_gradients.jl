@@ -274,8 +274,9 @@ function enzyme_gradient_generic(R_flat::Vector{Float64},
     # VJP: ∂obj/∂R (as matrix)
     dR_mat = cumulative_current_vjp(R_mat, d_cum, config)
 
-    # Convert dR_mat back to flat row-major
-    dR_flat = vec(dR_mat')
+    # Convert dR_mat back to flat row-major (collect: adjoint is lazy, vec returns
+    # ReshapedArray which doesn't match Vector{Float64} type annotation)
+    dR_flat = collect(vec(dR_mat'))
 
     # Chain rule: ∂obj/∂params
     return resistance_gradient_generic(basis_values, dR_flat, dR_deta)
