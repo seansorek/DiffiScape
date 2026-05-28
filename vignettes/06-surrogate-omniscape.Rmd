@@ -1,0 +1,184 @@
+---
+title: "06: Bayesian Surrogate Optimization with Omniscape"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{06: Bayesian Surrogate Optimization with Omniscape}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE, message = FALSE, warning = FALSE)
+```
+
+This vignette walks through the reference DiffiScape pipeline: Bayesian surrogate
+(Gaussian Process) optimization of resistance parameters, with connectivity computed
+by Omniscape.jl. The intensity surface is modelled with a spatial GAM (`mgcv::bam`),
+and resistance uncertainty is quantified via a Laplace-hybrid posterior.
+
+This is the most compute-intensive pipeline (~hours), but it requires no automatic
+differentiation and produces well-calibrated uncertainty estimates.
+
+## Setup
+
+Set your data paths before running. The deer GPS data must be a data frame with
+`x` and `y` columns in a projected CRS. NLCD rasters should be single-layer
+`.tif` files in one directory (canopy, impervious surface, water, fence / open
+land, etc.).
+
+```{r paths}
+library(DiffiScape)
+library(terra)
+
+obs_data_path <- "path/to/train_points.rds"   # data.frame with x, y
+nlcd_dir      <- "path/to/nlcd_data/"
+output_dir    <- "output/surrogate"
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+```
+
+## Load data
+
+```{r load-data}
+# GPS observation points
+obs_points <- readRDS(obs_data_path)          # data.frame(x, y)
+# ds_load_data() accepts CSV / shapefile / GeoPackage as alternatives:
+# obs_points <- ds_load_data("points.csv", x_col = "lon", y_col = "lat")
+
+# Environmental basis functions (rescaled to [0, 1])
+basis_stack <- ds_create_basis(nlcd_dir, pattern = "*.tif", rescale = TRUE)
+cat("Basis layers:", names(basis_stack), "\n")
+```
+
+## Initialise Julia / Omniscape
+
+```{r init-julia}
+ds_init_julia()   # one-time setup per session
+```
+
+## Configure the optimiser
+
+The outer loop is a Gaussian Process surrogate with Thompson Sampling acquisition.
+The inner loop fits a spatial GAM intensity model (`distribution = "gam"`).
+
+```{r config}
+cfg <- default_optimizer_config()
+cfg$n_init        <- 30L          # Latin Hypercube seed designs
+cfg$n_iter        <- 70L          # GP surrogate iterations
+cfg$seed          <- 42L
+cfg$distribution  <- "gam"        # "negbin", "poisson", or "gam"
+cfg$omniscape     <- list(radius = 25L, block_size = 5L, cleanup = TRUE)
+
+icfg <- default_intensity_config()
+icfg$covariate_type      <- "smooth"   # spatial GAM smooth terms
+icfg$k_connectivity      <- 10L
+icfg$include_spatial_re  <- TRUE
+```
+
+## Optimise resistance parameters
+
+Returns the best resistance parameter vector `opt$best_params` (named numeric:
+`r_0`, `z_1`, …, `z_K`) and the corresponding log-likelihood.
+
+```{r optimize}
+opt <- ds_optimize(
+  basis_stack     = basis_stack,
+  obs_points      = obs_points,
+  config          = cfg,
+  intensity_config = icfg,
+  output_dir      = output_dir,
+  solver          = "surrogate"
+)
+
+cat("Best log-likelihood:", opt$best_loglik, "\n")
+cat("Best resistance params:\n")
+print(opt$best_params)
+```
+
+## Compute final connectivity
+
+```{r connectivity}
+resistance  <- create_resistance_surface(opt$best_params, basis_stack)
+omni        <- run_omniscape(resistance, radius = 25L, block_size = 5L, cleanup = TRUE)
+connectivity <- omni$cum_current
+
+terra::writeRaster(resistance,   file.path(output_dir, "optimized_resistance.tif"),  overwrite = TRUE)
+terra::writeRaster(connectivity, file.path(output_dir, "optimized_connectivity.tif"), overwrite = TRUE)
+```
+
+## Fit intensity model
+
+Refits the GAM at the optimised resistance parameters to obtain coefficient
+estimates, standard errors, and final log-likelihood.
+
+```{r fit-intensity}
+intensity_fit <- ds_fit_intensity(
+  opt_result       = opt,
+  basis_stack      = basis_stack,
+  obs_points       = obs_points,
+  omniscape_settings = list(radius = 25L, block_size = 5L),
+  intensity_config = icfg
+)
+
+cat("Intensity log-likelihood:", intensity_fit$loglik, "\n")
+```
+
+## Predict intensity surface
+
+```{r predict}
+intensity_map <- ds_predict(
+  intensity_fit = intensity_fit,
+  connectivity  = connectivity,
+  intensity_config = icfg
+)
+
+terra::writeRaster(intensity_map, file.path(output_dir, "predicted_intensity.tif"), overwrite = TRUE)
+```
+
+## Posterior inference
+
+A Laplace approximation followed by Monte Carlo composition yields a posterior
+distribution over resistance parameters. `n_draws` is the number of posterior
+samples; the original analysis used 5 000.
+
+```{r posterior}
+post <- ds_posterior(
+  opt_result       = opt,
+  basis_stack      = basis_stack,
+  obs_points       = obs_points,
+  n_draws          = 5000L,
+  omniscape_settings = list(radius = 25L, block_size = 5L),
+  intensity_config = icfg
+)
+
+print(post$summary)
+write.csv(post$summary, file.path(output_dir, "posterior_summary.csv"), row.names = FALSE)
+```
+
+## Diagnostics
+
+```{r diagnose}
+diag <- ds_diagnose(
+  intensity_fit = intensity_fit,
+  obs_points    = obs_points,
+  connectivity  = connectivity,
+  intensity_config = icfg,
+  plot          = TRUE
+)
+
+cat("Mean deviance residual:", diag$mean_deviance, "\n")
+cat("Moran's I p-value:", diag$moran$p.value, "\n")
+```
+
+## Save summary
+
+```{r save}
+saveRDS(
+  list(
+    resistance_params = opt$best_params,
+    intensity_params  = intensity_fit$intensity_params,
+    loglik            = intensity_fit$loglik,
+    posterior         = post$summary
+  ),
+  file.path(output_dir, "final_summary.rds")
+)
+```

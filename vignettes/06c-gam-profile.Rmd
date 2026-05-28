@@ -1,0 +1,153 @@
+---
+title: "06c: Profile-Likelihood GAM via Gradient Optimization"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{06c: Profile-Likelihood GAM via Gradient Optimization}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE, message = FALSE, warning = FALSE)
+```
+
+This vignette shows the profile-likelihood GAM pipeline: gradient-based
+optimization of the resistance parameters where each objective evaluation
+refits a full spatial GAM intensity model (via `mgcv::bam`). The GAM captures
+nonlinear spatial variation in intensity beyond what the connectivity surface
+explains alone.
+
+The gradient of the profile log-likelihood is obtained by the envelope theorem:
+only the partial derivative with respect to connectivity carries a non-zero
+contribution at the GAM optimum, so the chain rule through the circuit solver
+gives exact gradients without differentiating through the GAM solver.
+
+**Note:** Use `icfg$include_spatial_re <- FALSE` and `icfg$bam_discrete <- FALSE`
+during optimization (required for the envelope theorem to hold); you can refit
+with spatial RE and `discrete = TRUE` for the final intensity estimate.
+
+## Setup
+
+```{r paths}
+library(DiffiScape)
+library(terra)
+
+obs_data_path <- "path/to/train_points.rds"
+nlcd_dir      <- "path/to/nlcd_data/"
+output_dir    <- "output/gam_profile"
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+```
+
+## Load data
+
+```{r load-data}
+obs_points  <- readRDS(obs_data_path)
+basis_stack <- ds_create_basis(nlcd_dir, pattern = "*.tif", rescale = TRUE)
+```
+
+## Initialise Julia
+
+```{r init-julia}
+ds_init_julia()
+```
+
+## Configure
+
+The key intensity config settings for the profile-likelihood approach:
+
+- `covariate_type = "smooth"` — spatial tensor-product smooth via `bam()`
+- `include_spatial_re = FALSE` — disable spatial RE during optimization (avoid
+  saturation; re-enable for final fit)
+- `k_connectivity = 10L` — knots for connectivity smooth term
+
+```{r config}
+cfg <- default_optimizer_config()
+cfg$distribution  <- "gam"
+cfg$omniscape     <- list(radius = 13L, block_size = 5L, cleanup = TRUE)
+
+icfg <- default_intensity_config()
+icfg$covariate_type      <- "smooth"
+icfg$k_connectivity      <- 10L
+icfg$include_spatial_re  <- FALSE    # required for envelope theorem correctness
+```
+
+## Optimise (profile-likelihood outer loop, GAM inner loop)
+
+```{r optimize}
+opt <- ds_optimize(
+  basis_stack      = basis_stack,
+  obs_points       = obs_points,
+  config           = cfg,
+  intensity_config = icfg,
+  output_dir       = output_dir,
+  solver           = "enzyme"   # gradient-based via Enzyme.jl
+)
+
+cat("Best profile log-likelihood:", opt$best_loglik, "\n")
+cat("Best resistance params:\n")
+print(opt$best_params)
+```
+
+## Final connectivity
+
+```{r connectivity}
+resistance  <- create_resistance_surface(opt$best_params, basis_stack)
+omni        <- run_omniscape(resistance, radius = 13L, block_size = 5L, cleanup = TRUE)
+connectivity <- omni$cum_current
+
+terra::writeRaster(resistance,   file.path(output_dir, "optimized_resistance.tif"),  overwrite = TRUE)
+terra::writeRaster(connectivity, file.path(output_dir, "optimized_connectivity.tif"), overwrite = TRUE)
+```
+
+## Final GAM intensity fit
+
+For the final intensity fit, re-enable the spatial random effect and use a
+fuller GAM specification. This fit is for inference and prediction, not for
+gradient computation, so the envelope-theorem constraints no longer apply.
+
+```{r fit-intensity}
+icfg_final <- icfg
+icfg_final$include_spatial_re <- TRUE   # enable spatial smooth for final fit
+
+intensity_fit <- ds_fit_intensity(
+  opt_result         = opt,
+  basis_stack        = basis_stack,
+  obs_points         = obs_points,
+  omniscape_settings = list(radius = 13L, block_size = 5L),
+  intensity_config   = icfg_final,
+  solver             = "enzyme"
+)
+
+cat("Final GAM log-likelihood:", intensity_fit$loglik, "\n")
+```
+
+## Predict and diagnose
+
+```{r predict}
+intensity_map <- ds_predict(intensity_fit, connectivity, intensity_config = icfg_final)
+terra::writeRaster(intensity_map, file.path(output_dir, "predicted_intensity.tif"), overwrite = TRUE)
+```
+
+```{r diagnose}
+diag <- ds_diagnose(
+  intensity_fit    = intensity_fit,
+  obs_points       = obs_points,
+  connectivity     = connectivity,
+  intensity_config = icfg_final,
+  plot             = TRUE
+)
+```
+
+## Save
+
+```{r save}
+saveRDS(
+  list(
+    resistance_params    = opt$best_params,
+    intensity_params     = intensity_fit$intensity_params,
+    loglik               = intensity_fit$loglik,
+    convergence          = opt$convergence
+  ),
+  file.path(output_dir, "final_summary.rds")
+)
+```

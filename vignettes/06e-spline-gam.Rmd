@@ -1,0 +1,234 @@
+---
+title: "06e: P-Spline GAM Resistance via PyTorch with Bayesian UQ"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{06e: P-Spline GAM Resistance via PyTorch with Bayesian UQ}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE, message = FALSE, warning = FALSE)
+```
+
+This vignette demonstrates the P-spline GAM resistance pipeline: a
+differentiable B-spline model with penalized complexity learns nonlinear
+covariate effects on log-resistance, optimized via Adam through the global
+absorption circuit solver. Unlike the black-box MLP of vignette 06d, the
+spline model produces interpretable partial-effect curves with smoothness
+controlled by learnable penalty parameters.
+
+Optionally, Bayesian uncertainty quantification (UQ) can be computed after MAP
+estimation using ADVI, Langevin MCMC, or NUTS.
+
+Like vignette 06d, this pipeline requires a 5-layer basis (4 NLCD + elevation).
+
+## Setup
+
+```{r paths}
+library(DiffiScape)
+library(terra)
+
+obs_data_path  <- "path/to/train_points.rds"
+nlcd_dir       <- "path/to/nlcd_data/"
+elevation_path <- "path/to/elevation.tif"
+output_dir     <- "output/spline_gam"
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+```
+
+## Load data and build 5-layer basis
+
+```{r load-data}
+obs_points <- readRDS(obs_data_path)
+
+nlcd_paths  <- list.files(nlcd_dir, pattern = "\\.tif$", full.names = TRUE)
+basis_stack <- ds_create_basis(c(nlcd_paths, elevation_path), rescale = TRUE)
+```
+
+## Initialise PyTorch
+
+```{r init-torch}
+ds_torch_setup()
+```
+
+## Verify spline gradient (optional)
+
+```{r verify-gradient}
+verify_spline_gradient(
+  basis_stack           = basis_stack,
+  solver                = "global_absorption",
+  absorption            = 0.0005,
+  n_knots               = 3L,
+  spline_degree         = 3L,
+  include_interactions  = FALSE
+)
+```
+
+## Configure
+
+Key choices:
+
+- `model_type = "spline_gam"` — P-spline resistance instead of MLP.
+- `n_knots = 3L` — cubic B-spline with 3 internal knots per covariate (5 basis
+  functions per covariate after accounting for boundary knots).
+- `penalty_scale = 3.0` — global smoothing multiplier; higher = smoother.
+- `absorption = 0.0005` — lower absorption makes the circuit more global.
+- `include_interactions = FALSE` — marginal smooths only; set `TRUE` for
+  tensor-product interaction terms (much slower).
+
+```{r config}
+cfg <- default_torch_config()
+
+# Solver
+cfg$solver                   <- "global_absorption"
+cfg$absorption               <- 0.0005
+cfg$source_spacing           <- 1L
+cfg$source_from_resistance   <- TRUE
+
+# Spline architecture
+cfg$model_type               <- "spline_gam"
+cfg$n_knots                  <- 3L
+cfg$spline_degree            <- 3L
+cfg$include_interactions     <- FALSE
+cfg$penalty_scale            <- 3.0
+cfg$lambda_init_marginal     <- 2.5   # log initial smoothing param per covariate
+cfg$lambda_init_interaction  <- 2.5
+cfg$lambda_min               <- 0.1   # floor: λ = lambda_min + exp(log_λ)
+
+# Intensity model (parametric γ·log(1+C); set intensity_spline=TRUE for spline)
+cfg$intensity_spline         <- FALSE
+
+# Optimiser
+cfg$lr                       <- 0.07
+cfg$weight_decay             <- 0.0
+cfg$n_epochs                 <- 500L
+cfg$patience                 <- 100L
+cfg$reg_mean                 <- 0.5
+cfg$reg_var                  <- 0.0
+cfg$log_R_baseline           <- 3.0
+
+cfg$seed                     <- 42L
+cfg$device                   <- "auto"
+```
+
+## MAP estimation
+
+```{r run-map}
+results <- run_torch_pipeline(
+  basis_stack = basis_stack,
+  obs_points  = obs_points,
+  config      = cfg,
+  output_dir  = output_dir
+)
+
+cat("Best log-likelihood:", results$best_loglik, "\n")
+cat("Best epoch:", results$best_epoch, "/", results$n_epochs_run, "\n")
+```
+
+## Inspect partial effects
+
+`results$partial_effects` is a named list (one entry per basis layer). Each
+entry contains the 1-D covariate grid and the estimated log-resistance effect
+with 50 % and 95 % pointwise intervals (populated after UQ, or NA before UQ).
+
+```{r partial-effects}
+for (nm in names(results$partial_effects)) {
+  pe <- results$partial_effects[[nm]]
+  plot(pe$grid, pe$effect, type = "l", main = nm,
+       xlab = nm, ylab = "log-resistance partial effect")
+}
+```
+
+## Save MAP outputs
+
+```{r save-map}
+terra::writeRaster(results$resistance_raster,
+                   file.path(output_dir, "optimized_resistance.tif"), overwrite = TRUE)
+terra::writeRaster(results$connectivity_raster,
+                   file.path(output_dir, "optimized_connectivity.tif"), overwrite = TRUE)
+terra::writeRaster(results$intensity_raster,
+                   file.path(output_dir, "predicted_intensity.tif"), overwrite = TRUE)
+```
+
+## Bayesian UQ — ADVI (fastest)
+
+ADVI fits a mean-field Gaussian variational approximation to the posterior.
+It is faster than MCMC but provides an approximate posterior.
+
+```{r advi}
+advi_results <- run_advi(
+  basis_stack     = basis_stack,
+  obs_points      = obs_points,
+  model_dir       = output_dir,
+  n_samples       = 1000L,
+  max_iter        = 2000L,
+  lr              = 0.01,
+  n_elbo_samples  = 8L,
+  full_rank       = FALSE,       # mean-field; TRUE = full-rank covariance
+  patience        = 100L,
+  fix_smoothing   = TRUE,        # hold smoothing params fixed at MAP
+  fix_intensity   = FALSE
+)
+```
+
+## Bayesian UQ — Langevin MCMC (moderate cost)
+
+Preconditioned Metropolis-adjusted Langevin algorithm (MALA). Targets ~80 %
+acceptance. `fix_smoothing = TRUE` holds the spline penalty parameters at
+their MAP estimates, reducing the parameter space.
+
+```{r langevin}
+mcmc_results <- run_bayesian_sampling(
+  basis_stack     = basis_stack,
+  obs_points      = obs_points,
+  model_dir       = output_dir,
+  n_samples       = 1000L,
+  burn_in         = 500L,
+  thin            = 10L,
+  step_size       = 2e-6,
+  precondition    = TRUE,
+  fix_smoothing   = TRUE,
+  fix_intensity   = FALSE,
+  use_mala        = TRUE,
+  target_accept   = 0.80
+)
+```
+
+## Bayesian UQ — NUTS / HMC (highest quality)
+
+No-U-Turn Sampler with adaptive mass matrix. Most expensive, but produces
+the most accurate posterior.
+
+```{r nuts}
+hmc_results <- run_bayesian_sampling_hmc(
+  basis_stack       = basis_stack,
+  obs_points        = obs_points,
+  model_dir         = output_dir,
+  n_samples         = 500L,
+  warmup            = 1000L,
+  max_treedepth     = 7L,
+  target_accept     = 0.80,
+  adapt_mass_matrix = TRUE,
+  fix_smoothing     = TRUE,
+  fix_intensity     = FALSE
+)
+```
+
+## Save full summary
+
+```{r save}
+saveRDS(
+  list(
+    effective_loglinear = results$effective_loglinear,
+    alpha               = results$alpha,
+    gamma               = results$gamma,
+    partial_effects     = results$partial_effects,
+    best_loglik         = results$best_loglik,
+    total_time          = results$total_time,
+    uq_advi             = advi_results,
+    uq_mcmc             = mcmc_results,
+    uq_hmc              = hmc_results
+  ),
+  file.path(output_dir, "final_summary.rds")
+)
+```

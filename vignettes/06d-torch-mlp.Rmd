@@ -1,0 +1,193 @@
+---
+title: "06d: Neural Network Resistance via PyTorch (MLP / ConvNet)"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{06d: Neural Network Resistance via PyTorch (MLP / ConvNet)}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE, message = FALSE, warning = FALSE)
+```
+
+This vignette demonstrates the PyTorch neural-network pipeline. Instead of a
+log-linear resistance parameterization, a learned MLP (or dilated ConvResNet)
+maps the environmental basis functions to log-resistance at every pixel,
+capturing nonlinear covariate effects and spatial interactions. The global
+absorption circuit solver runs the connectivity forward pass; PyTorch autograd
+differentiates back through it.
+
+This is the fastest pipeline per iteration (~50–100x vs. GAM), and it can fit
+models with hundreds to thousands of parameters.
+
+This pipeline requires a 5-layer basis stack: the four NLCD layers plus an
+elevation layer from the Copernicus DEM (or any DEM).
+
+## Setup
+
+```{r paths}
+library(DiffiScape)
+library(terra)
+
+obs_data_path  <- "path/to/train_points.rds"
+nlcd_dir       <- "path/to/nlcd_data/"
+elevation_path <- "path/to/elevation.tif"   # Copernicus DEM or similar
+output_dir     <- "output/torch"
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+```
+
+## Load data and build 5-layer basis
+
+Elevation is included as a fifth covariate. `ds_create_basis()` accepts a
+character vector of paths to individual rasters and aligns them to a common
+grid automatically.
+
+```{r load-data}
+obs_points <- readRDS(obs_data_path)
+
+nlcd_paths <- list.files(nlcd_dir, pattern = "\\.tif$", full.names = TRUE)
+basis_stack <- ds_create_basis(c(nlcd_paths, elevation_path), rescale = TRUE)
+cat("Basis layers:", names(basis_stack), "\n")   # should be 5 layers
+```
+
+## Initialise PyTorch
+
+```{r init-torch}
+ds_torch_setup()   # initialises reticulate + Python environment
+ds_torch_check()   # confirms torch is available
+```
+
+## Verify gradients (optional but recommended)
+
+End-to-end finite-difference check of the circuit–NN gradient chain. A
+relative error above ~5 % suggests a numerical issue worth investigating
+before committing to a full training run.
+
+```{r verify-gradients}
+verify_torch_gradient(basis_stack,
+                      solver     = "global_absorption",
+                      absorption = 0.002)
+
+verify_conv_gradient(basis_stack,
+                     solver        = "global_absorption",
+                     absorption    = 0.002,
+                     conv_channels = 16L,
+                     n_conv_layers = 3L)
+```
+
+## Configure the torch pipeline
+
+Settings match the original 06d analysis. Key choices:
+
+- `solver = "global_absorption"` — one global circuit solve with an absorption
+  term; much faster than 23 000 local Omniscape solves.
+- `use_conv = TRUE` — dilated ConvResNet captures spatial context.
+- `intensity_hidden = 16L` — learned intensity MLP instead of parametric
+  γ·log(1+C).
+
+```{r config}
+cfg <- default_torch_config()
+
+# Solver
+cfg$solver           <- "global_absorption"
+cfg$absorption       <- 0.002
+cfg$focal_fraction   <- 0.5
+cfg$source_spacing   <- 1L
+cfg$source_from_resistance <- TRUE
+
+# ConvResNet architecture
+cfg$hidden_dim       <- 16L
+cfg$n_hidden_layers  <- 3L
+cfg$use_conv         <- TRUE
+cfg$n_conv_layers    <- 3L
+cfg$conv_channels    <- 16L
+cfg$conv_kernel_size <- 3L
+cfg$dropout          <- 0.1
+cfg$use_dilated      <- TRUE
+cfg$intensity_hidden <- 16L   # 0 = parametric; >0 = learned MLP
+
+# Optimiser
+cfg$lr               <- 0.05
+cfg$weight_decay     <- 1e-4
+cfg$n_epochs         <- 1000L
+cfg$patience         <- 100L
+cfg$grad_clip        <- 10.0
+cfg$warmup_epochs    <- 10L
+
+# Regularisation
+cfg$reg_mean         <- 1.0    # penalises deviation from log_R_baseline
+cfg$reg_var          <- 0.0
+cfg$reg_skip         <- 0.1    # skip-connection penalty (prevents NN collapse)
+cfg$log_R_baseline   <- 3.0    # target: exp(3) ≈ 20
+
+cfg$seed             <- 42L
+cfg$device           <- "auto"  # uses GPU if available
+```
+
+## Run the torch pipeline
+
+```{r run-torch}
+results <- run_torch_pipeline(
+  basis_stack = basis_stack,
+  obs_points  = obs_points,
+  config      = cfg,
+  output_dir  = output_dir
+)
+
+cat("Best log-likelihood:", results$best_loglik, "\n")
+cat("Best epoch:", results$best_epoch, "/", results$n_epochs_run, "\n")
+cat("Total time:", results$total_time, "sec\n")
+cat("Effective log-linear params:\n")
+print(results$effective_loglinear)   # [r_0, z_1, ..., z_5]
+```
+
+## Inspect outputs
+
+```{r outputs}
+terra::writeRaster(results$resistance_raster,
+                   file.path(output_dir, "optimized_resistance.tif"), overwrite = TRUE)
+terra::writeRaster(results$connectivity_raster,
+                   file.path(output_dir, "optimized_connectivity.tif"), overwrite = TRUE)
+terra::writeRaster(results$intensity_raster,
+                   file.path(output_dir, "predicted_intensity.tif"), overwrite = TRUE)
+```
+
+## Optional: post-hoc GAM on the optimised connectivity surface
+
+Fitting a spatial GAM after training allows you to inspect smooth covariate
+effects and spatial residuals without re-running the circuit solver.
+
+```{r posthoc-gam}
+icfg <- default_intensity_config()
+icfg$covariate_type     <- "smooth"
+icfg$include_spatial_re <- TRUE
+
+intensity_fit <- ds_fit_intensity(
+  opt_result         = results,
+  basis_stack        = basis_stack,
+  obs_points         = obs_points,
+  omniscape_settings = list(radius = 15L, block_size = 5L),
+  intensity_config   = icfg
+)
+
+diag <- ds_diagnose(intensity_fit, obs_points, results$connectivity_raster,
+                    intensity_config = icfg, plot = TRUE)
+```
+
+## Save summary
+
+```{r save}
+saveRDS(
+  list(
+    effective_loglinear = results$effective_loglinear,
+    alpha               = results$alpha,
+    gamma               = results$gamma,
+    best_loglik         = results$best_loglik,
+    best_epoch          = results$best_epoch,
+    n_params            = results$n_params,
+    total_time          = results$total_time
+  ),
+  file.path(output_dir, "torch_optimization_results.rds")
+)
+```
