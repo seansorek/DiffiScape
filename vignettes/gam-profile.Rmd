@@ -1,8 +1,8 @@
 ---
-title: "06c: Profile-Likelihood GAM via Gradient Optimization"
+title: "Profile-Likelihood GAM via Gradient Optimization"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{06c: Profile-Likelihood GAM via Gradient Optimization}
+  %\VignetteIndexEntry{Profile-Likelihood GAM via Gradient Optimization}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---

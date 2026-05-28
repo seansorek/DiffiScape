@@ -1,8 +1,8 @@
 ---
-title: "06e: P-Spline GAM Resistance via PyTorch with Bayesian UQ"
+title: "P-Spline GAM Resistance via PyTorch with Bayesian UQ"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{06e: P-Spline GAM Resistance via PyTorch with Bayesian UQ}
+  %\VignetteIndexEntry{P-Spline GAM Resistance via PyTorch with Bayesian UQ}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---

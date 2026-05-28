@@ -1,8 +1,8 @@
 ---
-title: "06: Bayesian Surrogate Optimization with Omniscape"
+title: "Bayesian Surrogate Optimization with Omniscape"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{06: Bayesian Surrogate Optimization with Omniscape}
+  %\VignetteIndexEntry{Bayesian Surrogate Optimization with Omniscape}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---

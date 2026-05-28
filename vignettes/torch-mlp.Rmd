@@ -1,8 +1,8 @@
 ---
-title: "06d: Neural Network Resistance via PyTorch (MLP / ConvNet)"
+title: "Neural Network Resistance via PyTorch (MLP / ConvNet)"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{06d: Neural Network Resistance via PyTorch (MLP / ConvNet)}
+  %\VignetteIndexEntry{Neural Network Resistance via PyTorch (MLP / ConvNet)}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---

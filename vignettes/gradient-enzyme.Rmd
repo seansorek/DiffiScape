@@ -1,8 +1,8 @@
 ---
-title: "06b: Gradient-Based Optimization via Enzyme.jl"
+title: "Gradient-Based Optimization via Enzyme.jl"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{06b: Gradient-Based Optimization via Enzyme.jl}
+  %\VignetteIndexEntry{Gradient-Based Optimization via Enzyme.jl}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
