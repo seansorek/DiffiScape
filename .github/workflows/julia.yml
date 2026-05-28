@@ -1,0 +1,42 @@
+name: Julia CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    name: Julia ${{ matrix.julia-version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        julia-version: ['1.10', '1']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.julia-version }}
+
+      - name: Install Enzyme into default environment
+        run: julia -e 'import Pkg; Pkg.add("Enzyme")'
+
+      - name: Run tests with coverage
+        run: julia --code-coverage=all inst/julia/DiffiScape/test/runtests.jl
+
+      - uses: julia-actions/julia-processcoverage@v1
+        if: matrix.julia-version == '1'
+        with:
+          directories: inst/julia/DiffiScape/src
+
+      - uses: codecov/codecov-action@v4
+        if: matrix.julia-version == '1'
+        with:
+          files: lcov.info
+          flags: julia
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false

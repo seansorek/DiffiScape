@@ -498,7 +498,9 @@ function cumulative_current(R::Matrix{Float64}, config::SolverConfig)
         return zeros(nrows, ncols)
     end
 
-    nt = max(Threads.nthreads(), 1)
+    # maxthreadid() (Julia ≥ 1.11) covers interactive + default pool threads.
+    # Older fallback uses nthreads(), which equals maxthreadid() pre-1.11.
+    nt = isdefined(Threads, :maxthreadid) ? Threads.maxthreadid() : max(Threads.nthreads(), 1)
     local_bufs = [zeros(nrows, ncols) for _ in 1:nt]
 
     Threads.@threads :static for i in 1:n_windows
