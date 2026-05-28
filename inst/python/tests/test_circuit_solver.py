@@ -61,8 +61,9 @@ class TestBuildLaplacian:
 
 
 class TestBoundaryMask:
-    def test_3x3_all_boundary(self):
-        assert cs.get_boundary_mask(3, 3).sum() == 9
+    def test_3x3_boundary_count(self):
+        # 3x3 grid: perimeter has 8 pixels; center (row=1,col=1) is interior
+        assert cs.get_boundary_mask(3, 3).sum() == 8
 
     def test_5x5_interior_count(self):
         # (5-2) * (5-2) = 9 interior pixels
