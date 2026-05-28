@@ -98,10 +98,14 @@ function cumulative_current_vjp(R::Matrix{Float64},
 
         R_local = R[r1:r2, c1:c2]
 
-        # Enzyme gradient of the scalar function w.r.t. R_local
-        dR_local = Enzyme.gradient(Enzyme.Reverse,
-            Rl -> single_window_scalar(Rl, d_cum_local, cr, cc, r1, c1, config),
-            copy(R_local))
+        # Enzyme gradient of the scalar function w.r.t. R_local.
+        # Wrap the closure in Const so Enzyme doesn't treat captured variables
+        # (d_cum_local, config, etc.) as potentially holding derivative data,
+        # avoiding EnzymeMutabilityException in Enzyme ≥ 0.13.
+        dR_local = zero(R_local)
+        f_local = Rl -> single_window_scalar(Rl, d_cum_local, cr, cc, r1, c1, config)
+        Enzyme.autodiff(Enzyme.Reverse, Enzyme.Const(f_local), Enzyme.Active,
+                        Enzyme.Duplicated(copy(R_local), dR_local))
 
         @inbounds for jj in 1:wc, ii in 1:wr
             dR[r1 + ii - 1, c1 + jj - 1] += dR_local[ii, jj]
