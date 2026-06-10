@@ -66,3 +66,23 @@ test_that(".generate_candidates returns correct dimensions", {
   expect_equal(ncol(cand), 2)
   expect_equal(nrow(cand), 100)
 })
+
+
+test_that(".generate_candidates keeps candidates within bounds", {
+  bounds <- list(r_0 = c(-1, 1), z_1 = c(0, 2))
+  cand   <- .generate_candidates(200, bounds, best_point = c(0, 1),
+                                  sigma_vector = c(0.5, 0.5),
+                                  local_frac   = 0.7)
+  expect_true(all(cand[, "r_0"] >= -1 & cand[, "r_0"] <= 1))
+  expect_true(all(cand[, "z_1"] >=  0 & cand[, "z_1"] <= 2))
+})
+
+
+test_that(".create_lhs_design respects bounds for three parameters", {
+  bounds <- list(r_0 = c(0, 1), z_1 = c(-5, 5), z_2 = c(2, 4))
+  design <- .create_lhs_design(20, bounds)
+  expect_equal(ncol(design), 3)
+  expect_true(all(design$r_0 >= 0  & design$r_0 <= 1))
+  expect_true(all(design$z_1 >= -5 & design$z_1 <= 5))
+  expect_true(all(design$z_2 >= 2  & design$z_2 <= 4))
+})

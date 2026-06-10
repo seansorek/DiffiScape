@@ -158,6 +158,161 @@ test_that("fit_intensity_nb with terra raster returns correct output structure",
   expect_true(is.finite(fit$loglik))
 })
 
+test_that("residualise_connectivity returns correct structure with one covariate", {
+  set.seed(1)
+  n_obs <- 30
+  n_int <- 100
+  cov_val <- rnorm(n_obs)
+  z_obs   <- 0.5 * cov_val + rnorm(n_obs, sd = 0.3)
+  z_int   <- rnorm(n_int)
+  cov_int <- rnorm(n_int)
+
+  res <- residualise_connectivity(
+    z_obs          = z_obs,
+    z_int          = z_int,
+    covariates_obs = list(elev = cov_val),
+    covariates_int = list(elev = cov_int)
+  )
+
+  expect_named(res, c("z_obs_resid", "z_int_resid", "aux_coefs", "aux_r2", "aux_model"))
+  expect_length(res$z_obs_resid, n_obs)
+  expect_length(res$z_int_resid, n_int)
+  expect_true(is.numeric(res$z_obs_resid))
+  expect_true(is.numeric(res$z_int_resid))
+  expect_true(res$aux_r2 >= 0 && res$aux_r2 <= 1)
+  # Residuals at observation points must be mean-zero (by OLS property)
+  expect_equal(mean(res$z_obs_resid), 0, tolerance = 1e-10)
+})
+
+
+test_that("residualise_connectivity handles multiple covariates", {
+  set.seed(2)
+  n_obs <- 40
+  n_int <- 120
+  cov1_obs <- rnorm(n_obs); cov2_obs <- rnorm(n_obs); cov3_obs <- rnorm(n_obs)
+  z_obs    <- cov1_obs + 0.5 * cov2_obs + rnorm(n_obs, sd = 0.2)
+
+  res <- residualise_connectivity(
+    z_obs          = z_obs,
+    z_int          = rnorm(n_int),
+    covariates_obs = list(a = cov1_obs, b = cov2_obs, c = cov3_obs),
+    covariates_int = list(a = rnorm(n_int), b = rnorm(n_int), c = rnorm(n_int))
+  )
+
+  # aux_coefs should have intercept + 3 slopes
+  expect_length(res$aux_coefs, 4)
+  expect_true("(Intercept)" %in% names(res$aux_coefs))
+})
+
+
+test_that("residualise_connectivity R-squared near 1 for perfectly collinear covariate", {
+  set.seed(3)
+  n_obs <- 50
+  cov   <- rnorm(n_obs)
+  z_obs <- 2 * cov + 1  # perfect linear relationship
+
+  res <- residualise_connectivity(
+    z_obs          = z_obs,
+    z_int          = rnorm(20),
+    covariates_obs = list(x = cov),
+    covariates_int = list(x = rnorm(20))
+  )
+
+  expect_true(res$aux_r2 > 0.99)
+  expect_true(all(abs(res$z_obs_resid) < 1e-10))
+})
+
+
+test_that("fit_intensity_gam returns required fields with correct types", {
+  skip_on_cran()
+  skip_if_not_installed("mgcv")
+  set.seed(42)
+
+  r <- terra::rast(nrows = 10, ncols = 10, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(100, mean = 5))
+
+  conn_at_obs <- abs(rnorm(25, mean = 5))
+  obs_x <- runif(25, 0.05, 0.95)
+  obs_y <- runif(25, 0.05, 0.95)
+
+  fit <- fit_intensity_gam(
+    connectivity_at_obs = conn_at_obs,
+    connectivity_raster = r,
+    obs_coords          = data.frame(x = obs_x, y = obs_y)
+  )
+
+  expect_true(is.list(fit))
+  required <- c("estimates", "se", "loglik", "convergence",
+                "gam_model", "gam_edf", "gam_deviance_explained", "gam_aic")
+  for (nm in required) {
+    expect_true(nm %in% names(fit),
+                info = paste("Missing field:", nm))
+  }
+  expect_true(inherits(fit$gam_model, "bam") || inherits(fit$gam_model, "gam"))
+  expect_true(is.finite(fit$loglik))
+  expect_true(fit$loglik < 0)
+})
+
+
+test_that("fit_intensity_gam estimates contain alpha and gamma", {
+  skip_on_cran()
+  skip_if_not_installed("mgcv")
+  set.seed(7)
+
+  r <- terra::rast(nrows = 8, ncols = 8, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(64, mean = 3))
+  conn_at_obs <- abs(rnorm(20, mean = 3))
+
+  fit <- fit_intensity_gam(
+    connectivity_at_obs = conn_at_obs,
+    connectivity_raster = r,
+    obs_coords = data.frame(x = runif(20, 0.1, 0.9),
+                            y = runif(20, 0.1, 0.9))
+  )
+
+  expect_true("alpha" %in% names(fit$estimates))
+  expect_true("gamma" %in% names(fit$estimates))
+  expect_true(is.finite(fit$estimates["alpha"]))
+  expect_true(is.finite(fit$estimates["gamma"]))
+})
+
+
+test_that("fit_intensity_gam with residualise=TRUE exercises the residualisation path", {
+  skip_on_cran()
+  skip_if_not_installed("mgcv")
+  set.seed(13)
+
+  r <- terra::rast(nrows = 10, ncols = 10, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(100, mean = 4))
+
+  n_obs <- 25
+  obs_x <- runif(n_obs, 0.05, 0.95)
+  obs_y <- runif(n_obs, 0.05, 0.95)
+  cov_obs <- list(habitat = runif(n_obs))
+
+  # Covariate raster must cover the same grid
+  r_cov <- terra::rast(r)
+  terra::values(r_cov) <- runif(100)
+  names(r_cov) <- "habitat"
+
+  fit <- fit_intensity_gam(
+    connectivity_at_obs = abs(rnorm(n_obs, mean = 4)),
+    connectivity_raster = r,
+    obs_coords          = data.frame(x = obs_x, y = obs_y),
+    covariates_obs      = cov_obs,
+    covariates_rasters  = list(habitat = r_cov),
+    residualise         = TRUE
+  )
+
+  expect_true(isTRUE(fit$is_residualised))
+  expect_true(!is.null(fit$residualisation_info))
+  expect_true(is.finite(fit$loglik))
+})
+
+
 test_that("fit_intensity_nb converges and loglik improves over start values", {
   skip_on_cran()
   skip_if_not_installed("terra")
