@@ -207,7 +207,7 @@ test_that("fit_intensity_selection() convenience alias works", {
     obs_coords             = obs_coords
   )
 
-  expect_s3_class(fit, NULL)
+  expect_type(fit, "list")
   expect_true(is.finite(fit$loglik))
   expect_true("gamma" %in% names(fit$estimates))
 })
