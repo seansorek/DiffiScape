@@ -150,13 +150,15 @@ default_optimizer_config <- function() {
 #' @export
 optimize_resistance_enzyme <- function(basis_stack,
                                        obs_points,
-                                       bounds           = NULL,
-                                       config           = default_optimizer_config(),
-                                       intensity_config = default_intensity_config(),
-                                       output_dir       = tempdir(),
-                                       covariates_obs   = NULL,
-                                       covariates_rasters = NULL,
-                                       residualise      = FALSE) {
+                                       bounds               = NULL,
+                                       config               = default_optimizer_config(),
+                                       intensity_config     = default_intensity_config(),
+                                       output_dir           = tempdir(),
+                                       covariates_obs       = NULL,
+                                       covariates_rasters   = NULL,
+                                       residualise          = FALSE,
+                                       available_points     = NULL,
+                                       available_covariates = NULL) {
 
   set.seed(config$seed)
 
@@ -219,6 +221,18 @@ optimize_resistance_enzyme <- function(basis_stack,
       cov_obs_v  <- if (!is.null(covariates_obs))
         lapply(covariates_obs, function(v) v[valid]) else NULL
 
+      # Step 3b: extract connectivity at available locations (selection mode)
+      avail_conn_v <- NULL
+      avail_cov_v  <- available_covariates
+      if (!is.null(available_points)) {
+        avail_conn_raw <- extract_connectivity(cum_rast, available_points)
+        avail_valid    <- !is.na(avail_conn_raw)
+        avail_conn_v   <- avail_conn_raw[avail_valid]
+        if (!is.null(available_covariates)) {
+          avail_cov_v <- lapply(available_covariates, function(v) v[avail_valid])
+        }
+      }
+
       # Inner-loop intensity fit
       fit_fn <- switch(distribution,
         negbin = fit_intensity_nb,
@@ -237,6 +251,10 @@ optimize_resistance_enzyme <- function(basis_stack,
       )
       if (distribution != "gam" && !is.null(int_family))
         int_args$family <- int_family
+      if (!is.null(avail_conn_v)) {
+        int_args$available_connectivity <- avail_conn_v
+        int_args$available_covariates   <- avail_cov_v
+      }
       int_fit <- do.call(fit_fn, int_args)
 
       neg_ll <- -int_fit$loglik
@@ -247,8 +265,8 @@ optimize_resistance_enzyme <- function(basis_stack,
       # Log
       entry <- data.frame(eval = eval_counter$n, r_0 = theta[1])
       for (k in seq_len(n_basis)) entry[[paste0("z_", k)]] <- theta[k + 1]
-      entry$alpha     <- int_fit$estimates["alpha"]
-      entry$gamma     <- int_fit$estimates["gamma"]
+      entry$alpha     <- int_fit$estimates["alpha"] %||% NA_real_
+      entry$gamma     <- int_fit$estimates["gamma"] %||% NA_real_
       entry$loglik    <- int_fit$loglik
       entry$converged <- int_fit$convergence == 0
 
@@ -351,15 +369,17 @@ optimize_resistance_enzyme <- function(basis_stack,
 evaluate_full_model <- function(resistance_params,
                                 basis_stack,
                                 obs_points,
-                                distribution      = "negbin",
-                                omniscape_settings = list(),
-                                intensity_config  = default_intensity_config(),
-                                covariates_obs    = NULL,
-                                covariates_rasters = NULL,
-                                residualise       = FALSE,
-                                verbose           = TRUE,
-                                link              = link_exp(),
-                                family            = NULL) {
+                                distribution        = "negbin",
+                                omniscape_settings  = list(),
+                                intensity_config    = default_intensity_config(),
+                                covariates_obs      = NULL,
+                                covariates_rasters  = NULL,
+                                residualise         = FALSE,
+                                verbose             = TRUE,
+                                link                = link_exp(),
+                                family              = NULL,
+                                available_points    = NULL,
+                                available_covariates = NULL) {
 
   t0 <- Sys.time()
 
@@ -396,6 +416,19 @@ evaluate_full_model <- function(resistance_params,
     }
   }
 
+  # Step 3b: extract connectivity at available locations (selection mode)
+  avail_conn <- NULL
+  if (!is.null(available_points)) {
+    if (verbose) message("  Extracting connectivity at available locations...")
+    avail_conn_raw <- extract_connectivity(connectivity, available_points)
+    avail_valid    <- !is.na(avail_conn_raw)
+    avail_conn     <- avail_conn_raw[avail_valid]
+    if (!is.null(available_covariates)) {
+      available_covariates <- lapply(available_covariates,
+                                     function(v) v[avail_valid])
+    }
+  }
+
   # Step 4: fit intensity
   fit_fn <- switch(distribution,
     negbin = fit_intensity_nb,
@@ -415,6 +448,10 @@ evaluate_full_model <- function(resistance_params,
   )
   if (distribution != "gam" && !is.null(family))
     int_args$family <- family
+  if (!is.null(avail_conn)) {
+    int_args$available_connectivity <- avail_conn
+    int_args$available_covariates   <- available_covariates
+  }
   int_fit <- do.call(fit_fn, int_args)
 
   elapsed <- as.numeric(difftime(Sys.time(), t0, units = "secs"))
@@ -447,8 +484,10 @@ evaluate_full_model <- function(resistance_params,
                               covariates_obs,
                               covariates_rasters,
                               residualise,
-                              link = link_exp(),
-                              family = NULL) {
+                              link                = link_exp(),
+                              family              = NULL,
+                              available_points    = NULL,
+                              available_covariates = NULL) {
 
   n_basis <- terra::nlyr(basis_stack)
   eval_counter$n <- eval_counter$n + 1L
@@ -463,18 +502,20 @@ evaluate_full_model <- function(resistance_params,
 
   result <- tryCatch(
     evaluate_full_model(
-      resistance_params  = params,
-      basis_stack        = basis_stack,
-      obs_points         = obs_points,
-      distribution       = distribution,
-      omniscape_settings = omniscape_settings,
-      intensity_config   = intensity_config,
-      covariates_obs     = covariates_obs,
-      covariates_rasters = covariates_rasters,
-      residualise        = residualise,
-      verbose            = TRUE,
-      link               = link,
-      family             = family
+      resistance_params    = params,
+      basis_stack          = basis_stack,
+      obs_points           = obs_points,
+      distribution         = distribution,
+      omniscape_settings   = omniscape_settings,
+      intensity_config     = intensity_config,
+      covariates_obs       = covariates_obs,
+      covariates_rasters   = covariates_rasters,
+      residualise          = residualise,
+      verbose              = TRUE,
+      link                 = link,
+      family               = family,
+      available_points     = available_points,
+      available_covariates = available_covariates
     ),
     error = function(e) {
       message("  ERROR: ", conditionMessage(e))
@@ -489,8 +530,8 @@ evaluate_full_model <- function(resistance_params,
   if (!is.null(log_file)) {
     entry <- data.frame(eval = eval_counter$n, r_0 = theta[1])
     for (k in seq_len(n_basis)) entry[[paste0("z_", k)]] <- theta[k + 1]
-    entry$alpha   <- result$intensity_params["alpha"]
-    entry$gamma   <- result$intensity_params["gamma"]
+    entry$alpha   <- result$intensity_params["alpha"] %||% NA_real_
+    entry$gamma   <- result$intensity_params["gamma"] %||% NA_real_
     entry$loglik  <- result$loglik
     entry$time    <- result$total_time
     entry$converged <- result$convergence == 0
@@ -694,13 +735,15 @@ evaluate_full_model <- function(resistance_params,
 #' @export
 optimize_resistance <- function(basis_stack,
                                 obs_points,
-                                bounds           = NULL,
-                                config           = default_optimizer_config(),
-                                intensity_config = default_intensity_config(),
-                                output_dir       = tempdir(),
-                                covariates_obs   = NULL,
-                                covariates_rasters = NULL,
-                                residualise      = FALSE) {
+                                bounds               = NULL,
+                                config               = default_optimizer_config(),
+                                intensity_config     = default_intensity_config(),
+                                output_dir           = tempdir(),
+                                covariates_obs       = NULL,
+                                covariates_rasters   = NULL,
+                                residualise          = FALSE,
+                                available_points     = NULL,
+                                available_covariates = NULL) {
  # TODO refactor this function to work with more flexible resistance models (e.g. non-linear, non-parametric, ML-based).
   set.seed(config$seed)
 
@@ -735,7 +778,9 @@ optimize_resistance <- function(basis_stack,
       theta, basis_stack, obs_points, config$omniscape,
       eval_counter, log_file, distribution, intensity_config,
       covariates_obs, covariates_rasters, residualise,
-      link = res_link, family = int_family
+      link = res_link, family = int_family,
+      available_points     = available_points,
+      available_covariates = available_covariates
     )
     X_eval <- rbind(X_eval, init_design[i, ])
     y_eval <- c(y_eval, y)
@@ -827,7 +872,9 @@ optimize_resistance <- function(basis_stack,
       theta, basis_stack, obs_points, config$omniscape,
       eval_counter, log_file, distribution, intensity_config,
       covariates_obs, covariates_rasters, residualise,
-      link = res_link, family = int_family
+      link = res_link, family = int_family,
+      available_points     = available_points,
+      available_covariates = available_covariates
     )
 
     X_eval <- rbind(X_eval, next_pt)

@@ -44,12 +44,14 @@ intensity_family <- function(name,
                              deviance_residuals_fn,
                              init_fn,
                              n_extra_params    = 0L,
-                             extra_param_names = character(0)) {
+                             extra_param_names = character(0),
+                             param_names_fn    = NULL) {
   stopifnot(is.character(name), length(name) == 1L)
   stopifnot(is.function(negloglik_fn))
   stopifnot(is.function(deviance_residuals_fn))
   stopifnot(is.function(init_fn))
   stopifnot(is.integer(as.integer(n_extra_params)))
+  if (!is.null(param_names_fn)) stopifnot(is.function(param_names_fn))
 
   structure(
     list(
@@ -58,7 +60,8 @@ intensity_family <- function(name,
       deviance_residuals_fn = deviance_residuals_fn,
       init_fn               = init_fn,
       n_extra_params        = as.integer(n_extra_params),
-      extra_param_names     = extra_param_names
+      extra_param_names     = extra_param_names,
+      param_names_fn        = param_names_fn
     ),
     class = "intensity_family"
   )
@@ -359,6 +362,290 @@ family_zinb <- function() {
 
     n_extra_params    = 2L,
     extra_param_names = c("log_nb_theta", "logit_pi")
+  )
+}
+
+
+# ---- selection function families -------------------------------------------
+
+#' Resource Selection Function (RSF) intensity family
+#'
+#' Exponential RSF fitted via the Poisson/use-availability form.  Does not
+#' include a baseline intercept (alpha) — only relative selection is estimated.
+#' Requires explicitly-provided available/background locations; pass these via
+#' the `available_points` argument of [optimize_resistance()], [ds_optimize()],
+#' or [fit_intensity_selection()].
+#'
+#' The negative log-likelihood is:
+#' \deqn{-\ell = -\left(\sum_i f(x_i) - n \cdot \log \sum_j w_j \exp f(x_j)\right)}
+#' where \eqn{f(x) = \gamma z + \sum_k \beta_k c_k(x)} and
+#' \eqn{n = \sum \text{obs\_weights}}.
+#'
+#' @return An [intensity_family] object.
+#' @export
+family_rsf <- function() {
+  intensity_family(
+    name = "rsf",
+
+    negloglik_fn = function(theta,
+                            z_obs, z_int,
+                            int_weights, obs_weights,
+                            cov_obs   = NULL,
+                            cov_int   = NULL,
+                            cov_names = character(0)) {
+      gamma <- theta[1]
+      n_cov <- length(cov_names)
+      betas <- if (n_cov > 0) {
+        stats::setNames(theta[2:(1 + n_cov)], cov_names)
+      } else {
+        NULL
+      }
+
+      f_obs <- gamma * z_obs
+      f_int <- gamma * z_int
+      if (!is.null(betas)) {
+        for (nm in names(betas)) {
+          f_obs <- f_obs + betas[[nm]] * cov_obs[[nm]]
+          f_int <- f_int + betas[[nm]] * cov_int[[nm]]
+        }
+      }
+
+      n_obs <- sum(obs_weights)
+      # log-sum-exp for numerical stability
+      mx <- max(f_int)
+      lse <- mx + log(sum(int_weights * exp(f_int - mx)))
+
+      negll <- -(sum(obs_weights * f_obs) - n_obs * lse)
+      if (!is.finite(negll)) negll <- 1e15
+      negll
+    },
+
+    deviance_residuals_fn = function(observed, fitted, extra_params) {
+      rep(NA_real_, length(observed))
+    },
+
+    init_fn = function(n_cov) {
+      # theta = c(gamma, betas...)
+      list(
+        start = c(0, rep(0, n_cov)),
+        lower = c(-10, rep(-10, n_cov)),
+        upper = c( 10, rep( 10, n_cov))
+      )
+    },
+
+    n_extra_params    = 0L,
+    extra_param_names = character(0),
+    param_names_fn    = function(cov_names) {
+      c("gamma", paste0("beta_", cov_names))
+    }
+  )
+}
+
+
+#' Resource Selection Probability (RSP / logistic selection) intensity family
+#'
+#' Logistic regression with a large background weight, implementing the
+#' Fithian & Hastie (2013) "infinite weight" trick.  Estimates a selection
+#' probability surface.  Includes baseline alpha (log-odds intercept).
+#'
+#' The negative log-likelihood is:
+#' \deqn{-\ell = -\left(\sum_i \log \sigma(f_i) +
+#'   W \sum_j w_j \log(1 - \sigma(f_j))\right)}
+#' where \eqn{\sigma} is the logistic function and \eqn{W} is the background
+#' weight.
+#'
+#' @param background_weight Numeric scalar; multiplicative weight applied to
+#'   background/available locations (default `1000`).  Larger values make the
+#'   RSP asymptotically equivalent to the PPP.
+#' @return An [intensity_family] object.
+#' @export
+family_rsp <- function(background_weight = 1000) {
+  stopifnot(is.numeric(background_weight), length(background_weight) == 1L,
+            background_weight > 0)
+
+  intensity_family(
+    name = "rsp",
+
+    negloglik_fn = function(theta,
+                            z_obs, z_int,
+                            int_weights, obs_weights,
+                            cov_obs   = NULL,
+                            cov_int   = NULL,
+                            cov_names = character(0)) {
+      alpha <- theta[1]
+      gamma <- theta[2]
+      n_cov <- length(cov_names)
+      betas <- if (n_cov > 0) {
+        stats::setNames(theta[3:(2 + n_cov)], cov_names)
+      } else {
+        NULL
+      }
+
+      f_obs <- alpha + gamma * z_obs
+      f_int <- alpha + gamma * z_int
+      if (!is.null(betas)) {
+        for (nm in names(betas)) {
+          f_obs <- f_obs + betas[[nm]] * cov_obs[[nm]]
+          f_int <- f_int + betas[[nm]] * cov_int[[nm]]
+        }
+      }
+
+      # Numerically stable log-sigmoid and log(1-sigmoid)
+      log_p_obs   <- -log1p(exp(-f_obs))
+      log_1mp_int <- -log1p(exp( f_int))
+
+      negll <- -(sum(obs_weights * log_p_obs) +
+                 background_weight * sum(int_weights * log_1mp_int))
+      if (!is.finite(negll)) negll <- 1e15
+      negll
+    },
+
+    deviance_residuals_fn = function(observed, fitted, extra_params) {
+      rep(NA_real_, length(observed))
+    },
+
+    init_fn = function(n_cov) {
+      # theta = c(alpha, gamma, betas...)
+      list(
+        start = c(0, 0, rep(0, n_cov)),
+        lower = c(-10, -10, rep(-10, n_cov)),
+        upper = c( 10,  10, rep( 10, n_cov))
+      )
+    },
+
+    n_extra_params    = 0L,
+    extra_param_names = character(0)
+    # param_names_fn is NULL -> uses default alpha/gamma/betas naming
+  )
+}
+
+
+#' Conditional logistic selection family (iSSA / SSA)
+#'
+#' Conditional logistic regression for paired used-available data, optionally
+#' stratified (one used location per stratum, any number of available).
+#' When strata are omitted, reduces to a global [family_rsf()].
+#'
+#' Requires explicitly-provided available locations via the `available_points`
+#' argument of [optimize_resistance()], [ds_optimize()], or
+#' [fit_intensity_selection()].
+#'
+#' For stratified data (e.g. step-selection analysis), pass stratum IDs at
+#' family creation time and set
+#' `intensity_config$integration_subsample = 1` to preserve stratum integrity.
+#'
+#' @param stratum_ids_used Integer or character vector of length \eqn{n_\text{used}},
+#'   giving the stratum each used location belongs to.  Must be provided
+#'   together with `stratum_ids_avail`.
+#' @param stratum_ids_avail Integer or character vector of length
+#'   \eqn{n_\text{avail}}, giving the stratum each available location belongs
+#'   to.
+#' @return An [intensity_family] object.
+#' @export
+family_clogit <- function(stratum_ids_used  = NULL,
+                          stratum_ids_avail = NULL) {
+
+  use_strata <- !is.null(stratum_ids_used) || !is.null(stratum_ids_avail)
+
+  if (use_strata) {
+    if (is.null(stratum_ids_used) || is.null(stratum_ids_avail)) {
+      stop("Both stratum_ids_used and stratum_ids_avail must be provided together.",
+           call. = FALSE)
+    }
+
+    strata_used  <- sort(unique(stratum_ids_used))
+    strata_avail <- sort(unique(stratum_ids_avail))
+    if (!identical(strata_used, strata_avail)) {
+      stop("stratum_ids_used and stratum_ids_avail must share the same unique stratum IDs.",
+           call. = FALSE)
+    }
+
+    tab_used <- table(stratum_ids_used)
+    if (any(tab_used != 1L)) {
+      stop("Each stratum must have exactly one used location (stratum_ids_used).",
+           call. = FALSE)
+    }
+
+    # Precompute index mapping for performance: list of list(used, avail)
+    idx_map <- lapply(strata_used, function(s) {
+      list(
+        used  = which(stratum_ids_used  == s),
+        avail = which(stratum_ids_avail == s)
+      )
+    })
+  } else {
+    idx_map <- NULL
+  }
+
+  intensity_family(
+    name = "clogit",
+
+    negloglik_fn = function(theta,
+                            z_obs, z_int,
+                            int_weights, obs_weights,
+                            cov_obs   = NULL,
+                            cov_int   = NULL,
+                            cov_names = character(0)) {
+      gamma <- theta[1]
+      n_cov <- length(cov_names)
+      betas <- if (n_cov > 0) {
+        stats::setNames(theta[2:(1 + n_cov)], cov_names)
+      } else {
+        NULL
+      }
+
+      f_obs <- gamma * z_obs
+      f_int <- gamma * z_int
+      if (!is.null(betas)) {
+        for (nm in names(betas)) {
+          f_obs <- f_obs + betas[[nm]] * cov_obs[[nm]]
+          f_int <- f_int + betas[[nm]] * cov_int[[nm]]
+        }
+      }
+
+      if (is.null(idx_map)) {
+        # Global (no strata): equivalent to family_rsf()
+        n_obs <- sum(obs_weights)
+        mx  <- max(f_int)
+        lse <- mx + log(sum(int_weights * exp(f_int - mx)))
+        negll <- -(sum(obs_weights * f_obs) - n_obs * lse)
+      } else {
+        # Per-stratum conditional logistic
+        nll_total <- 0
+        for (im in idx_map) {
+          f_used  <- f_obs[im$used]
+          f_avail <- f_int[im$avail]
+          # Denominator includes the used location
+          f_all   <- c(f_used, f_avail)
+          mx_s    <- max(f_all)
+          lse_s   <- mx_s + log(sum(exp(f_all - mx_s)))
+          nll_total <- nll_total + (lse_s - f_used)
+        }
+        negll <- nll_total
+      }
+
+      if (!is.finite(negll)) negll <- 1e15
+      negll
+    },
+
+    deviance_residuals_fn = function(observed, fitted, extra_params) {
+      rep(NA_real_, length(observed))
+    },
+
+    init_fn = function(n_cov) {
+      # theta = c(gamma, betas...)
+      list(
+        start = c(0, rep(0, n_cov)),
+        lower = c(-10, rep(-10, n_cov)),
+        upper = c( 10, rep( 10, n_cov))
+      )
+    },
+
+    n_extra_params    = 0L,
+    extra_param_names = character(0),
+    param_names_fn    = function(cov_names) {
+      c("gamma", paste0("beta_", cov_names))
+    }
   )
 }
 

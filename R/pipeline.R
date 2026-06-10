@@ -143,18 +143,23 @@ ds_init_julia <- function(julia_home = NULL, force = FALSE) {
 #' @export
 ds_optimize <- function(basis_stack,
                         obs_points,
-                        bounds           = NULL,
-                        config           = default_optimizer_config(),
-                        intensity_config = default_intensity_config(),
-                        output_dir       = tempdir(),
-                        covariates_obs   = NULL,
-                        covariates_rasters = NULL,
-                        residualise      = FALSE,
-                        solver           = c("surrogate", "enzyme", "torch")) {
+                        bounds               = NULL,
+                        config               = default_optimizer_config(),
+                        intensity_config     = default_intensity_config(),
+                        output_dir           = tempdir(),
+                        covariates_obs       = NULL,
+                        covariates_rasters   = NULL,
+                        residualise          = FALSE,
+                        available_points     = NULL,
+                        available_covariates = NULL,
+                        solver               = c("surrogate", "enzyme", "torch")) {
 
   solver <- match.arg(solver)
 
   if (solver == "torch") {
+    if (!is.null(available_points)) {
+      stop("available_points is not supported with solver = 'torch'.", call. = FALSE)
+    }
     torch_args <- config$torch %||% list()
     torch_args$basis_stack <- basis_stack
     torch_args$obs_points  <- obs_points
@@ -169,15 +174,17 @@ ds_optimize <- function(basis_stack,
             else optimize_resistance
 
   opt_fn(
-    basis_stack        = basis_stack,
-    obs_points         = obs_points,
-    bounds             = bounds,
-    config             = config,
-    intensity_config   = intensity_config,
-    output_dir         = output_dir,
-    covariates_obs     = covariates_obs,
-    covariates_rasters = covariates_rasters,
-    residualise        = residualise
+    basis_stack          = basis_stack,
+    obs_points           = obs_points,
+    bounds               = bounds,
+    config               = config,
+    intensity_config     = intensity_config,
+    output_dir           = output_dir,
+    covariates_obs       = covariates_obs,
+    covariates_rasters   = covariates_rasters,
+    residualise          = residualise,
+    available_points     = available_points,
+    available_covariates = available_covariates
   )
 }
 
@@ -204,14 +211,16 @@ ds_optimize <- function(basis_stack,
 ds_fit_intensity <- function(opt_result,
                               basis_stack,
                               obs_points,
-                              omniscape_settings = list(),
-                              intensity_config   = default_intensity_config(),
-                              covariates_obs     = NULL,
-                              covariates_rasters = NULL,
-                              residualise        = FALSE,
-                              solver             = c("surrogate", "enzyme"),
-                              link               = link_exp(),
-                              family             = NULL) {
+                              omniscape_settings   = list(),
+                              intensity_config     = default_intensity_config(),
+                              covariates_obs       = NULL,
+                              covariates_rasters   = NULL,
+                              residualise          = FALSE,
+                              available_points     = NULL,
+                              available_covariates = NULL,
+                              solver               = c("surrogate", "enzyme"),
+                              link                 = link_exp(),
+                              family               = NULL) {
 
   solver <- match.arg(solver)
 
@@ -244,6 +253,17 @@ ds_fit_intensity <- function(opt_result,
     )
     if (distribution != "gam" && !is.null(family))
       int_args$family <- family
+
+    if (!is.null(available_points)) {
+      avail_conn_raw <- extract_connectivity(connectivity, available_points)
+      avail_valid    <- !is.na(avail_conn_raw)
+      avail_conn     <- avail_conn_raw[avail_valid]
+      avail_cov      <- if (!is.null(available_covariates))
+        lapply(available_covariates, function(v) v[avail_valid]) else NULL
+      int_args$available_connectivity <- avail_conn
+      int_args$available_covariates   <- avail_cov
+    }
+
     int_fit <- do.call(fit_fn, int_args)
 
     return(list(
@@ -258,17 +278,19 @@ ds_fit_intensity <- function(opt_result,
   }
 
   evaluate_full_model(
-    resistance_params  = opt_result$best_params,
-    basis_stack        = basis_stack,
-    obs_points         = obs_points,
-    distribution       = opt_result$distribution,
-    omniscape_settings = omniscape_settings,
-    intensity_config   = intensity_config,
-    covariates_obs     = covariates_obs,
-    covariates_rasters = covariates_rasters,
-    residualise        = residualise,
-    link               = link,
-    family             = family
+    resistance_params    = opt_result$best_params,
+    basis_stack          = basis_stack,
+    obs_points           = obs_points,
+    distribution         = opt_result$distribution,
+    omniscape_settings   = omniscape_settings,
+    intensity_config     = intensity_config,
+    covariates_obs       = covariates_obs,
+    covariates_rasters   = covariates_rasters,
+    residualise          = residualise,
+    link                 = link,
+    family               = family,
+    available_points     = available_points,
+    available_covariates = available_covariates
   )
 }
 
@@ -318,47 +340,53 @@ ds_predict <- function(intensity_fit,
 ds_posterior <- function(opt_result,
                          basis_stack,
                          obs_points,
-                         n_draws            = 200L,
-                         n_inner            = 5L,
-                         omniscape_settings = list(),
-                         intensity_config   = default_intensity_config(),
-                         covariates_obs     = NULL,
-                         covariates_rasters = NULL,
-                         residualise        = FALSE,
-                         link               = link_exp(),
-                         family             = NULL) {
+                         n_draws              = 200L,
+                         n_inner              = 5L,
+                         omniscape_settings   = list(),
+                         intensity_config     = default_intensity_config(),
+                         covariates_obs       = NULL,
+                         covariates_rasters   = NULL,
+                         residualise          = FALSE,
+                         available_points     = NULL,
+                         available_covariates = NULL,
+                         link                 = link_exp(),
+                         family               = NULL) {
 
   # Auto-detect: use direct Hessian when no GP surrogate is available
   use_refit <- is.null(opt_result$surrogate)
 
   lap <- laplace_resistance(
     opt_result,
-    basis_stack       = basis_stack,
-    obs_points        = obs_points,
-    refit             = use_refit,
-    intensity_config  = intensity_config,
-    covariates_obs    = covariates_obs,
-    covariates_rasters = covariates_rasters,
-    residualise       = residualise,
-    link              = link,
-    family            = family
+    basis_stack          = basis_stack,
+    obs_points           = obs_points,
+    refit                = use_refit,
+    intensity_config     = intensity_config,
+    covariates_obs       = covariates_obs,
+    covariates_rasters   = covariates_rasters,
+    residualise          = residualise,
+    available_points     = available_points,
+    available_covariates = available_covariates,
+    link                 = link,
+    family               = family
   )
 
   samp <- posterior_sample(
-    laplace            = lap,
-    opt_result         = opt_result,
-    basis_stack        = basis_stack,
-    obs_points         = obs_points,
-    n_draws            = n_draws,
-    n_inner            = n_inner,
-    bounds             = opt_result$bounds,
-    omniscape_settings = omniscape_settings,
-    intensity_config   = intensity_config,
-    covariates_obs     = covariates_obs,
-    covariates_rasters = covariates_rasters,
-    residualise        = residualise,
-    link               = link,
-    family             = family
+    laplace              = lap,
+    opt_result           = opt_result,
+    basis_stack          = basis_stack,
+    obs_points           = obs_points,
+    n_draws              = n_draws,
+    n_inner              = n_inner,
+    bounds               = opt_result$bounds,
+    omniscape_settings   = omniscape_settings,
+    intensity_config     = intensity_config,
+    covariates_obs       = covariates_obs,
+    covariates_rasters   = covariates_rasters,
+    residualise          = residualise,
+    available_points     = available_points,
+    available_covariates = available_covariates,
+    link                 = link,
+    family               = family
   )
 
   summ <- posterior_summary(samp)
@@ -432,20 +460,22 @@ ds_diagnose <- function(intensity_fit,
 #' @export
 diffiscape <- function(obs_data,
                        rasters,
-                       julia_home        = NULL,
-                       optimizer_config  = default_optimizer_config(),
-                       intensity_config  = default_intensity_config(),
-                       bounds            = NULL,
-                       output_dir        = "diffiscape_output",
-                       n_posterior        = 200L,
-                       covariates_obs    = NULL,
-                       covariates_rasters = NULL,
-                       residualise       = FALSE,
-                       plot              = TRUE,
-                       crs               = NULL,
-                       rescale_basis     = TRUE,
-                       pattern           = "*.tif",
-                       solver            = c("surrogate", "enzyme")) {
+                       julia_home           = NULL,
+                       optimizer_config     = default_optimizer_config(),
+                       intensity_config     = default_intensity_config(),
+                       bounds               = NULL,
+                       output_dir           = "diffiscape_output",
+                       n_posterior          = 200L,
+                       covariates_obs       = NULL,
+                       covariates_rasters   = NULL,
+                       residualise          = FALSE,
+                       available_points     = NULL,
+                       available_covariates = NULL,
+                       plot                 = TRUE,
+                       crs                  = NULL,
+                       rescale_basis        = TRUE,
+                       pattern              = "*.tif",
+                       solver               = c("surrogate", "enzyme")) {
 
   solver <- match.arg(solver)
 
@@ -481,31 +511,35 @@ diffiscape <- function(obs_data,
   # --- Step 4: Optimise ---
   message("\n[4/7] Optimising resistance parameters...")
   opt_result <- ds_optimize(
-    basis_stack        = basis_stack,
-    obs_points         = obs_points,
-    bounds             = bounds,
-    config             = optimizer_config,
-    intensity_config   = intensity_config,
-    output_dir         = output_dir,
-    covariates_obs     = covariates_obs,
-    covariates_rasters = covariates_rasters,
-    residualise        = residualise,
-    solver             = solver
+    basis_stack          = basis_stack,
+    obs_points           = obs_points,
+    bounds               = bounds,
+    config               = optimizer_config,
+    intensity_config     = intensity_config,
+    output_dir           = output_dir,
+    covariates_obs       = covariates_obs,
+    covariates_rasters   = covariates_rasters,
+    residualise          = residualise,
+    available_points     = available_points,
+    available_covariates = available_covariates,
+    solver               = solver
   )
 
   # --- Step 5: Final intensity fit ---
   message("\n[5/7] Fitting final intensity model...")
   intensity_fit <- ds_fit_intensity(
-    opt_result         = opt_result,
-    basis_stack        = basis_stack,
-    obs_points         = obs_points,
-    intensity_config   = intensity_config,
-    covariates_obs     = covariates_obs,
-    covariates_rasters = covariates_rasters,
-    residualise        = residualise,
-    solver             = solver,
-    link               = res_link,
-    family             = int_family
+    opt_result           = opt_result,
+    basis_stack          = basis_stack,
+    obs_points           = obs_points,
+    intensity_config     = intensity_config,
+    covariates_obs       = covariates_obs,
+    covariates_rasters   = covariates_rasters,
+    residualise          = residualise,
+    available_points     = available_points,
+    available_covariates = available_covariates,
+    solver               = solver,
+    link                 = res_link,
+    family               = int_family
   )
 
   # --- Step 6: Posterior ---
@@ -513,16 +547,18 @@ diffiscape <- function(obs_data,
   if (n_posterior > 0) {
     message("\n[6/7] Posterior inference...")
     posterior <- ds_posterior(
-      opt_result         = opt_result,
-      basis_stack        = basis_stack,
-      obs_points         = obs_points,
-      n_draws            = n_posterior,
-      intensity_config   = intensity_config,
-      covariates_obs     = covariates_obs,
-      covariates_rasters = covariates_rasters,
-      residualise        = residualise,
-      link               = res_link,
-      family             = int_family
+      opt_result           = opt_result,
+      basis_stack          = basis_stack,
+      obs_points           = obs_points,
+      n_draws              = n_posterior,
+      intensity_config     = intensity_config,
+      covariates_obs       = covariates_obs,
+      covariates_rasters   = covariates_rasters,
+      residualise          = residualise,
+      available_points     = available_points,
+      available_covariates = available_covariates,
+      link                 = res_link,
+      family               = int_family
     )
   } else {
     message("\n[6/7] Posterior inference... SKIPPED")

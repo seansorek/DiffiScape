@@ -287,13 +287,92 @@ compute_intensity <- function(z, alpha, gamma,
 fit_intensity_nb <- function(connectivity_at_obs,
                              connectivity_raster,
                              obs_coords,
-                             covariates_obs     = NULL,
-                             covariates_rasters = NULL,
-                             residualise        = FALSE,
-                             config             = default_intensity_config(),
-                             family             = NULL) {
+                             covariates_obs       = NULL,
+                             covariates_rasters   = NULL,
+                             residualise          = FALSE,
+                             config               = default_intensity_config(),
+                             family               = NULL,
+                             available_connectivity = NULL,
+                             available_covariates   = NULL) {
 
   family <- resolve_family(family %||% config$family, "negbin")
+
+  if (!is.null(available_connectivity)) {
+    # ---- selection mode: use explicit available locations -------------------
+    C_obs_raw   <- pmax(connectivity_at_obs, config$min_connectivity)
+    C_int_raw   <- pmax(available_connectivity, config$min_connectivity)
+    int_weights <- rep(1, length(C_int_raw))
+    obs_weights <- rep(1, length(C_obs_raw))
+
+    std    <- standardise_connectivity(C_obs_raw, C_int_raw, config$c_scale)
+    z_obs  <- std$z_obs
+    z_int  <- std$z_int
+
+    cov_int  <- available_covariates
+    cov_obs  <- if (!is.null(covariates_obs) && length(covariates_obs) > 0) {
+      lapply(covariates_obs, function(v) pmax(pmin(v, 1), 0))
+    } else {
+      NULL
+    }
+    cov_names <- if (!is.null(cov_int)) names(cov_int) else
+                 if (!is.null(cov_obs)) names(cov_obs) else character(0)
+
+    resid_info <- NULL
+    if (residualise && !is.null(cov_obs) && length(cov_obs) > 0) {
+      ri       <- residualise_connectivity(z_obs, z_int, cov_obs, cov_int)
+      z_obs      <- ri$z_obs_resid
+      z_int      <- ri$z_int_resid
+      resid_info <- ri
+    }
+
+    n_cov <- length(cov_names)
+    inits <- family$init_fn(n_cov)
+
+    opt <- stats::optim(
+      par    = inits$start,
+      fn     = family$negloglik_fn,
+      method = "L-BFGS-B",
+      lower  = inits$lower,
+      upper  = inits$upper,
+      z_obs  = z_obs, z_int = z_int,
+      int_weights = int_weights, obs_weights = obs_weights,
+      cov_obs = cov_obs, cov_int = cov_int, cov_names = cov_names,
+      hessian = TRUE
+    )
+
+    n_extra   <- family$n_extra_params
+    if (!is.null(family$param_names_fn)) {
+      est_names <- family$param_names_fn(cov_names)
+    } else {
+      est_names <- c("alpha", "gamma")
+      if (n_cov > 0) est_names <- c(est_names, paste0("beta_", cov_names))
+      if (n_extra > 0) est_names <- c(est_names, family$extra_param_names)
+    }
+
+    estimates <- opt$par
+    names(estimates) <- est_names
+
+    se <- rep(NA_real_, length(estimates))
+    tryCatch({
+      H  <- opt$hessian
+      V  <- solve(H)
+      se <- sqrt(pmax(diag(V), 0))
+    }, error = function(e) NULL)
+    names(se) <- est_names
+
+    return(list(
+      estimates        = estimates,
+      se               = se,
+      loglik           = -opt$value,
+      convergence      = opt$convergence,
+      c_scale          = std$c_scale,
+      log_conn_mean    = std$mu,
+      log_conn_sd      = std$sigma,
+      is_residualised  = !is.null(resid_info),
+      residualisation_info = resid_info,
+      hessian          = opt$hessian
+    ))
+  }
 
   # ---- extract integration grid -------------------------------------------
   C_all_raw   <- terra::values(connectivity_raster)
@@ -373,9 +452,16 @@ fit_intensity_nb <- function(connectivity_at_obs,
 
   # ---- extract results ----------------------------------------------------
   n_extra   <- family$n_extra_params
-  est_names <- c("alpha", "gamma")
-  if (n_cov > 0) est_names <- c(est_names, paste0("beta_", cov_names))
-  if (n_extra > 0) est_names <- c(est_names, family$extra_param_names)
+  if (!is.null(family$param_names_fn)) {
+    est_names <- family$param_names_fn(cov_names)
+    if (n_extra > 0 && length(est_names) < length(opt$par)) {
+      est_names <- c(est_names, family$extra_param_names)
+    }
+  } else {
+    est_names <- c("alpha", "gamma")
+    if (n_cov > 0) est_names <- c(est_names, paste0("beta_", cov_names))
+    if (n_extra > 0) est_names <- c(est_names, family$extra_param_names)
+  }
 
   estimates <- opt$par
   # Transform extra params to natural scale
@@ -628,7 +714,8 @@ predict_intensity <- function(fit,
   }
 
   # Parametric prediction
-  alpha <- fit$estimates[["alpha"]]
+  alpha_raw <- fit$estimates[["alpha"]]
+  alpha <- if (is.null(alpha_raw) || is.na(alpha_raw)) 0 else alpha_raw
   gamma <- fit$estimates[["gamma"]]
 
   C_vals <- terra::values(connectivity_raster)
@@ -653,6 +740,46 @@ predict_intensity <- function(fit,
   terra::values(out) <- exp(log_lambda)
   names(out) <- "intensity"
   out
+}
+
+
+#' Fit a selection function intensity model
+#'
+#' Convenience wrapper around [fit_intensity_nb()] for selection function
+#' (RSF / RSP / iSSA) models.  Accepts explicit available/background locations
+#' instead of a connectivity raster for quadrature.
+#'
+#' @param connectivity_at_obs Numeric vector of raw connectivity at
+#'   used/presence locations.
+#' @param available_connectivity Numeric vector of raw connectivity at
+#'   available/background locations.
+#' @param obs_coords Data.frame / matrix with `x, y` for used locations.
+#' @param available_covariates Named list of covariate vectors at available
+#'   locations (`NULL` to omit).
+#' @param covariates_obs Named list of covariate vectors at used locations
+#'   (`NULL` to omit).
+#' @param config List from [default_intensity_config()].
+#' @param family An [intensity_family] object (default [family_rsf()]).
+#' @return A list matching the interface of [fit_intensity_nb()].
+#' @export
+fit_intensity_selection <- function(connectivity_at_obs,
+                                    available_connectivity,
+                                    obs_coords,
+                                    available_covariates = NULL,
+                                    covariates_obs       = NULL,
+                                    config               = default_intensity_config(),
+                                    family               = family_rsf()) {
+  fit_intensity_nb(
+    connectivity_at_obs    = connectivity_at_obs,
+    connectivity_raster    = NULL,
+    obs_coords             = obs_coords,
+    covariates_obs         = covariates_obs,
+    covariates_rasters     = NULL,
+    config                 = config,
+    family                 = family,
+    available_connectivity = available_connectivity,
+    available_covariates   = available_covariates
+  )
 }
 
 
