@@ -40,3 +40,65 @@ test_that("plot_posterior errors on missing parameter", {
   samples <- data.frame(r_0 = rnorm(10))
   expect_error(plot_posterior(samples, "z_99"), "not found")
 })
+
+
+test_that("posterior_summary quantile width grows with uncertainty", {
+  set.seed(5)
+  # Narrow distribution -> narrow interval
+  narrow  <- data.frame(r_0 = rnorm(1000, mean = 1, sd = 0.1))
+  # Wide distribution -> wider interval
+  wide    <- data.frame(r_0 = rnorm(1000, mean = 1, sd = 2.0))
+
+  summ_narrow <- posterior_summary(narrow)
+  summ_wide   <- posterior_summary(wide)
+
+  width_narrow <- summ_narrow$upper - summ_narrow$lower
+  width_wide   <- summ_wide$upper - summ_wide$lower
+
+  expect_true(width_wide > width_narrow)
+})
+
+test_that("posterior_summary mean and sd match sample statistics", {
+  set.seed(6)
+  samples <- data.frame(r_0 = rnorm(500, mean = 3, sd = 0.5),
+                        z_1 = rnorm(500, mean = -1, sd = 1.0))
+  summ <- posterior_summary(samples)
+
+  r_row  <- summ[summ$parameter == "r_0", ]
+  z_row  <- summ[summ$parameter == "z_1", ]
+
+  expect_equal(r_row$mean, mean(samples$r_0), tolerance = 1e-10)
+  expect_equal(r_row$sd,   sd(samples$r_0),   tolerance = 1e-10)
+  expect_equal(z_row$mean, mean(samples$z_1), tolerance = 1e-10)
+})
+
+test_that("posterior_summary respects custom prob argument", {
+  set.seed(7)
+  samples <- data.frame(r_0 = rnorm(1000))
+
+  summ_95 <- posterior_summary(samples, prob = 0.95)
+  summ_50 <- posterior_summary(samples, prob = 0.50)
+
+  # 50% CI must be narrower than 95% CI
+  width_95 <- summ_95$upper - summ_95$lower
+  width_50 <- summ_50$upper - summ_50$lower
+
+  expect_true(width_50 < width_95)
+})
+
+test_that("posterior_summary lower < median < upper for unimodal distribution", {
+  set.seed(8)
+  samples <- data.frame(r_0 = rnorm(200, 2, 0.3))
+  summ    <- posterior_summary(samples)
+
+  expect_true(summ$lower < summ$median)
+  expect_true(summ$median < summ$upper)
+})
+
+test_that("posterior_summary excludes loglik column from parameters", {
+  samples <- data.frame(r_0 = rnorm(100), z_1 = rnorm(100),
+                        loglik = rnorm(100, -200, 5))
+  summ <- posterior_summary(samples)
+  expect_false("loglik" %in% summ$parameter)
+  expect_equal(nrow(summ), 2)
+})
