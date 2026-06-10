@@ -81,15 +81,15 @@ test_that("create_basis_stack handles single-layer input", {
 })
 
 
-test_that("check_basis_correlations returns scalar (1x1 matrix) for single layer", {
+test_that("check_basis_correlations returns NULL for single layer (no pairs to compare)", {
+  # The function skips correlation computation when n < 2; single-layer stacks
+  # have no pairs so it returns invisible(NULL).
   r1 <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
                     ymin = 0, ymax = 1)
   terra::values(r1) <- runif(25)
   stack <- create_basis_stack(list(a = r1), rescale = FALSE)
   cm <- check_basis_correlations(stack)
-  expect_true(is.matrix(cm))
-  expect_equal(dim(cm), c(1L, 1L))
-  expect_equal(cm[1, 1], 1, tolerance = 1e-10)
+  expect_null(cm)
 })
 
 
