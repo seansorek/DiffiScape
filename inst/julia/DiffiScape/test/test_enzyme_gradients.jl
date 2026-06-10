@@ -32,7 +32,7 @@ using Test
         # For identity cotangent, scalar = sum of current in window
         cfg = SolverConfig(radius=3, block_size=1, cg_tol=1e-10)
         R_local = fill(3.0, 7, 7)
-        current = solve_single_window(R_local, 4, 4, 1, 1, cfg)
+        current = solve_single_window(R_local, 4, 4, 1, 1, cfg).current
 
         d_cum = ones(7, 7)
         s = single_window_scalar(R_local, d_cum, 4, 4, 1, 1, cfg)
@@ -43,7 +43,7 @@ using Test
         # Setting d_cum to a unit vector at (4,4) should return current[4,4]
         cfg = SolverConfig(radius=3, block_size=1, cg_tol=1e-10)
         R_local = fill(3.0, 7, 7)
-        current = solve_single_window(R_local, 4, 4, 1, 1, cfg)
+        current = solve_single_window(R_local, 4, 4, 1, 1, cfg).current
 
         d_cum = zeros(7, 7)
         d_cum[4, 4] = 1.0
