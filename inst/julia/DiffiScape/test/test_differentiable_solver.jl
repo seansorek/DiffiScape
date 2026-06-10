@@ -388,31 +388,49 @@ using Test
 
     # ====================== solve_single_window =============================
 
+    @testset "solve_single_window returns named tuple" begin
+        cfg = SolverConfig(radius=3, block_size=1, cg_tol=1e-10)
+        R = fill(5.0, 7, 7)
+        result = solve_single_window(R, 4, 4, 1, 1, cfg)
+        @test haskey(result, :voltage)
+        @test haskey(result, :current)
+        @test size(result.current) == (7, 7)
+        @test size(result.voltage) == (7, 7)
+    end
+
     @testset "solve_single_window non-negative current" begin
         cfg = SolverConfig(radius=3, block_size=1, cg_tol=1e-10)
         R = fill(5.0, 7, 7)
-        current = solve_single_window(R, 4, 4, 1, 1, cfg)
-        @test size(current) == (7, 7)
-        @test all(current .>= 0.0)
-        @test maximum(current) > 0.0  # should have some current
+        result = solve_single_window(R, 4, 4, 1, 1, cfg)
+        @test all(result.current .>= 0.0)
+        @test maximum(result.current) > 0.0  # should have some current
+    end
+
+    @testset "solve_single_window non-negative voltage" begin
+        cfg = SolverConfig(radius=3, block_size=1, cg_tol=1e-10)
+        R = fill(5.0, 7, 7)
+        result = solve_single_window(R, 4, 4, 1, 1, cfg)
+        @test all(result.voltage .>= 0.0)
+        @test maximum(result.voltage) > 0.0
     end
 
     @testset "solve_single_window no valid cells returns zeros" begin
         # All NaN resistance → all cells grounded, no sources
         cfg = SolverConfig(radius=2, block_size=1)
         R = fill(NaN, 5, 5)
-        current = solve_single_window(R, 3, 3, 1, 1, cfg)
-        @test all(current .== 0.0)
+        result = solve_single_window(R, 3, 3, 1, 1, cfg)
+        @test all(result.current .== 0.0)
+        @test all(result.voltage .== 0.0)
     end
 
     @testset "solve_single_window higher R → less current" begin
         cfg = SolverConfig(radius=3, block_size=1, cg_tol=1e-10)
         R_low = fill(1.0, 7, 7)
         R_high = fill(100.0, 7, 7)
-        I_low = solve_single_window(R_low, 4, 4, 1, 1, cfg)
+        I_low  = solve_single_window(R_low,  4, 4, 1, 1, cfg)
         I_high = solve_single_window(R_high, 4, 4, 1, 1, cfg)
         # Higher resistance should mean lower total current flow
-        @test sum(I_high) < sum(I_low)
+        @test sum(I_high.current) < sum(I_low.current)
     end
 
     # ====================== cumulative_current ==============================
@@ -457,6 +475,73 @@ using Test
         R = fill(5.0, 2, 2)
         C = cumulative_current(R, cfg)
         @test all(C .== 0.0)
+    end
+
+    # ====================== output selection ================================
+
+    @testset "cumulative_current output=voltage returns matrix" begin
+        cfg = SolverConfig(radius=3, block_size=3, output="voltage")
+        R = fill(5.0, 10, 10)
+        V = cumulative_current(R, cfg)
+        @test V isa Matrix{Float64}
+        @test size(V) == (10, 10)
+        @test all(V .>= 0.0)
+        @test sum(V) > 0.0
+    end
+
+    @testset "cumulative_current output=both returns named tuple" begin
+        cfg = SolverConfig(radius=3, block_size=3, output="both")
+        R = fill(5.0, 10, 10)
+        result = cumulative_current(R, cfg)
+        @test haskey(result, :current)
+        @test haskey(result, :voltage)
+        @test size(result.current) == (10, 10)
+        @test size(result.voltage) == (10, 10)
+        @test all(result.current .>= 0.0)
+        @test all(result.voltage .>= 0.0)
+        @test sum(result.current) > 0.0
+        @test sum(result.voltage) > 0.0
+    end
+
+    @testset "cumulative_current output=both current matches output=current" begin
+        R = fill(5.0, 10, 10)
+        C_only   = cumulative_current(R, SolverConfig(radius=3, block_size=3, output="current"))
+        both     = cumulative_current(R, SolverConfig(radius=3, block_size=3, output="both"))
+        V_only   = cumulative_current(R, SolverConfig(radius=3, block_size=3, output="voltage"))
+        @test C_only ≈ both.current atol=1e-12
+        @test V_only ≈ both.voltage atol=1e-12
+    end
+
+    @testset "cumulative_current output=voltage symmetric for symmetric R" begin
+        cfg = SolverConfig(radius=3, block_size=3, output="voltage")
+        R = fill(5.0, 9, 9)
+        V = cumulative_current(R, cfg)
+        @test V ≈ V[:, end:-1:1] atol=1e-10
+        @test V ≈ V[end:-1:1, :] atol=1e-10
+    end
+
+    @testset "cumulative_current empty grid output=both" begin
+        cfg = SolverConfig(radius=3, block_size=3, output="both")
+        R = fill(5.0, 2, 2)
+        result = cumulative_current(R, cfg)
+        @test all(result.current .== 0.0)
+        @test all(result.voltage .== 0.0)
+    end
+
+    @testset "cumulative_current R bridge wrapper with output" begin
+        R = fill(5.0, 10, 10)
+        # 4-arg wrapper: output="current" returns matrix
+        C = cumulative_current(R, 3, 3, "current")
+        @test C isa Matrix{Float64}
+        @test size(C) == (10, 10)
+        # 4-arg wrapper: output="voltage" returns matrix
+        V = cumulative_current(R, 3, 3, "voltage")
+        @test V isa Matrix{Float64}
+        @test size(V) == (10, 10)
+        # 4-arg wrapper: output="both" returns named tuple
+        both = cumulative_current(R, 3, 3, "both")
+        @test haskey(both, :current)
+        @test haskey(both, :voltage)
     end
 
 end

@@ -41,6 +41,7 @@ Base.@kwdef struct SolverConfig
     cg_tol::Float64          = 1e-8
     cg_maxiter::Int          = 2000
     ground_conductance::Float64 = 1e10
+    output::String           = "current"  # "current" | "voltage" | "both"
 end
 
 
@@ -452,7 +453,7 @@ function solve_single_window(R_local::Matrix{Float64},
         end
     end
     if !has_source
-        return zeros(wr, wc)
+        return (; voltage = zeros(wr, wc), current = zeros(wr, wc))
     end
 
     # Conductances
@@ -465,8 +466,9 @@ function solve_single_window(R_local::Matrix{Float64},
     v = cg_solve(b, edge_h, edge_v, ground_mask, config.ground_conductance;
                  tol=config.cg_tol, maxiter=config.cg_maxiter)
 
-    # Current density
-    return compute_current(v, edge_h, edge_v)
+    # Voltage and current density
+    current = compute_current(v, edge_h, edge_v)
+    return (; voltage = v, current = current)
 end
 
 
@@ -494,14 +496,22 @@ function cumulative_current(R::Matrix{Float64}, config::SolverConfig)
     centers = compute_block_centers(nrows, ncols, config.block_size)
     n_windows = length(centers)
 
+    want_current = config.output == "current" || config.output == "both"
+    want_voltage = config.output == "voltage" || config.output == "both"
+
     if n_windows == 0
-        return zeros(nrows, ncols)
+        if config.output == "both"
+            return (; current = zeros(nrows, ncols), voltage = zeros(nrows, ncols))
+        else
+            return zeros(nrows, ncols)
+        end
     end
 
     # maxthreadid() (Julia ≥ 1.11) covers interactive + default pool threads.
     # Older fallback uses nthreads(), which equals maxthreadid() pre-1.11.
     nt = isdefined(Threads, :maxthreadid) ? Threads.maxthreadid() : max(Threads.nthreads(), 1)
-    local_bufs = [zeros(nrows, ncols) for _ in 1:nt]
+    local_bufs_current = want_current ? [zeros(nrows, ncols) for _ in 1:nt] : nothing
+    local_bufs_voltage = want_voltage ? [zeros(nrows, ncols) for _ in 1:nt] : nothing
 
     Threads.@threads :static for i in 1:n_windows
         tid = Threads.threadid()
@@ -511,27 +521,51 @@ function cumulative_current(R::Matrix{Float64}, config::SolverConfig)
         # Extract local resistance (creates a copy)
         R_local = R[r1:r2, c1:c2]
 
-        # Solve
-        current = solve_single_window(R_local, cr, cc, r1, c1, config)
+        # Solve — returns named tuple (; voltage, current)
+        result = solve_single_window(R_local, cr, cc, r1, c1, config)
 
-        # Accumulate into thread-local buffer
+        # Accumulate into thread-local buffers
         wr = r2 - r1 + 1
         wc = c2 - c1 + 1
-        buf = local_bufs[tid]
-        @inbounds for jj in 1:wc, ii in 1:wr
-            buf[r1 + ii - 1, c1 + jj - 1] += current[ii, jj]
+        if want_current
+            buf = local_bufs_current[tid]
+            @inbounds for jj in 1:wc, ii in 1:wr
+                buf[r1 + ii - 1, c1 + jj - 1] += result.current[ii, jj]
+            end
+        end
+        if want_voltage
+            buf = local_bufs_voltage[tid]
+            @inbounds for jj in 1:wc, ii in 1:wr
+                buf[r1 + ii - 1, c1 + jj - 1] += result.voltage[ii, jj]
+            end
         end
     end
 
     # Sum thread-local buffers
-    cum_current = local_bufs[1]
-    for t in 2:nt
-        @inbounds for i in eachindex(cum_current, local_bufs[t])
-            cum_current[i] += local_bufs[t][i]
+    if want_current
+        cum_current = local_bufs_current[1]
+        for t in 2:nt
+            @inbounds for i in eachindex(cum_current, local_bufs_current[t])
+                cum_current[i] += local_bufs_current[t][i]
+            end
+        end
+    end
+    if want_voltage
+        cum_voltage = local_bufs_voltage[1]
+        for t in 2:nt
+            @inbounds for i in eachindex(cum_voltage, local_bufs_voltage[t])
+                cum_voltage[i] += local_bufs_voltage[t][i]
+            end
         end
     end
 
-    return cum_current
+    if config.output == "both"
+        return (; current = cum_current, voltage = cum_voltage)
+    elseif config.output == "voltage"
+        return cum_voltage
+    else
+        return cum_current
+    end
 end
 
 
@@ -541,9 +575,26 @@ end
     cumulative_current(R, radius, block_size)
 
 Convenience wrapper for the R bridge. Constructs a `SolverConfig` from
-positional arguments and calls the main solver.
+positional arguments and calls the main solver. Returns cumulative current.
 """
 function cumulative_current(R::Matrix{Float64}, radius::Int, block_size::Int)
     config = SolverConfig(radius=radius, block_size=block_size)
+    return cumulative_current(R, config)
+end
+
+
+"""
+    cumulative_current(R, radius, block_size, output)
+
+Convenience wrapper for the R bridge with output selection.
+
+# Arguments
+- `output`: `"current"`, `"voltage"`, or `"both"`.
+  - `"current"` → `Matrix{Float64}` of cumulative current density.
+  - `"voltage"` → `Matrix{Float64}` of cumulative voltage (flow potential).
+  - `"both"` → named tuple `(; current, voltage)` with both matrices.
+"""
+function cumulative_current(R::Matrix{Float64}, radius::Int, block_size::Int, output::String)
+    config = SolverConfig(radius=radius, block_size=block_size, output=output)
     return cumulative_current(R, config)
 end

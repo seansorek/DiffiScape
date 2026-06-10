@@ -302,7 +302,8 @@ def get_source_lattice_mask(n_rows, n_cols, spacing, interior_mask):
 # =============================================================================
 
 def solve_circuit_absorption(R_matrix, absorption=0.01, source_spacing=1,
-                             source_from_resistance=False, rebuild_amg=None):
+                             source_from_resistance=False, rebuild_amg=None,
+                             output="both"):
     """
     Forward pass with distributed absorption instead of boundary grounding.
 
@@ -328,6 +329,11 @@ def solve_circuit_absorption(R_matrix, absorption=0.01, source_spacing=1,
         If True, source strength = 1/R (matches Omniscape convention).
     rebuild_amg : bool or None
         If None, auto-detect from cache.
+    output : str
+        Which quantities to include in the returned dict.
+        ``"both"`` (default) — include ``v`` and ``current_density*``.
+        ``"voltage"`` — include only ``v``; skip current density computation.
+        ``"current"`` — include only ``current_density*``; omit ``v``.
 
     Returns
     -------
@@ -447,13 +453,7 @@ def solve_circuit_absorption(R_matrix, absorption=0.01, source_spacing=1,
         if CG_WARM_START:
             _cache["v_interior_cpu"] = v.copy()
 
-    # Current density (same formula, but v is defined on ALL nodes)
-    current_density = _compute_current_density(v, edge_src, edge_dst, edge_w, n_nodes)
-
-    return {
-        "v": v,
-        "current_density": current_density,
-        "current_density_2d": current_density.reshape(n_rows, n_cols),
+    result = {
         "edge_src": edge_src,
         "edge_dst": edge_dst,
         "edge_w": edge_w,
@@ -468,6 +468,13 @@ def solve_circuit_absorption(R_matrix, absorption=0.01, source_spacing=1,
         "n_cols": n_cols,
         "solve_time": solve_time,
     }
+    if output in ("voltage", "both"):
+        result["v"] = v
+    if output in ("current", "both"):
+        current_density = _compute_current_density(v, edge_src, edge_dst, edge_w, n_nodes)
+        result["current_density"]    = current_density
+        result["current_density_2d"] = current_density.reshape(n_rows, n_cols)
+    return result
 
 
 # =============================================================================
@@ -475,7 +482,7 @@ def solve_circuit_absorption(R_matrix, absorption=0.01, source_spacing=1,
 # =============================================================================
 
 def solve_circuit(R_matrix, rebuild_amg=None, source_spacing=1,
-                  source_from_resistance=False):
+                  source_from_resistance=False, output="both"):
     """
     Full forward pass: resistance matrix → voltage and current density.
 
@@ -496,13 +503,21 @@ def solve_circuit(R_matrix, rebuild_amg=None, source_spacing=1,
         If False (default), uniform injection b_k = 1.0 at every source pixel.
         When True, the source vector b depends on R, introducing an extra
         adjoint term ∂b/∂R in the gradient computation.
+    output : str
+        Which quantities to include in the returned dict.
+        ``"both"`` (default) — include ``v`` and ``current_density*``.
+        ``"voltage"`` — include only ``v``; skip current density computation.
+        ``"current"`` — include only ``current_density*``; omit ``v``.
+        Auxiliary fields (``edge_src``, ``edge_dst``, ``edge_w``, ``R_flat``,
+        ``interior_mask``, etc.) are always returned as they are required by
+        gradient/adjoint functions.
 
     Returns
     -------
     result : dict with keys:
-        v : ndarray (n_nodes,) — voltage at each pixel
-        current_density : ndarray (n_nodes,) — current density at each pixel
-        current_density_2d : ndarray (n_rows, n_cols) — 2D current density
+        v : ndarray (n_nodes,) — voltage at each pixel [when output != "current"]
+        current_density : ndarray (n_nodes,) — current density [when output != "voltage"]
+        current_density_2d : ndarray (n_rows, n_cols) — 2D current density [when output != "voltage"]
         edge_src, edge_dst, edge_w : edge list arrays
         interior_mask : boolean mask
         source_mask : boolean mask (n_nodes,) — True at lattice source pixels
@@ -616,13 +631,7 @@ def solve_circuit(R_matrix, rebuild_amg=None, source_spacing=1,
     v = xp.zeros(n_nodes, dtype=xp.float64)
     v[interior_idx] = v_interior
 
-    # Compute current density
-    current_density = _compute_current_density(v, edge_src, edge_dst, edge_w, n_nodes)
-
-    return {
-        "v": v,
-        "current_density": current_density,
-        "current_density_2d": current_density.reshape(n_rows, n_cols),
+    result = {
         "edge_src": edge_src,
         "edge_dst": edge_dst,
         "edge_w": edge_w,
@@ -636,6 +645,13 @@ def solve_circuit(R_matrix, rebuild_amg=None, source_spacing=1,
         "n_cols": n_cols,
         "solve_time": solve_time,
     }
+    if output in ("voltage", "both"):
+        result["v"] = v
+    if output in ("current", "both"):
+        current_density = _compute_current_density(v, edge_src, edge_dst, edge_w, n_nodes)
+        result["current_density"]    = current_density
+        result["current_density_2d"] = current_density.reshape(n_rows, n_cols)
+    return result
 
 
 def _compute_current_density(v, edge_src, edge_dst, edge_w, n_nodes):
