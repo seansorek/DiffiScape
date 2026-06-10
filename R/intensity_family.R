@@ -436,6 +436,7 @@ family_rsf <- function() {
     n_extra_params    = 0L,
     extra_param_names = character(0),
     param_names_fn    = function(cov_names) {
+      if (length(cov_names) == 0L) return("gamma")
       c("gamma", paste0("beta_", cov_names))
     }
   )
@@ -644,6 +645,7 @@ family_clogit <- function(stratum_ids_used  = NULL,
     n_extra_params    = 0L,
     extra_param_names = character(0),
     param_names_fn    = function(cov_names) {
+      if (length(cov_names) == 0L) return("gamma")
       c("gamma", paste0("beta_", cov_names))
     }
   )
