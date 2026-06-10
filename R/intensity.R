@@ -280,6 +280,11 @@ compute_intensity <- function(z, alpha, gamma,
 #' @param config List from [default_intensity_config()].
 #' @param family An [intensity_family] object.  If `NULL` (default),
 #'   uses [family_negbin()] for backward compatibility.
+#' @param available_connectivity Numeric vector of raw connectivity at
+#'   available/background locations.  When non-`NULL`, bypasses raster
+#'   quadrature and uses these values with unit weights instead.
+#' @param available_covariates Named list of covariate vectors at available
+#'   locations.  Used together with `available_connectivity`.
 #' @return A list with `estimates`, `se`, `loglik`, `convergence`,
 #'   `c_scale`, `log_conn_mean`, `log_conn_sd`,
 #'   `residualisation_info`.

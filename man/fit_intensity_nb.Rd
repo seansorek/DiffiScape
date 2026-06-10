@@ -12,7 +12,9 @@ fit_intensity_nb(
   covariates_rasters = NULL,
   residualise = FALSE,
   config = default_intensity_config(),
-  family = NULL
+  family = NULL,
+  available_connectivity = NULL,
+  available_covariates = NULL
 )
 }
 \arguments{
@@ -36,6 +38,13 @@ covariates before fitting (default \code{FALSE}).}
 
 \item{family}{An \link{intensity_family} object.  If \code{NULL} (default),
 uses \code{\link[=family_negbin]{family_negbin()}} for backward compatibility.}
+
+\item{available_connectivity}{Numeric vector of raw connectivity at
+available/background locations.  When non-\code{NULL}, bypasses raster
+quadrature and uses these values with unit weights instead.}
+
+\item{available_covariates}{Named list of covariate vectors at available
+locations.  Used together with \code{available_connectivity}.}
 }
 \value{
 A list with \code{estimates}, \code{se}, \code{loglik}, \code{convergence},

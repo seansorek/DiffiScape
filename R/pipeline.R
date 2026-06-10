@@ -135,6 +135,14 @@ ds_init_julia <- function(julia_home = NULL, force = FALSE) {
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param residualise Logical.
+#' @param available_points Optional data.frame with `x, y` columns of
+#'   available/background locations for selection function families.  When
+#'   supplied, bypasses raster quadrature and uses these locations with unit
+#'   weights instead.  `NULL` (default) uses standard area-weighted raster
+#'   integration.
+#' @param available_covariates Named list of covariate vectors at
+#'   `available_points` locations.  Required when `available_points` is
+#'   supplied and the intensity model includes covariates.
 #' @param solver Character; `"surrogate"` (GP + Thompson Sampling or
 #'   Expected Improvement, default), `"enzyme"` (L-BFGS via differentiable
 #'   Julia solver), or `"torch"` (PyTorch neural-network resistance).
@@ -202,6 +210,14 @@ ds_optimize <- function(basis_stack,
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param residualise Logical.
+#' @param available_points Optional data.frame with `x, y` columns of
+#'   available/background locations for selection function families.  When
+#'   supplied, bypasses raster quadrature and uses these locations with unit
+#'   weights instead.  `NULL` (default) uses standard area-weighted raster
+#'   integration.
+#' @param available_covariates Named list of covariate vectors at
+#'   `available_points` locations.  Required when `available_points` is
+#'   supplied and the intensity model includes covariates.
 #' @param solver Character; `"surrogate"` (Omniscape) or
 #'   `"enzyme"` (differentiable solver).
 #' @param link A [resistance_link] object (default [link_exp()]).
@@ -333,6 +349,14 @@ ds_predict <- function(intensity_fit,
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param residualise Logical.
+#' @param available_points Optional data.frame with `x, y` columns of
+#'   available/background locations for selection function families.  When
+#'   supplied, bypasses raster quadrature and uses these locations with unit
+#'   weights instead.  `NULL` (default) uses standard area-weighted raster
+#'   integration.
+#' @param available_covariates Named list of covariate vectors at
+#'   `available_points` locations.  Required when `available_points` is
+#'   supplied and the intensity model includes covariates.
 #' @param link A [resistance_link] object (default [link_exp()]).
 #' @param family An [intensity_family] object, or `NULL`.
 #' @return A list with `laplace`, `samples`, `summary`.
@@ -449,6 +473,14 @@ ds_diagnose <- function(intensity_fit,
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param residualise Logical.
+#' @param available_points Optional data.frame with `x, y` columns of
+#'   available/background locations for selection function families.  When
+#'   supplied, bypasses raster quadrature and uses these locations with unit
+#'   weights instead.  `NULL` (default) uses standard area-weighted raster
+#'   integration.
+#' @param available_covariates Named list of covariate vectors at
+#'   `available_points` locations.  Required when `available_points` is
+#'   supplied and the intensity model includes covariates.
 #' @param plot Logical; produce diagnostic plots.
 #' @param crs Target CRS for reprojection (if input is spatial file).
 #' @param rescale_basis Logical; rescale basis rasters.

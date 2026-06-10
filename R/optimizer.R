@@ -145,6 +145,14 @@ default_optimizer_config <- function() {
 #' @param covariates_obs Named list of covariate vectors at obs.
 #' @param covariates_rasters Named list of [terra::SpatRaster] covariates.
 #' @param residualise Logical; residualise connectivity.
+#' @param available_points Optional data.frame with `x, y` columns of
+#'   available/background locations for selection function families.  When
+#'   supplied, bypasses raster quadrature and uses these locations with unit
+#'   weights instead.  `NULL` (default) uses standard area-weighted raster
+#'   integration.
+#' @param available_covariates Named list of covariate vectors at
+#'   `available_points` locations.  Required when `available_points` is
+#'   supplied and the intensity model includes covariates.
 #' @return A list with `best_params`, `best_loglik`, `bounds`,
 #'   `n_evaluations`, `distribution`, `convergence`.
 #' @export
@@ -363,6 +371,14 @@ optimize_resistance_enzyme <- function(basis_stack,
 #' @param link A [resistance_link] object (default [link_exp()]).
 #' @param family An [intensity_family] object, or `NULL` to use the
 #'   default for the chosen `distribution`.
+#' @param available_points Optional data.frame with `x, y` columns of
+#'   available/background locations for selection function families.  When
+#'   supplied, bypasses raster quadrature and uses these locations with unit
+#'   weights instead.  `NULL` (default) uses standard area-weighted raster
+#'   integration.
+#' @param available_covariates Named list of covariate vectors at
+#'   `available_points` locations.  Required when `available_points` is
+#'   supplied and the intensity model includes covariates.
 #' @return A list with `loglik`, `intensity_params`, `intensity_se`,
 #'   `hessian`, `total_time`, `convergence`, `distribution`.
 #' @export
@@ -730,6 +746,14 @@ evaluate_full_model <- function(resistance_params,
 #' @param covariates_obs Named list of covariate vectors at obs.
 #' @param covariates_rasters Named list of [terra::SpatRaster] covariates.
 #' @param residualise Logical; residualise connectivity.
+#' @param available_points Optional data.frame with `x, y` columns of
+#'   available/background locations for selection function families.  When
+#'   supplied, bypasses raster quadrature and uses these locations with unit
+#'   weights instead.  `NULL` (default) uses standard area-weighted raster
+#'   integration.
+#' @param available_covariates Named list of covariate vectors at
+#'   `available_points` locations.  Required when `available_points` is
+#'   supplied and the intensity model includes covariates.
 #' @return A list with `best_params`, `best_loglik`, `X_evaluated`,
 #'   `y_evaluated`, `surrogate`, `bounds`, `n_evaluations`.
 #' @export

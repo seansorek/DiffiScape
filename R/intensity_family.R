@@ -37,6 +37,10 @@
 #' @param n_extra_params Integer; number of distribution-specific
 #'   parameters beyond `alpha, gamma, betas` (e.g. 1 for NB's theta).
 #' @param extra_param_names Character vector naming the extra parameters.
+#' @param param_names_fn Optional function `(cov_names)` returning a
+#'   character vector of parameter names for families with non-standard
+#'   layouts (e.g., no `alpha`).  `NULL` uses the default
+#'   `alpha`/`gamma`/`beta_*` naming.
 #' @return An S3 object of class `"intensity_family"`.
 #' @export
 intensity_family <- function(name,

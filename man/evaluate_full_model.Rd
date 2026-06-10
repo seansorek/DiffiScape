@@ -16,7 +16,9 @@ evaluate_full_model(
   residualise = FALSE,
   verbose = TRUE,
   link = link_exp(),
-  family = NULL
+  family = NULL,
+  available_points = NULL,
+  available_covariates = NULL
 )
 }
 \arguments{
@@ -44,6 +46,16 @@ evaluate_full_model(
 
 \item{family}{An \link{intensity_family} object, or \code{NULL} to use the
 default for the chosen \code{distribution}.}
+
+\item{available_points}{Optional data.frame with \verb{x, y} columns of
+available/background locations for selection function families.  When
+supplied, bypasses raster quadrature and uses these locations with unit
+weights instead.  \code{NULL} (default) uses standard area-weighted raster
+integration.}
+
+\item{available_covariates}{Named list of covariate vectors at
+\code{available_points} locations.  Required when \code{available_points} is
+supplied and the intensity model includes covariates.}
 }
 \value{
 A list with \code{loglik}, \code{intensity_params}, \code{intensity_se},

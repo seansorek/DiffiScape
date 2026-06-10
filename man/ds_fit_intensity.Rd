@@ -13,6 +13,8 @@ ds_fit_intensity(
   covariates_obs = NULL,
   covariates_rasters = NULL,
   residualise = FALSE,
+  available_points = NULL,
+  available_covariates = NULL,
   solver = c("surrogate", "enzyme"),
   link = link_exp(),
   family = NULL
@@ -34,6 +36,16 @@ ds_fit_intensity(
 \item{covariates_rasters}{Named list of covariate rasters.}
 
 \item{residualise}{Logical.}
+
+\item{available_points}{Optional data.frame with \verb{x, y} columns of
+available/background locations for selection function families.  When
+supplied, bypasses raster quadrature and uses these locations with unit
+weights instead.  \code{NULL} (default) uses standard area-weighted raster
+integration.}
+
+\item{available_covariates}{Named list of covariate vectors at
+\code{available_points} locations.  Required when \code{available_points} is
+supplied and the intensity model includes covariates.}
 
 \item{solver}{Character; \code{"surrogate"} (Omniscape) or
 \code{"enzyme"} (differentiable solver).}
