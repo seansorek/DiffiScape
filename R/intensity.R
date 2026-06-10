@@ -344,8 +344,13 @@ fit_intensity_nb <- function(connectivity_at_obs,
     if (!is.null(family$param_names_fn)) {
       est_names <- family$param_names_fn(cov_names)
     } else {
-      est_names <- c("alpha", "gamma")
-      if (n_cov > 0) est_names <- c(est_names, paste0("beta_", cov_names))
+      n_base <- length(opt$par) - n_extra
+      if (n_base == 1L) {
+        est_names <- "gamma"
+      } else {
+        est_names <- c("alpha", "gamma")
+        if (n_cov > 0) est_names <- c(est_names, paste0("beta_", cov_names))
+      }
       if (n_extra > 0) est_names <- c(est_names, family$extra_param_names)
     }
 
