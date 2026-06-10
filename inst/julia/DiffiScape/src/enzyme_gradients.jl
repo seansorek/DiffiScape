@@ -44,7 +44,7 @@ function single_window_scalar(R_local::Matrix{Float64},
                                d_cum_local::Matrix{Float64},
                                cr::Int, cc::Int, r1::Int, c1::Int,
                                config::SolverConfig)
-    current = solve_single_window(R_local, cr, cc, r1, c1, config)
+    current = solve_single_window(R_local, cr, cc, r1, c1, config).current
     s = 0.0
     @inbounds for i in eachindex(current, d_cum_local)
         s += current[i] * d_cum_local[i]
@@ -258,8 +258,20 @@ function enzyme_gradient_generic(R_flat::Vector{Float64},
     # Reshape to column-major matrix (row-major vec → matrix)
     R_mat = Matrix(reshape(R_flat, ncols, nrows)')
 
-    # Forward: cumulative current
-    cum_current = cumulative_current(R_mat, config)
+    # Forward: cumulative current — always force output="current" here since the
+    # VJP objective only needs current density, regardless of config.output.
+    current_config = SolverConfig(
+        radius               = config.radius,
+        block_size           = config.block_size,
+        source_from_resistance = config.source_from_resistance,
+        R_min                = config.R_min,
+        R_max                = config.R_max,
+        cg_tol               = config.cg_tol,
+        cg_maxiter           = config.cg_maxiter,
+        ground_conductance   = config.ground_conductance,
+        output               = "current",
+    )
+    cum_current = cumulative_current(R_mat, current_config)
 
     # Objective: sum of log1p(current) over all valid cells
     # Cotangent: ∂obj/∂C
