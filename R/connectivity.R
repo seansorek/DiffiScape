@@ -205,7 +205,8 @@ extract_connectivity <- function(connectivity, points, buffer = NULL) {
 
 # ===================== In-Memory Differentiable Solver ======================
 
-#' Compute cumulative current using the differentiable Julia solver
+#' Compute cumulative current (and optionally voltage) using the differentiable
+#' Julia solver
 #'
 #' Replaces [run_omniscape()] with a pure-Julia, in-memory solver that
 #' requires no file I/O.  The solver uses conjugate gradient on a
@@ -214,16 +215,26 @@ extract_connectivity <- function(connectivity, points, buffer = NULL) {
 #' @param resistance A single-layer [terra::SpatRaster] of resistance.
 #' @param radius Integer; moving-window radius in pixels (default 13).
 #' @param block_size Integer; source-block side length (default 5).
+#' @param output Character; which quantity to return from the circuit solve.
+#'   One of `"current"` (default), `"voltage"`, or `"both"`.
+#'   - `"current"` returns only cumulative current density.
+#'   - `"voltage"` returns only cumulative voltage (flow potential).
+#'   - `"both"` returns both.
 #' @return A list matching the [run_omniscape()] interface:
 #'   \describe{
-#'     \item{cum_current}{[terra::SpatRaster] of cumulative current.}
-#'     \item{flow_potential}{`NULL` (not computed by this solver).}
+#'     \item{cum_current}{[terra::SpatRaster] of cumulative current, or `NULL`
+#'       when `output = "voltage"`.}
+#'     \item{flow_potential}{[terra::SpatRaster] of cumulative voltage
+#'       (flow potential), or `NULL` when `output = "current"`.}
 #'     \item{elapsed_seconds}{Wall-clock time.}
 #'   }
 #' @export
 run_cumulative_current <- function(resistance,
                                    radius     = 13L,
-                                   block_size = 5L) {
+                                   block_size = 5L,
+                                   output     = "current") {
+
+  output <- match.arg(output, c("current", "voltage", "both"))
 
   if (!ds_julia_check()) {
     stop("Julia not initialised. Call ds_julia_setup() first.",
@@ -240,23 +251,38 @@ run_cumulative_current <- function(resistance,
 
   start <- Sys.time()
 
-  cum_mat <- ds_julia_call("DiffiScapeMod.cumulative_current",
-                            R_mat,
-                            as.integer(radius),
-                            as.integer(block_size))
+  julia_result <- ds_julia_call("DiffiScapeMod.cumulative_current",
+                                R_mat,
+                                as.integer(radius),
+                                as.integer(block_size),
+                                output)
 
   elapsed <- as.numeric(difftime(Sys.time(), start, units = "secs"))
   message(sprintf("Differentiable solver completed in %.1f s", elapsed))
 
-  # Julia matrix → terra raster (column-major → row-major)
-  cum_vec <- as.vector(t(cum_mat))
-  cum_rast <- terra::rast(resistance)
-  terra::values(cum_rast) <- cum_vec
-  names(cum_rast) <- "cum_current"
+  # Helper: Julia matrix → terra raster (column-major → row-major)
+  mat_to_rast <- function(mat, layer_name) {
+    r <- terra::rast(resistance)
+    terra::values(r) <- as.vector(t(mat))
+    names(r) <- layer_name
+    r
+  }
+
+  if (output == "both") {
+    # JuliaConnectoR converts Julia named tuple (; current, voltage) → R list
+    cum_rast  <- mat_to_rast(julia_result$current, "cum_current")
+    volt_rast <- mat_to_rast(julia_result$voltage,  "flow_potential")
+  } else if (output == "voltage") {
+    cum_rast  <- NULL
+    volt_rast <- mat_to_rast(julia_result, "flow_potential")
+  } else {
+    cum_rast  <- mat_to_rast(julia_result, "cum_current")
+    volt_rast <- NULL
+  }
 
   list(
     cum_current     = cum_rast,
-    flow_potential  = NULL,
+    flow_potential  = volt_rast,
     elapsed_seconds = elapsed
   )
 }
