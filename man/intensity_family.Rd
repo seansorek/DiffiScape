@@ -10,7 +10,8 @@ intensity_family(
   deviance_residuals_fn,
   init_fn,
   n_extra_params = 0L,
-  extra_param_names = character(0)
+  extra_param_names = character(0),
+  param_names_fn = NULL
 )
 }
 \arguments{
@@ -33,6 +34,11 @@ bounds for \code{\link[stats:optim]{stats::optim()}}.}
 parameters beyond \verb{alpha, gamma, betas} (e.g. 1 for NB's theta).}
 
 \item{extra_param_names}{Character vector naming the extra parameters.}
+
+\item{param_names_fn}{Optional function \code{(cov_names)} returning a
+character vector of parameter names for families with non-standard
+layouts (e.g., no \code{alpha}).  \code{NULL} uses the default
+\code{alpha}/\code{gamma}/\code{beta_*} naming.}
 }
 \value{
 An S3 object of class \code{"intensity_family"}.

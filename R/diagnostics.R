@@ -123,6 +123,10 @@ rasterise_deviance_residuals <- function(intensity_fit,
     )
   }
 
+  if (all(is.na(dev_resid))) {
+    message("Deviance residuals not defined for this family (e.g. selection families); returning NA raster.")
+  }
+
   result <- terra::rast(template)
   terra::values(result) <- dev_resid
   names(result) <- "deviance_residual"

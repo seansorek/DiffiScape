@@ -29,22 +29,32 @@
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param residualise Logical.
+#' @param available_points Optional data.frame with `x, y` columns of
+#'   available/background locations for selection function families.  When
+#'   supplied, bypasses raster quadrature and uses these locations with unit
+#'   weights instead.  `NULL` (default) uses standard area-weighted raster
+#'   integration.
+#' @param available_covariates Named list of covariate vectors at
+#'   `available_points` locations.  Required when `available_points` is
+#'   supplied and the intensity model includes covariates.
 #' @param link A [resistance_link] object (default [link_exp()]).
 #' @param family An [intensity_family] object, or `NULL`.
 #' @return A list with `mode`, `covariance`, `precision`, `std_error`.
 #' @export
 laplace_resistance <- function(opt_result,
-                               basis_stack        = NULL,
-                               obs_points         = NULL,
-                               refit              = FALSE,
-                               step               = 1e-3,
-                               omniscape_settings = list(),
-                               intensity_config   = default_intensity_config(),
-                               covariates_obs     = NULL,
-                               covariates_rasters  = NULL,
-                               residualise        = FALSE,
-                               link               = link_exp(),
-                               family             = NULL) {
+                               basis_stack          = NULL,
+                               obs_points           = NULL,
+                               refit                = FALSE,
+                               step                 = 1e-3,
+                               omniscape_settings   = list(),
+                               intensity_config     = default_intensity_config(),
+                               covariates_obs       = NULL,
+                               covariates_rasters   = NULL,
+                               residualise          = FALSE,
+                               available_points     = NULL,
+                               available_covariates = NULL,
+                               link                 = link_exp(),
+                               family               = NULL) {
 
   best_vec <- .params_to_vector(opt_result$best_params)
   p        <- length(best_vec)
@@ -109,6 +119,15 @@ laplace_resistance <- function(opt_result,
       )
       if (distribution != "gam" && !is.null(family))
         int_args$family <- family
+      if (!is.null(available_points)) {
+        avail_conn_raw <- extract_connectivity(cum_rast, available_points)
+        avail_valid    <- !is.na(avail_conn_raw)
+        avail_conn     <- avail_conn_raw[avail_valid]
+        avail_cov      <- if (!is.null(available_covariates))
+          lapply(available_covariates, function(v) v[avail_valid]) else NULL
+        int_args$available_connectivity <- avail_conn
+        int_args$available_covariates   <- avail_cov
+      }
       int_fit <- do.call(fit_fn, int_args)
 
       neg_ll <- -int_fit$loglik
@@ -168,6 +187,14 @@ laplace_resistance <- function(opt_result,
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param residualise Logical.
+#' @param available_points Optional data.frame with `x, y` columns of
+#'   available/background locations for selection function families.  When
+#'   supplied, bypasses raster quadrature and uses these locations with unit
+#'   weights instead.  `NULL` (default) uses standard area-weighted raster
+#'   integration.
+#' @param available_covariates Named list of covariate vectors at
+#'   `available_points` locations.  Required when `available_points` is
+#'   supplied and the intensity model includes covariates.
 #' @param link A [resistance_link] object (default [link_exp()]).
 #' @param family An [intensity_family] object, or `NULL`.
 #' @param seed Random seed.
@@ -177,17 +204,19 @@ posterior_sample <- function(laplace,
                              opt_result,
                              basis_stack,
                              obs_points,
-                             n_draws           = 200L,
-                             n_inner           = 5L,
-                             bounds            = NULL,
-                             omniscape_settings = list(),
-                             intensity_config   = default_intensity_config(),
-                             covariates_obs     = NULL,
-                             covariates_rasters = NULL,
-                             residualise        = FALSE,
-                             link               = link_exp(),
-                             family             = NULL,
-                             seed               = 42L) {
+                             n_draws              = 200L,
+                             n_inner              = 5L,
+                             bounds               = NULL,
+                             omniscape_settings   = list(),
+                             intensity_config     = default_intensity_config(),
+                             covariates_obs       = NULL,
+                             covariates_rasters   = NULL,
+                             residualise          = FALSE,
+                             available_points     = NULL,
+                             available_covariates = NULL,
+                             link                 = link_exp(),
+                             family               = NULL,
+                             seed                 = 42L) {
 
   set.seed(seed)
 
@@ -221,18 +250,20 @@ posterior_sample <- function(laplace,
 
     result <- tryCatch(
       evaluate_full_model(
-        resistance_params  = params,
-        basis_stack        = basis_stack,
-        obs_points         = obs_points,
-        distribution       = opt_result$distribution,
-        omniscape_settings = omniscape_settings,
-        intensity_config   = intensity_config,
-        covariates_obs     = covariates_obs,
-        covariates_rasters = covariates_rasters,
-        residualise        = residualise,
-        verbose            = FALSE,
-        link               = link,
-        family             = family
+        resistance_params    = params,
+        basis_stack          = basis_stack,
+        obs_points           = obs_points,
+        distribution         = opt_result$distribution,
+        omniscape_settings   = omniscape_settings,
+        intensity_config     = intensity_config,
+        covariates_obs       = covariates_obs,
+        covariates_rasters   = covariates_rasters,
+        residualise          = residualise,
+        verbose              = FALSE,
+        link                 = link,
+        family               = family,
+        available_points     = available_points,
+        available_covariates = available_covariates
       ),
       error = function(e) {
         message("  ERROR in posterior draw: ", conditionMessage(e))

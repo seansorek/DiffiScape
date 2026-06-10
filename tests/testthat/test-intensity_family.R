@@ -13,7 +13,8 @@ test_that("intensity_family constructor creates correct S3 object", {
   )
   expect_s3_class(fam, "intensity_family")
   expect_named(fam, c("name", "negloglik_fn", "deviance_residuals_fn",
-                       "init_fn", "n_extra_params", "extra_param_names"))
+                       "init_fn", "n_extra_params", "extra_param_names",
+                       "param_names_fn"))
   expect_equal(fam$n_extra_params, 1L)
   expect_equal(fam$extra_param_names, "log_theta")
 })
