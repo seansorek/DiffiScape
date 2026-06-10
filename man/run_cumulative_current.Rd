@@ -2,9 +2,11 @@
 % Please edit documentation in R/connectivity.R
 \name{run_cumulative_current}
 \alias{run_cumulative_current}
-\title{Compute cumulative current using the differentiable Julia solver}
+\title{Compute cumulative current (and optionally voltage) using the differentiable
+Julia solver}
 \usage{
-run_cumulative_current(resistance, radius = 13L, block_size = 5L)
+run_cumulative_current(resistance, radius = 13L, block_size = 5L,
+  output = "current")
 }
 \arguments{
 \item{resistance}{A single-layer \link[terra:SpatRaster-class]{terra::SpatRaster} of resistance.}
@@ -12,12 +14,22 @@ run_cumulative_current(resistance, radius = 13L, block_size = 5L)
 \item{radius}{Integer; moving-window radius in pixels (default 13).}
 
 \item{block_size}{Integer; source-block side length (default 5).}
+
+\item{output}{Character; which quantity to return from the circuit solve.
+One of \code{"current"} (default), \code{"voltage"}, or \code{"both"}.
+\itemize{
+\item \code{"current"} returns only cumulative current density.
+\item \code{"voltage"} returns only cumulative voltage (flow potential).
+\item \code{"both"} returns both.
+}}
 }
 \value{
 A list matching the \code{\link[=run_omniscape]{run_omniscape()}} interface:
 \describe{
-\item{cum_current}{\link[terra:SpatRaster-class]{terra::SpatRaster} of cumulative current.}
-\item{flow_potential}{\code{NULL} (not computed by this solver).}
+\item{cum_current}{\link[terra:SpatRaster-class]{terra::SpatRaster} of cumulative current, or \code{NULL}
+when \code{output = "voltage"}.}
+\item{flow_potential}{\link[terra:SpatRaster-class]{terra::SpatRaster} of cumulative voltage
+(flow potential), or \code{NULL} when \code{output = "current"}.}
 \item{elapsed_seconds}{Wall-clock time.}
 }
 }
