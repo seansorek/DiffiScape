@@ -2,9 +2,9 @@
 
 **Landscape Connectivity Optimization — a modular R framework for resistance and intensity model experimentation**
 
-DiffiScape is an R package designed as a flexible glue layer for fitting landscape resistance surfaces against animal movement data. It bridges circuit-theory connectivity computation ([Omniscape.jl](https://github.com/circuitscape/Omniscape.jl) / [Circuitscape.jl](https://github.com/circuitscape/Circuitscape.jl)) with a suite of swappable likelihood models, making it easy to experiment with different resistance and intensity model combinations. Point process likelihoods are currently implemented, with the architecture designed to accommodate other movement data likelihoods in the future.
+DiffiScape is an R package designed as a flexible glue layer for fitting landscape resistance surfaces against animal movement data. It bridges circuit-theory connectivity computation ([Omniscape.jl](https://github.com/circuitscape/Omniscape.jl) / [Circuitscape.jl](https://github.com/circuitscape/Circuitscape.jl)) with a suite of swappable likelihood models, making it easy to experiment with different resistance and intensity model combinations. Both point process likelihoods (for occurrence/count data) and selection function likelihoods (RSF, RSP, and conditional logistic for iSSA/SSA) are supported, with the architecture designed to accommodate additional movement data likelihoods in the future.
 
-Users supply environmental rasters and GPS locations; DiffiScape estimates resistance parameters that best explain the observed spatial distribution of animal occurrences. Negative binomial and Poisson likelihoods are currently supported. The package ships two optimization back-ends and a full neural-network resistance pipeline:
+Users supply environmental rasters and GPS locations (or paired used-available locations for selection models); DiffiScape estimates resistance parameters that best explain the observed spatial distribution of animal occurrences or movement choices. The package ships two optimization back-ends and a full neural-network resistance pipeline:
 
 - **Surrogate BO** — Latin Hypercube Sampling → GP emulator → Thompson Sampling or Expected Improvement (selectable)
 - **Enzyme.jl L-BFGS** — gradient-based optimization via automatic differentiation in Julia
@@ -132,17 +132,30 @@ diag <- ds_diagnose(fit, pts, connectivity)
 |----------|-------------|
 | `run_omniscape()` | Compute cumulative current flow via Omniscape.jl |
 | `run_circuitscape()` | Pairwise or one-to-all current flow via Circuitscape.jl |
+| `run_cumulative_current()` | Differentiable cumulative current via the Julia solver (used by the Enzyme back-end) |
 | `extract_connectivity()` | Extract connectivity values at point locations |
 | `standardise_connectivity()` | Log-scale z-scoring of connectivity values |
+| `residualise_connectivity()` | Regress local covariates out of connectivity, isolating network-structure variation |
 
 ### Intensity
 
 | Function | Description |
 |----------|-------------|
-| `fit_intensity_nb()` | Negative binomial PPP MLE |
+| `fit_intensity_nb()` | Negative binomial / selection-function MLE (general workhorse) |
+| `fit_intensity_selection()` | Convenience wrapper for RSF / RSP / iSSA models with explicit available locations |
 | `fit_intensity_gam()` | Poisson / GAM intensity via `mgcv::bam()` |
 | `predict_intensity()` | Generate predicted intensity raster |
 | `compute_information_criteria()` | AIC / BIC for model comparison |
+| `intensity_family()` | Constructor for a custom distributional family |
+
+### Basis Stack
+
+| Function | Description |
+|----------|-------------|
+| `create_basis_stack()` | Build and align a multi-layer `SpatRaster` from a named list of rasters |
+| `validate_basis_stack()` | Check that a basis stack is well-formed (named, non-empty, no all-NA layers) |
+| `check_basis_correlations()` | Compute pairwise Pearson correlations and warn when `\|r\| > threshold` |
+| `basis_summary()` | Data-frame summary of each layer (mean, SD, min, max, valid/NA cell counts) |
 
 ### Diagnostics
 
@@ -178,6 +191,8 @@ cfg <- default_optimizer_config()
 #   n_iter       = 50L         # Surrogate iterations
 #   acquisition  = "TS"        # "TS" (Thompson Sampling) or "EI" (Expected Improvement)
 #   distribution = "negbin"    # or "gam" / "poisson"
+#   family       = NULL        # intensity_family object (overrides distribution)
+#   resistance_link = NULL     # resistance_link object (NULL → link_exp())
 #   omniscape    = list(radius = 13L, block_size = 5L)
 #
 # EI-specific knobs (used when acquisition = "EI"):
@@ -199,6 +214,108 @@ int_cfg <- default_intensity_config()
 #   covariate_type = "smooth"  # or "linear"
 #   include_spatial_re = FALSE
 #   integration_subsample = 0.25
+```
+
+---
+
+## Intensity Families
+
+The intensity model can use any of seven built-in distributional families — covering both point process count models and selection function models — or a fully custom one. Pass a family object via `config$family` to override the legacy `distribution` string.
+
+**Point process / count families**
+
+| Family | Constructor | Description |
+|--------|-------------|-------------|
+| Negative Binomial | `family_negbin()` | Default; handles overdispersion with a size parameter θ |
+| Poisson | `family_poisson()` | Simpler model; no overdispersion adjustment |
+| Gaussian | `family_gaussian(known_sd)` | For continuous density estimates; `known_sd = NULL` estimates σ |
+| Zero-inflated NB | `family_zinb()` | Extends NB with a structural-zero probability π |
+
+**Selection function families** (require explicit available/background locations)
+
+| Family | Constructor | Description |
+|--------|-------------|-------------|
+| RSF | `family_rsf()` | Exponential resource selection function via Poisson use-availability likelihood; no intercept α |
+| RSP | `family_rsp(background_weight)` | Logistic RSP via the Fithian & Hastie (2013) infinite-weight trick; estimates a selection probability surface |
+| Conditional logistic | `family_clogit(stratum_ids_used, stratum_ids_avail)` | Paired used-available (iSSA/SSA); reduces to RSF when strata are omitted |
+
+```r
+cfg <- default_optimizer_config()
+
+# Point process families:
+cfg$family <- family_poisson()
+cfg$family <- family_zinb()
+
+# Selection function families — also pass available locations:
+cfg$family           <- family_rsf()
+cfg$available_points <- available_locs   # data.frame with x, y
+
+opt <- ds_optimize(basis, pts, config = cfg)
+
+# Conditional logistic (iSSA) with pre-defined strata:
+cfg$family <- family_clogit(
+  stratum_ids_used  = used_df$stratum_id,
+  stratum_ids_avail = avail_df$stratum_id
+)
+
+# Convenience wrapper for selection models (bypasses raster quadrature):
+fit <- fit_intensity_selection(
+  connectivity_at_obs  = connectivity[used_idx],
+  available_connectivity = connectivity[avail_idx],
+  obs_coords           = used_df[, c("x", "y")],
+  family               = family_rsf()
+)
+```
+
+To define a completely custom family, supply a `negloglik_fn`, `deviance_residuals_fn`, and `init_fn` to `intensity_family()`:
+
+```r
+my_family <- intensity_family(
+  name                  = "my_family",
+  negloglik_fn          = function(theta, z_obs, z_int, int_weights, obs_weights,
+                                   cov_obs, cov_int, cov_names) { ... },
+  deviance_residuals_fn = function(observed, fitted, extra_params) { ... },
+  init_fn               = function(n_cov) list(start = ..., lower = ..., upper = ...)
+)
+cfg$family <- my_family
+```
+
+---
+
+## Resistance Link Functions
+
+The link function maps the linear predictor η(x) = r₀ + Σₖ zₖ φₖ(x) to the resistance surface R(x). Swapping links changes the shape of the resistance surface without touching the optimizer or Julia solver.
+
+| Link | Formula | Notes |
+|------|---------|-------|
+| `link_exp()` | R = clamp(exp(η), Rmin, Rmax) | Default; original DiffiScape parameterisation |
+| `link_softplus()` | R = log(1 + exp(η)) + Rmin | Smooth, naturally bounded below, no clamp discontinuity |
+| `link_power(p)` | R = clamp(\|η\|ᵖ, Rmin, Rmax) | Polynomial scaling; default p = 2 |
+| `link_identity()` | R = clamp(η, Rmin, Rmax) | Use when basis functions are already on the resistance scale |
+
+```r
+# Pass a link directly to create_resistance_surface():
+R <- create_resistance_surface(theta, basis, link = link_softplus())
+
+# Or configure it for the full optimizer loop:
+cfg <- default_optimizer_config()
+cfg$resistance_link <- link_softplus()
+opt <- ds_optimize(basis, pts, config = cfg)
+
+# Power link with p = 3:
+cfg$resistance_link <- link_power(p = 3)
+```
+
+For non-additive models (e.g. tensor products, neural nets), supply a custom `eta_fn` to `resistance_link()`:
+
+```r
+my_link <- resistance_link(
+  name       = "my_link",
+  forward_fn = function(eta, R_min, R_max) { ... },
+  inverse_fn = function(R, R_min, R_max) { ... },
+  deriv_fn   = function(eta, R_min, R_max) { ... },
+  eta_fn     = function(theta, basis_values) { ... }   # optional
+)
 ```
 
 ---
@@ -271,6 +388,24 @@ opt <- ds_optimize(basis, pts, solver = "torch",
                      model_type = "mlp", n_epochs = 300L
                    )))
 ```
+
+---
+
+## Vignettes
+
+Five worked examples ship with the package and are built automatically when it is installed. Access them with:
+
+```r
+browseVignettes("DiffiScape")
+```
+
+| Vignette | Topic |
+|----------|-------|
+| `surrogate-omniscape` | Surrogate BO with Omniscape cumulative current |
+| `gradient-enzyme` | Gradient-based optimization via Enzyme.jl |
+| `gam-profile` | GAM intensity profile workflow |
+| `torch-mlp` | PyTorch MLP resistance network |
+| `spline-gam` | Spline-GAM resistance network |
 
 ---
 
