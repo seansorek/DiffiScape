@@ -56,7 +56,11 @@ run_torch_pipeline(
   intensity_n_knots = config$intensity_n_knots,
   intensity_degree = config$intensity_degree,
   lambda_init_intensity = config$lambda_init_intensity,
-  intensity_log1p_max = config$intensity_log1p_max
+  intensity_log1p_max = config$intensity_log1p_max,
+  beta = config$beta,
+  gamma_d = config$gamma_d,
+  n_value_iter = config$n_value_iter,
+  value_scale_init = config$value_scale_init
 )
 }
 \arguments{
@@ -140,7 +144,8 @@ checkpoints.}
 \item{absorption_schedule}{Optional numeric vector for an absorption
 curriculum.}
 
-\item{model_type}{Character; \code{"mlp"} or \code{"spline_gam"}.}
+\item{model_type}{Character; \code{"mlp"}, \code{"conv"}, \code{"spline_gam"}, or \code{"irl"}
+(value-shaped resistance from soft value iteration).}
 
 \item{n_knots}{Integer; spline knots per covariate.}
 
@@ -171,6 +176,16 @@ intensity model.}
 spline.}
 
 \item{intensity_log1p_max}{Numeric; clamp on \code{log1p(connectivity)}.}
+
+\item{beta}{Numeric; soft value-iteration temperature (IRL only).}
+
+\item{gamma_d}{Numeric; MDP discount / leakage for value iteration, \verb{< 1}
+(IRL only).}
+
+\item{n_value_iter}{Integer; unrolled soft value-iteration steps (IRL only).}
+
+\item{value_scale_init}{Numeric; initial scale in \verb{log R = offset - scale*V}
+(IRL only).}
 }
 \value{
 A list with \code{best_params}, \code{best_loglik}, \code{alpha}, \code{gamma},

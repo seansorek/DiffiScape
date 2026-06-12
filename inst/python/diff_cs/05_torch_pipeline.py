@@ -933,6 +933,159 @@ class ConvResistanceNet(nn.Module):
         return R
 
 
+class IRLResistanceNet(nn.Module):
+    """
+    Inverse-reinforcement-learning (value-shaped) resistance model.
+
+    A learned reward field over covariates is turned into a resistance surface
+    via entropy-regularised soft value iteration on the 4-connected grid MDP:
+
+        r(x)        = skip(phi(x)) + MLP(phi(x))                  # reward (negative cost)
+        V_{t+1}(s)  = (1/b) logsumexp_{a in {stay,N,S,E,W}} b [ r(s) + gd * V_t(s_a) ]
+        log R(x)    = clamp( offset - scale * V(x) )              # high value -> low resistance
+
+    The soft value iteration is a smooth (logsumexp) contraction for the
+    discount ``gamma_d < 1``, so V — and therefore R — is differentiable w.r.t.
+    the reward parameters; gradients from the downstream circuit solve flow back
+    through the unrolled iteration into the reward network.  Resistance encodes
+    the long-range desirability of the landscape (an agent's plan-to-go value)
+    rather than purely local habitat.
+
+    The forward signature matches :class:`ConvResistanceNet`: value iteration
+    needs the full 2D grid for spatial adjacency.  ``R`` and ``log_R_raw`` are
+    returned per valid pixel, so the circuit solver / intensity link / samplers
+    consume this model identically to the MLP / conv / spline models.
+    """
+
+    def __init__(self, n_features=4, hidden=32, n_layers=2,
+                 R_min=1.0, R_max=5000.0, beta=5.0,
+                 vi_beta=1.0, gamma_d=0.9, n_value_iter=60,
+                 value_scale_init=1.0):
+        super().__init__()
+        self.R_min = R_min
+        self.R_max = R_max
+        self.beta = beta                  # log-space clamp sharpness
+        self.vi_beta = float(vi_beta)     # soft value-iteration temperature
+        self.gamma_d = float(gamma_d)     # discount / leakage (must be < 1)
+        self.n_value_iter = int(n_value_iter)
+
+        # Reward field = linear skip (warm-start compatible) + nonlinear MLP.
+        self.skip = nn.Linear(n_features, 1)
+        layers = []
+        d = n_features
+        for _ in range(n_layers):
+            layers += [nn.Linear(d, hidden), nn.SiLU()]
+            d = hidden
+        layers.append(nn.Linear(d, 1))
+        self.mlp = nn.Sequential(*layers)
+
+        # log R = offset - softplus(raw_scale) * V   (scale > 0 keeps the sign:
+        # higher value -> lower resistance).
+        self.offset = nn.Parameter(torch.tensor(3.0, dtype=torch.float64))
+        _raw_scale = math.log(math.expm1(max(float(value_scale_init), 1e-3)))
+        self.raw_scale = nn.Parameter(torch.tensor(_raw_scale, dtype=torch.float64))
+
+        # No learned intensity transform (uses the parametric link).
+        self.intensity_mlp = None
+
+        self._init_weights()
+
+    def _init_weights(self):
+        """Small reward variation so V starts smooth; MLP correction ~ 0."""
+        nn.init.normal_(self.skip.weight, std=0.1)
+        nn.init.zeros_(self.skip.bias)
+        for m in self.mlp.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.normal_(m.weight, std=0.05)
+                nn.init.zeros_(m.bias)
+        last = [m for m in self.mlp.modules() if isinstance(m, nn.Linear)][-1]
+        nn.init.normal_(last.weight, std=0.01)
+        nn.init.zeros_(last.bias)
+
+    def warm_start(self, theta):
+        """Initialise the reward skip from log-linear params [r_0, z_1..z_K].
+
+        The covariate weights are sign-flipped because reward = -cost: a
+        covariate direction that raises resistance lowers reward.  The intercept
+        seeds ``offset`` (the resistance level)."""
+        theta = np.asarray(theta, dtype=np.float64).ravel()
+        with torch.no_grad():
+            self.skip.weight.copy_(
+                torch.tensor(-theta[1:].reshape(1, -1), dtype=torch.float64)
+            )
+            self.skip.bias.zero_()
+            self.offset.copy_(torch.tensor(theta[0], dtype=torch.float64))
+            for m in self.mlp.modules():
+                if isinstance(m, nn.Linear):
+                    nn.init.zeros_(m.weight)
+                    nn.init.zeros_(m.bias)
+
+    @staticmethod
+    def _shift(t, dr, dc):
+        """Neighbour lookup: out[r, c] = t[r + dr, c + dc]; out-of-grid -> 0."""
+        H, W = t.shape
+        out = torch.zeros_like(t)
+        r0s, r1s = max(0, dr), min(H, H + dr)
+        c0s, c1s = max(0, dc), min(W, W + dc)
+        r0d, r1d = max(0, -dr), min(H, H - dr)
+        c0d, c1d = max(0, -dc), min(W, W - dc)
+        out[r0d:r1d, c0d:c1d] = t[r0s:r1s, c0s:c1s]
+        return out
+
+    def _soft_value_iteration(self, reward_grid, valid_grid):
+        """Entropy-regularised soft value iteration on the 4-connected grid.
+
+        ``reward_grid`` and ``valid_grid`` are (H, W); ``valid_grid`` is float
+        0/1.  Moves into out-of-grid or invalid cells are masked out of the
+        soft maximisation; the always-available 'stay' action guarantees at
+        least one finite term.  Invalid cells are pinned to V = 0 so they never
+        leak value into valid neighbours."""
+        b, gd, NEG = self.vi_beta, self.gamma_d, -1e9
+        dirs = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        nbr_valid = [self._shift(valid_grid, dr, dc) for dr, dc in dirs]
+        V = torch.zeros_like(reward_grid)
+        for _ in range(self.n_value_iter):
+            qs = [reward_grid + gd * V]  # stay action (always valid)
+            for (dr, dc), nv in zip(dirs, nbr_valid):
+                q = reward_grid + gd * self._shift(V, dr, dc)
+                qs.append(torch.where(nv > 0.5, q, torch.full_like(q, NEG)))
+            V_new = torch.logsumexp(b * torch.stack(qs, dim=0), dim=0) / b
+            V = torch.where(valid_grid > 0.5, V_new, torch.zeros_like(V_new))
+        return V
+
+    def forward_with_log_R(self, basis_grid, valid_mask_flat, basis_valid):
+        """See :meth:`ConvResistanceNet.forward_with_log_R` for arg shapes."""
+        _, n_feat, H, W = basis_grid.shape
+        phi_all = basis_grid.squeeze(0).reshape(n_feat, -1).T   # (H*W, n_features)
+        reward_grid = (self.skip(phi_all) + self.mlp(phi_all)).squeeze(-1).reshape(H, W)
+
+        valid_grid = torch.as_tensor(
+            np.asarray(valid_mask_flat, dtype=np.float64).reshape(H, W),
+            dtype=reward_grid.dtype, device=reward_grid.device,
+        )
+        V = self._soft_value_iteration(reward_grid, valid_grid)
+        V_valid = V.reshape(-1)[valid_mask_flat]               # (n_valid,)
+
+        # Centre V: the absolute value level is an arbitrary constant (soft VI
+        # accumulates a near-uniform entropy/discount offset).  Only spatial
+        # contrasts in V should drive resistance, and centring makes ``offset``
+        # the interpretable mean log-resistance (anchored by the mean penalty).
+        V_valid = V_valid - V_valid.mean()
+        scale = F.softplus(self.raw_scale)
+        log_R = self.offset - scale * V_valid
+
+        # Smooth double-softplus clamp in log-space (matches the other nets).
+        log_lo = math.log(self.R_min)
+        log_hi = math.log(self.R_max)
+        clamped = log_lo + F.softplus(log_R - log_lo, beta=self.beta)
+        clamped = log_hi - F.softplus(log_hi - clamped, beta=self.beta)
+        return torch.exp(clamped), log_R
+
+    def forward(self, basis_grid, valid_mask_flat, basis_valid):
+        R, _ = self.forward_with_log_R(basis_grid, valid_mask_flat, basis_valid)
+        return R
+
+
 # ===========================================================================
 # B-spline utilities for SplineResistanceNet
 # ===========================================================================
@@ -2046,6 +2199,120 @@ def verify_conv_gradient(basis_values_np, valid_mask_np,
     }
 
 
+def verify_softrl_gradient(basis_values_np, valid_mask_np,
+                           n_rows, n_cols, source_spacing=1,
+                           source_from_resistance=True,
+                           hidden_dim=16, n_hidden_layers=2,
+                           beta=1.0, gamma_d=0.9, n_value_iter=30,
+                           value_scale_init=1.0,
+                           eps=1e-4, seed=42,
+                           solver="global_absorption",
+                           radius=15, block_size=10,
+                           absorption=0.01):
+    """
+    End-to-end finite-difference gradient check for IRLResistanceNet.
+
+    Tests the full chain: reward(basis) → soft value iteration → R → circuit
+    → C → scalar loss.  Perturbs individual reward/offset/scale parameters and
+    compares finite-difference vs autograd gradients through the unrolled value
+    iteration.
+    """
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+
+    n_valid = int(valid_mask_np.sum())
+    n_features = basis_values_np.shape[1]
+
+    # Build 2D grid (same layout as the conv/IRL training path)
+    n_cells = n_rows * n_cols
+    grid_np = np.zeros((n_features, n_cells), dtype=np.float64)
+    grid_np[:, valid_mask_np] = basis_values_np.T
+    grid_np = grid_np.reshape(1, n_features, n_rows, n_cols)
+    basis_grid_t = torch.tensor(grid_np, dtype=torch.float64)
+    basis_valid_t = torch.tensor(basis_values_np, dtype=torch.float64)
+
+    net = IRLResistanceNet(
+        n_features, hidden=hidden_dim, n_layers=n_hidden_layers,
+        vi_beta=float(beta), gamma_d=float(gamma_d),
+        n_value_iter=int(n_value_iter),
+        value_scale_init=float(value_scale_init),
+    ).double()
+
+    use_absorption = (solver == "global_absorption")
+    use_diff_omniscape = (solver == "diff_omniscape")
+
+    def _forward_loss(net_):
+        R = net_(basis_grid_t, valid_mask_np, basis_valid_t)
+        if use_diff_omniscape:
+            C = _DiffOmniscapeSolveFn.apply(
+                R, valid_mask_np, n_rows, n_cols,
+                source_spacing, source_from_resistance,
+                radius, block_size, 1.0, seed,
+            )
+        elif use_absorption:
+            C = _AbsorptionCircuitSolveFn.apply(
+                R, valid_mask_np, n_rows, n_cols,
+                source_spacing, source_from_resistance,
+                absorption,
+            )
+        else:
+            C = _CircuitSolveFn.apply(
+                R, valid_mask_np, n_rows, n_cols,
+                source_spacing, source_from_resistance,
+            )
+        return (C * dl_dC).sum()
+
+    # Random loss direction (fixed across perturbations)
+    dl_dC = torch.randn(n_valid, dtype=torch.float64)
+
+    # Analytic gradient
+    loss = _forward_loss(net)
+    loss.backward()
+
+    all_params = [(n, p, p.grad.detach().cpu().numpy().ravel().copy())
+                  for n, p in net.named_parameters()
+                  if p.requires_grad and p.grad is not None]
+    n_check_per_param = 3
+    fd_results = []
+
+    for pname, param, analytic_g in all_params:
+        n_elem = len(analytic_g)
+        check_idx = np.random.choice(n_elem, min(n_check_per_param, n_elem),
+                                     replace=False)
+        for idx in check_idx:
+            orig = param.data.view(-1)[idx].item()
+
+            param.data.view(-1)[idx] = orig + eps
+            net.zero_grad()
+            lp = _forward_loss(net).item()
+
+            param.data.view(-1)[idx] = orig - eps
+            net.zero_grad()
+            lm = _forward_loss(net).item()
+
+            param.data.view(-1)[idx] = orig
+
+            fd = (lp - lm) / (2 * eps)
+            an = analytic_g[idx]
+            rel_err = abs(fd - an) / (max(abs(fd), abs(an)) + 1e-7)
+            fd_results.append((pname, idx, fd, an, rel_err))
+
+    rel_errors = [r[4] for r in fd_results]
+    max_rel = float(max(rel_errors))
+
+    print(f"  IRL gradient check: max rel error = {max_rel:.2e} "
+          f"(checked {len(fd_results)} param elements across {len(all_params)} params)")
+    for pname, idx, fd, an, re in fd_results:
+        status = "OK" if re < 0.05 else "FAIL"
+        print(f"    {pname}[{idx}]: FD={fd:.6e}, AN={an:.6e}, rel={re:.2e} {status}")
+
+    return {
+        "max_rel_error": max_rel,
+        "pass": max_rel < 0.05,
+        "rel_errors": [float(r) for r in rel_errors],
+    }
+
+
 def verify_spline_gradient(basis_values_np, valid_mask_np,
                            n_rows, n_cols, source_spacing=1,
                            source_from_resistance=True,
@@ -2237,6 +2504,11 @@ def run_torch_optimization(
     intensity_degree=3,          # B-spline degree for intensity spline
     lambda_init_intensity=2.0,   # Initial log-lambda for intensity smoothing
     intensity_log1p_max=10.0,    # Upper knot boundary for log(1+C)
+    # IRL (value-shaped) resistance — model_type="irl"
+    beta=1.0,                    # Soft value-iteration temperature
+    gamma_d=0.9,                 # Discount / leakage of the MDP (must be < 1)
+    n_value_iter=60,             # Soft value-iteration steps (unrolled)
+    value_scale_init=1.0,        # Initial scale in log R = offset - scale * V
 ):
     """
     End-to-end neural-network PPP-circuit optimization.
@@ -2337,6 +2609,10 @@ def run_torch_optimization(
         model_type = "conv"
     use_conv = (model_type == "conv")
     use_spline = (model_type == "spline_gam")
+    use_irl = (model_type == "irl")
+    # Grid-context nets (conv encoder, IRL value iteration) need the 2D basis
+    # grid and the (basis_grid, valid_mask, basis_valid) forward signature.
+    use_grid = use_conv or use_irl
 
     if verbose:
         n_obs = int(obs_counts_np.sum())
@@ -2344,6 +2620,8 @@ def run_torch_optimization(
         print(f"\n{'='*60}")
         if use_spline:
             print(f"TORCH PIPELINE: P-spline GAM Resistance + Circuit + PPP")
+        elif use_irl:
+            print(f"TORCH PIPELINE: IRL value-shaped Resistance + Circuit + PPP")
         else:
             print(f"TORCH PIPELINE: Neural Net Resistance + Circuit + PPP")
         print(f"{'='*60}")
@@ -2395,6 +2673,9 @@ def run_torch_optimization(
                 print(f"  MLP dropout: {dropout}")
             if intensity_hidden > 0:
                 print(f"  Learned intensity MLP: 1 → {intensity_hidden} → 1")
+        if use_irl:
+            print(f"  Soft value iteration: β={beta}, γ_d={gamma_d}, "
+                  f"{n_value_iter} iters → log R = offset − scale·V")
         if warmup_epochs > 0:
             print(f"  LR warm-up: {warmup_epochs} epochs")
         if absorption_schedule is not None:
@@ -2415,9 +2696,9 @@ def run_torch_optimization(
     basis_t = torch.tensor(basis_values_np, dtype=torch.float64, device=dev)
     obs_t = torch.tensor(obs_counts_np, dtype=torch.float64, device=dev)
 
-    # ---- 2D grid for conv encoder (if enabled) ----
+    # ---- 2D grid for grid-context nets (conv encoder / IRL value iteration) ----
     basis_grid_t = None
-    if use_conv:
+    if use_grid:
         n_cells = n_rows * n_cols
         grid_np = np.zeros((n_features, n_cells), dtype=np.float64)
         grid_np[:, valid_mask_np] = basis_values_np.T  # fill valid; rest stays 0
@@ -2447,6 +2728,13 @@ def run_torch_optimization(
             hidden=hidden_dim, n_mlp_layers=n_hidden_layers,
             dropout=dropout, use_dilated=use_dilated,
             intensity_hidden=intensity_hidden,
+        ).double().to(dev)
+    elif use_irl:
+        net = IRLResistanceNet(
+            n_features, hidden=hidden_dim, n_layers=n_hidden_layers,
+            vi_beta=float(beta), gamma_d=float(gamma_d),
+            n_value_iter=int(n_value_iter),
+            value_scale_init=float(value_scale_init),
         ).double().to(dev)
     else:
         net = ResistanceNet(n_features, hidden_dim, n_hidden_layers).double().to(dev)
@@ -2557,7 +2845,7 @@ def run_torch_optimization(
             opt.zero_grad()
 
             # Forward: covariates → R → circuit → C → log λ → loglik
-            if use_conv:
+            if use_grid:
                 net.train()
                 R, log_R_raw = net.forward_with_log_R(
                     basis_grid_t, valid_mask_np, basis_t)
@@ -2661,7 +2949,7 @@ def run_torch_optimization(
                   f"{sched.get_last_lr()[0]:10.1e}  {elapsed:5.1f}s{abs_str}")
             with torch.no_grad():
                 net.eval()
-                if use_conv:
+                if use_grid:
                     R_mon, logR_mon = net.forward_with_log_R(
                         basis_grid_t, valid_mask_np, basis_t)
                 else:
@@ -2716,7 +3004,7 @@ def run_torch_optimization(
     # ---- Final forward (no grad) ----
     net.eval()
     with torch.no_grad():
-        if use_conv:
+        if use_grid:
             R_fin = net(basis_grid_t, valid_mask_np, basis_t).cpu().numpy()
         else:
             R_fin = net(basis_t).cpu().numpy()
@@ -2827,6 +3115,13 @@ def run_torch_optimization(
                 "intensity_degree": int(intensity_degree),
                 "lambda_init_intensity": float(lambda_init_intensity),
                 "intensity_log1p_max": float(intensity_log1p_max),
+            })
+        if use_irl:
+            save_dict.update({
+                "beta": float(beta),
+                "gamma_d": float(gamma_d),
+                "n_value_iter": int(n_value_iter),
+                "value_scale_init": float(value_scale_init),
             })
         torch.save(save_dict, os.path.join(output_dir, "resistance_nn.pt"))
 

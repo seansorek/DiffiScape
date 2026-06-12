@@ -8,7 +8,7 @@ Users supply environmental rasters and GPS locations (or paired used-available l
 
 - **Surrogate BO** — Latin Hypercube Sampling → GP emulator → Thompson Sampling or Expected Improvement (selectable)
 - **Enzyme.jl L-BFGS** — gradient-based optimization via automatic differentiation in Julia
-- **PyTorch pipeline** — MLP / convolutional / spline-GAM resistance networks trained with a differentiable circuit solver, plus MAP optimization and full Bayesian posterior sampling (Langevin/MALA, NUTS, ADVI)
+- **PyTorch pipeline** — MLP / convolutional / spline-GAM / IRL value-shaped resistance networks trained with a differentiable circuit solver, plus MAP optimization and full Bayesian posterior sampling (Langevin/MALA, NUTS, ADVI)
 
 ---
 
@@ -342,7 +342,7 @@ ds_torch_check()  # TRUE when ready
 result <- run_torch_pipeline(
   basis_stack = basis,
   obs_points  = pts,
-  model_type  = "mlp",        # "mlp", "conv", or "spline_gam"
+  model_type  = "mlp",        # "mlp", "conv", "spline_gam", or "irl"
   n_epochs    = 500L,
   output_dir  = "torch_results/"
 )
@@ -388,6 +388,49 @@ opt <- ds_optimize(basis, pts, solver = "torch",
                      model_type = "mlp", n_epochs = 300L
                    )))
 ```
+
+### Inverse Reinforcement Learning (value-shaped) resistance
+
+The `"irl"` resistance model treats the landscape as a Markov decision process
+(states = cells, actions = moves to neighbours) and learns the **reward**
+(negative cost) an agent appears to be following. A reward network over the
+basis covariates is turned into a resistance surface via entropy-regularised
+**soft value iteration**, so resistance reflects the *long-range desirability*
+of the landscape (an agent's plan-to-go value), not just local habitat:
+
+```
+reward rψ(x) → soft value iteration (β, γ_d) → V(x)
+            → R(x) = clamp(offset − scale·V(x))
+            → differentiable circuit solver → C(x) → log λ = α + γ·log(1+C) → PPP likelihood
+```
+
+Crucially this **keeps circuit theory as the forward model**: the learned
+resistance flows through the same differentiable current solve as the other
+PyTorch models, and gradients backpropagate through both the circuit solve and
+the unrolled value iteration into the reward network. It needs only occurrence
+points (no movement trajectories).
+
+```r
+# Convenience alias for solver = "torch" with model_type = "irl":
+opt <- ds_optimize(basis, pts, solver = "irl",
+                   config = list(torch = list(
+                     beta = 1.0,        # soft value-iteration temperature
+                     gamma_d = 0.9,     # MDP discount / leakage (< 1)
+                     n_value_iter = 60L,
+                     n_epochs = 300L
+                   )))
+
+# Package the fit as a custom resistance_model for predict()/ds_diagnose():
+model <- irl_resistance_model(opt, basis)
+R     <- predict(model)
+
+# Gradient smoke-test through value iteration + circuit solve:
+verify_irl_gradient(basis)
+```
+
+> **Note:** v1 supports IRL for MAP (Adam) optimization. Bayesian posterior
+> sampling (`run_bayesian_sampling()` / `run_advi()`) currently targets the
+> spline-GAM model only; IRL posterior sampling is planned future work.
 
 ---
 

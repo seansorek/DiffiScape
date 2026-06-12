@@ -145,7 +145,11 @@ ds_init_julia <- function(julia_home = NULL, force = FALSE) {
 #'   supplied and the intensity model includes covariates.
 #' @param solver Character; `"surrogate"` (GP + Thompson Sampling or
 #'   Expected Improvement, default), `"enzyme"` (L-BFGS via differentiable
-#'   Julia solver), or `"torch"` (PyTorch neural-network resistance).
+#'   Julia solver), `"torch"` (PyTorch neural-network resistance), or `"irl"`
+#'   (PyTorch value-shaped resistance: a reward network is turned into a
+#'   resistance surface via soft value iteration, then run through the same
+#'   differentiable circuit solver — a convenience alias for `solver = "torch"`
+#'   with `model_type = "irl"`).
 #' @return Result from [optimize_resistance()], [optimize_resistance_enzyme()],
 #'   or [run_torch_pipeline()].
 #' @export
@@ -160,13 +164,14 @@ ds_optimize <- function(basis_stack,
                         residualise          = FALSE,
                         available_points     = NULL,
                         available_covariates = NULL,
-                        solver               = c("surrogate", "enzyme", "torch")) {
+                        solver               = c("surrogate", "enzyme", "torch", "irl")) {
 
   solver <- match.arg(solver)
 
-  if (solver == "torch") {
+  if (solver == "torch" || solver == "irl") {
     if (!is.null(available_points)) {
-      stop("available_points is not supported with solver = 'torch'.", call. = FALSE)
+      stop("available_points is not supported with solver = '", solver, "'.",
+           call. = FALSE)
     }
     torch_args <- config$torch %||% list()
     torch_args$basis_stack <- basis_stack
@@ -175,6 +180,8 @@ ds_optimize <- function(basis_stack,
     if (is.null(torch_args$seed) && !is.null(config$seed)) {
       torch_args$seed <- config$seed
     }
+    # "irl" is "torch" with the value-shaped resistance model.
+    if (solver == "irl") torch_args$model_type <- "irl"
     return(do.call(run_torch_pipeline, torch_args))
   }
 
