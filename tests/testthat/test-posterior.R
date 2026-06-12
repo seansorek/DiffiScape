@@ -102,3 +102,71 @@ test_that("posterior_summary excludes loglik column from parameters", {
   expect_false("loglik" %in% summ$parameter)
   expect_equal(nrow(summ), 2)
 })
+
+
+# ---------------------------------------------------------------------------
+# laplace_resistance (surrogate path — no Julia required)
+# ---------------------------------------------------------------------------
+
+.make_surrogate_opt_result <- function(seed = 1) {
+  set.seed(seed)
+  bounds <- list(r_0 = c(-2, 2), z_1 = c(-3, 3))
+  X      <- .create_lhs_design(15, bounds)
+  y      <- rowSums(as.matrix(X)^2) + rnorm(15, sd = 0.05)
+  gp     <- .fit_surrogate(as.matrix(X), y)
+
+  best_idx <- which.min(y)
+  best_params <- list(r_0 = X$r_0[best_idx], z_1 = X$z_1[best_idx])
+
+  list(
+    best_params = best_params,
+    surrogate   = gp,
+    bounds      = bounds
+  )
+}
+
+test_that("laplace_resistance returns correct structure via surrogate path", {
+  skip_on_cran()
+  skip_if_not_installed("numDeriv")
+  opt_result <- .make_surrogate_opt_result()
+
+  lap <- laplace_resistance(opt_result)
+
+  expect_named(lap, c("mode", "covariance", "precision", "std_error"))
+  expect_length(lap$mode, 2)
+  expect_equal(nrow(lap$covariance), 2)
+  expect_equal(ncol(lap$covariance), 2)
+  expect_length(lap$std_error, 2)
+})
+
+
+test_that("laplace_resistance mode matches best_params", {
+  skip_on_cran()
+  skip_if_not_installed("numDeriv")
+  opt_result <- .make_surrogate_opt_result(seed = 2)
+
+  lap  <- laplace_resistance(opt_result)
+  best <- unlist(opt_result$best_params)
+
+  expect_equal(lap$mode, unname(best), tolerance = 1e-10)
+})
+
+
+test_that("laplace_resistance std_error is non-negative", {
+  skip_on_cran()
+  skip_if_not_installed("numDeriv")
+  opt_result <- .make_surrogate_opt_result(seed = 3)
+
+  lap <- laplace_resistance(opt_result)
+  expect_true(all(lap$std_error >= 0))
+})
+
+
+test_that("laplace_resistance covariance is symmetric", {
+  skip_on_cran()
+  skip_if_not_installed("numDeriv")
+  opt_result <- .make_surrogate_opt_result(seed = 4)
+
+  lap <- laplace_resistance(opt_result)
+  expect_equal(lap$covariance, t(lap$covariance), tolerance = 1e-10)
+})

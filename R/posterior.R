@@ -56,7 +56,8 @@ laplace_resistance <- function(opt_result,
                                link                 = link_exp(),
                                family               = NULL) {
 
-  best_vec <- .params_to_vector(opt_result$best_params)
+  n_basis  <- length(opt_result$bounds) - 1L
+  best_vec <- .params_to_vector(opt_result$best_params, n_basis)
   p        <- length(best_vec)
 
   # Auto-refit when no surrogate is available (Enzyme/direct path)

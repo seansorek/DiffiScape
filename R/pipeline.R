@@ -285,6 +285,7 @@ ds_fit_intensity <- function(opt_result,
     return(list(
       loglik           = int_fit$loglik,
       intensity_params = int_fit$estimates,
+      intensity_fit_obj = int_fit,
       intensity_se     = int_fit$se,
       hessian          = int_fit$hessian,
       convergence      = int_fit$convergence,

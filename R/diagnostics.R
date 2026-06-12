@@ -96,14 +96,23 @@ rasterise_deviance_residuals <- function(intensity_fit,
   tab     <- table(cells)
   counts[as.integer(names(tab))] <- as.integer(tab)
 
+  # Resolve the full fit object for predict_intensity.
+  # intensity_fit may come from evaluate_full_model() (which stores the full
+  # fit in $intensity_fit_obj and just estimates in $intensity_params) or
+  # directly from fit_intensity_nb/gam (which has $estimates at the top level).
+  fit_obj <- intensity_fit$intensity_fit_obj %||% intensity_fit
+
   # Predicted intensity per cell
   pred_rast <- predict_intensity(
-    intensity_fit$intensity_params,
+    fit_obj,
     connectivity,
     covariates_rasters = covariates_rasters,
     config             = intensity_config
   )
   fitted_vals <- terra::values(pred_rast)[, 1]
+
+  # Resolve the estimates vector for size / extra-param extraction
+  params_vec <- fit_obj$estimates %||% intensity_fit$intensity_params
 
   # Deviance residuals
   valid <- !is.na(fitted_vals) & fitted_vals > 0
@@ -111,12 +120,12 @@ rasterise_deviance_residuals <- function(intensity_fit,
 
   if (!is.null(family)) {
     ep_names <- family$extra_param_names
-    extra_p  <- intensity_fit$intensity_params[ep_names]
+    extra_p  <- params_vec[ep_names]
     dev_resid[valid] <- family$deviance_residuals_fn(
       counts[valid], fitted_vals[valid], extra_p
     )
   } else {
-    size <- intensity_fit$intensity_params["size"]
+    size <- params_vec["size"]
     if (is.null(size) || is.na(size)) size <- 1
     dev_resid[valid] <- compute_deviance_residuals(
       counts[valid], fitted_vals[valid], size
@@ -309,18 +318,21 @@ diagnose_model <- function(intensity_fit,
     tab <- table(cells)
     counts[as.integer(names(tab))] <- as.integer(tab)
 
+    fit_obj_plt  <- intensity_fit$intensity_fit_obj %||% intensity_fit
+    params_vec_plt <- fit_obj_plt$estimates %||% intensity_fit$intensity_params
+
     pred_rast <- predict_intensity(
-      intensity_fit$intensity_params, connectivity,
+      fit_obj_plt, connectivity,
       covariates_rasters = covariates_rasters,
       config = intensity_config
     )
     fitted <- terra::values(pred_rast)[, 1]
 
-    size <- intensity_fit$intensity_params["size"]
+    size <- params_vec_plt["size"]
     if (is.null(size) || is.na(size)) size <- 1
 
     ep_names    <- if (!is.null(family)) family$extra_param_names else NULL
-    extra_p_plt <- intensity_fit$intensity_params[ep_names]
+    extra_p_plt <- params_vec_plt[ep_names]
 
     grDevices::dev.new()
     graphics::par(mfrow = c(2, 2))

@@ -66,3 +66,44 @@ test_that("basis_summary returns a data.frame", {
   expect_s3_class(s, "data.frame")
   expect_true("layer" %in% names(s))
 })
+
+
+test_that("create_basis_stack handles single-layer input", {
+  r1 <- terra::rast(nrows = 10, ncols = 10, xmin = 0, xmax = 1,
+                    ymin = 0, ymax = 1)
+  terra::values(r1) <- seq(1, 100)
+  stack <- create_basis_stack(list(only = r1), rescale = TRUE)
+  expect_equal(terra::nlyr(stack), 1)
+  expect_equal(names(stack), "only")
+  vals <- terra::values(stack)[, 1]
+  expect_true(min(vals, na.rm = TRUE) >= 0)
+  expect_true(max(vals, na.rm = TRUE) <= 1)
+})
+
+
+test_that("check_basis_correlations returns NULL for single layer (no pairs to compare)", {
+  # The function skips correlation computation when n < 2; single-layer stacks
+  # have no pairs so it returns invisible(NULL).
+  r1 <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                    ymin = 0, ymax = 1)
+  terra::values(r1) <- runif(25)
+  stack <- create_basis_stack(list(a = r1), rescale = FALSE)
+  cm <- check_basis_correlations(stack)
+  expect_null(cm)
+})
+
+
+test_that("create_basis_stack handles NaN/Inf by preserving NA mask", {
+  r1 <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                    ymin = 0, ymax = 1)
+  v <- 1:25
+  v[3] <- NA
+  terra::values(r1) <- v
+
+  stack <- create_basis_stack(list(x = r1), rescale = TRUE)
+  vals  <- terra::values(stack)[, 1]
+  # NA in input should propagate to output
+  expect_true(is.na(vals[3]))
+  # Non-NA values should be in [0, 1]
+  expect_true(all(vals[-3] >= 0 & vals[-3] <= 1, na.rm = TRUE))
+})
