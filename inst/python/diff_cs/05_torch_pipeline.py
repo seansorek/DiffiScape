@@ -36,6 +36,26 @@ from scipy.sparse.linalg import spsolve
 
 
 # ---------------------------------------------------------------------------
+# Default numerical constants
+#
+# Single source of truth for the resistance clamp range and the circuit-solver
+# tolerance. Previously these literals (1.0 / 5000.0 / 5.0 / 1e-6) were repeated
+# as default arguments across every net class and run_* entry point, so a change
+# meant hunting down five copies. Functions still accept overrides — they just
+# default to these names now.
+# ---------------------------------------------------------------------------
+
+# Differentiable resistance clamp: R is constrained to [R_MIN, R_MAX] via a
+# double-softplus in log-space (see _softplus_clamp and the net forward passes).
+DEFAULT_R_MIN = 1.0        # minimum resistance (Ω) — open/low-cost habitat
+DEFAULT_R_MAX = 5000.0     # maximum resistance (Ω) — near-impassable
+DEFAULT_CLAMP_BETA = 5.0   # softplus sharpness for the clamp
+
+# Conjugate-gradient relative tolerance for the circuit solve.
+DEFAULT_CG_TOL = 1e-6
+
+
+# ---------------------------------------------------------------------------
 # GPU support
 # ---------------------------------------------------------------------------
 
@@ -95,7 +115,7 @@ def _get_diff_omniscape_module():
 # Helpers
 # ===========================================================================
 
-def _softplus_clamp(R_raw, R_min=1.0, R_max=5000.0, beta=5.0):
+def _softplus_clamp(R_raw, R_min=DEFAULT_R_MIN, R_max=DEFAULT_R_MAX, beta=DEFAULT_CLAMP_BETA):
     """Double-softplus differentiable clamp to [R_min, R_max].
     Matches 02_resistance_surface.R exactly."""
     R_lo = R_min + F.softplus(R_raw - R_min, beta=beta)
@@ -672,7 +692,7 @@ class ResistanceNet(nn.Module):
     """
 
     def __init__(self, n_features=4, hidden=32, n_layers=2,
-                 R_min=1.0, R_max=5000.0, beta=5.0):
+                 R_min=DEFAULT_R_MIN, R_max=DEFAULT_R_MAX, beta=DEFAULT_CLAMP_BETA):
         super().__init__()
         self.R_min = R_min
         self.R_max = R_max
@@ -781,7 +801,7 @@ class ConvResistanceNet(nn.Module):
 
     def __init__(self, n_features=4, conv_channels=16, n_conv_layers=3,
                  conv_kernel_size=3, hidden=16, n_mlp_layers=1,
-                 R_min=1.0, R_max=5000.0, beta=5.0,
+                 R_min=DEFAULT_R_MIN, R_max=DEFAULT_R_MAX, beta=DEFAULT_CLAMP_BETA,
                  dropout=0.0, use_dilated=True,
                  intensity_hidden=0):
         super().__init__()
@@ -958,7 +978,7 @@ class IRLResistanceNet(nn.Module):
     """
 
     def __init__(self, n_features=4, hidden=32, n_layers=2,
-                 R_min=1.0, R_max=5000.0, beta=5.0,
+                 R_min=DEFAULT_R_MIN, R_max=DEFAULT_R_MAX, beta=DEFAULT_CLAMP_BETA,
                  vi_beta=1.0, gamma_d=0.9, n_value_iter=60,
                  value_scale_init=1.0):
         super().__init__()
@@ -1272,7 +1292,7 @@ class SplineResistanceNet(nn.Module):
 
     def __init__(self, n_features=5, n_knots=10, degree=3,
                  include_interactions=True,
-                 R_min=1.0, R_max=5000.0, beta=5.0,
+                 R_min=DEFAULT_R_MIN, R_max=DEFAULT_R_MAX, beta=DEFAULT_CLAMP_BETA,
                  lambda_init_marginal=0.0, lambda_init_interaction=2.0,
                  lambda_min=0.0,
                  intensity_spline=False, intensity_n_knots=5,
@@ -2458,7 +2478,7 @@ def run_torch_optimization(
     n_epochs=300,
     patience=30,
     grad_clip=10.0,
-    cg_tol=1e-6,
+    cg_tol=DEFAULT_CG_TOL,
     warm_start_theta=None,       # [r_0, z_1..z_4] from log-linear optimization
     reg_mean=1.0,                # Penalty weight: anchor mean(log_R) near baseline
     reg_var=0.1,                 # Penalty weight: encourage variance in log_R
@@ -3325,7 +3345,7 @@ def run_langevin_sampling(
     lambda_min=0.1,
     # Misc
     grad_clip=100.0,             # Per-param gradient clipping (safety)
-    cg_tol=1e-6,
+    cg_tol=DEFAULT_CG_TOL,
     seed=42,
     verbose=True,
     output_dir=None,
@@ -4234,7 +4254,7 @@ def run_hmc_sampling(
     lambda_min=0.1,
     # Misc
     grad_clip=100.0,
-    cg_tol=1e-6,
+    cg_tol=DEFAULT_CG_TOL,
     seed=42,
     verbose=True,
     output_dir=None,
@@ -4922,7 +4942,7 @@ def run_advi(
     include_interactions=True,
     lambda_min=0.1,
     # Misc
-    cg_tol=1e-6,
+    cg_tol=DEFAULT_CG_TOL,
     seed=42,
     verbose=True,
     output_dir=None,
