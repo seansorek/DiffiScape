@@ -243,3 +243,61 @@ test_that("posterior_sample warns when covariance is not positive-definite", {
     "not positive-definite"
   )
 })
+
+
+# ---------------------------------------------------------------------------
+# posterior_sample — plug-in approximation warnings (issue #17)
+# ---------------------------------------------------------------------------
+
+.make_minimal_posterior_args <- function() {
+  list(
+    laplace     = list(mode       = c(r_0 = 0),
+                       covariance = matrix(0.01, 1, 1)),
+    opt_result  = list(bounds       = list(r_0 = c(-2, 2)),
+                       distribution = "nb"),
+    basis_stack = terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1),
+    obs_points  = data.frame(x = 0, y = 0)
+  )
+}
+
+test_that("posterior_sample warns on non-zero inner convergence", {
+  skip_on_cran()
+  args <- .make_minimal_posterior_args()
+  local_mocked_bindings(
+    evaluate_full_model = function(...) list(
+      loglik           = -100,
+      intensity_params = c(alpha = 1),
+      intensity_se     = c(alpha = 0.1),
+      convergence      = 1L
+    ),
+    params_vector_to_list = function(theta, n_basis) list(r_0 = theta[1]),
+    .package = "DiffiScape"
+  )
+  expect_warning(
+    posterior_sample(args$laplace, args$opt_result,
+                     args$basis_stack, args$obs_points,
+                     n_draws = 1L, n_inner = 1L),
+    "did not converge"
+  )
+})
+
+test_that("posterior_sample warns when inner standard errors are NA", {
+  skip_on_cran()
+  args <- .make_minimal_posterior_args()
+  local_mocked_bindings(
+    evaluate_full_model = function(...) list(
+      loglik           = -100,
+      intensity_params = c(alpha = 1),
+      intensity_se     = c(alpha = NA_real_),
+      convergence      = 0L
+    ),
+    params_vector_to_list = function(theta, n_basis) list(r_0 = theta[1]),
+    .package = "DiffiScape"
+  )
+  expect_warning(
+    posterior_sample(args$laplace, args$opt_result,
+                     args$basis_stack, args$obs_points,
+                     n_draws = 1L, n_inner = 1L),
+    "standard errors are NA"
+  )
+})

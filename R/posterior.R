@@ -232,6 +232,17 @@ laplace_resistance <- function(opt_result,
 #' @param link A [resistance_link] object (default [link_exp()]).
 #' @param family An [intensity_family] object, or `NULL`.
 #' @param seed Random seed.
+#' @details
+#' **Approximation note.** The joint posterior produced by this function is a
+#' plug-in (asymptotic) approximation, *not* a full Bayesian posterior.  The
+#' outer resistance draw comes from the Laplace approximation to the PPP
+#' log-likelihood; the inner intensity draw is an independent normal centred on
+#' the conditional MLE with frequentist asymptotic standard errors.  Because the
+#' two stages are sampled independently, the correlation between the inner
+#' standard errors and the outer \eqn{\theta} draw is ignored, which can cause
+#' joint credible intervals -- especially for connectivity parameters such as
+#' \eqn{\gamma} -- to be too narrow.  Interpret credible intervals as approximate
+#' guides rather than exact probability statements.
 #' @return A data.frame with posterior samples (one row per draw).
 #' @export
 posterior_sample <- function(laplace,
@@ -320,11 +331,22 @@ posterior_sample <- function(laplace,
 
     if (is.null(result)) next
 
+    if (!is.null(result$convergence) && result$convergence != 0L) {
+      warning(sprintf(
+        "posterior draw %d: inner MLE did not converge (convergence = %d); intensity estimates may be unreliable.",
+        d, result$convergence
+      ), call. = FALSE)
+    }
+
     # inner-loop draws from asymptotic Normal
     inner_mu <- result$intensity_params
     inner_se <- result$intensity_se
 
     if (any(is.na(inner_se))) {
+      warning(sprintf(
+        "posterior draw %d: some inner standard errors are NA; using point estimate only.",
+        d
+      ), call. = FALSE)
       inner_draws <- matrix(inner_mu, nrow = 1, ncol = length(inner_mu))
       colnames(inner_draws) <- names(inner_mu)
     } else {
