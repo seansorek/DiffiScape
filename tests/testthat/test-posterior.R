@@ -182,3 +182,64 @@ test_that("laplace_resistance warns when refit=TRUE but basis_stack/obs_points a
     regexp = "falling back to surrogate-mean Hessian"
   )
 })
+
+
+# ---------------------------------------------------------------------------
+# nearPD fallback warnings (issue #16)
+# ---------------------------------------------------------------------------
+
+test_that("laplace_resistance warns when Hessian is not positive-definite", {
+  skip_on_cran()
+  skip_if_not_installed("numDeriv")
+  opt <- .make_surrogate_opt_result()
+  # H = -[[1,1],[1,1]] (rank-1 NSD) => neg_H = [[1,1],[1,1]] (PSD, singular)
+  # solve(neg_H) fails; nearPD can handle PSD input
+  local_mocked_bindings(
+    hessian = function(func, x, ...) matrix(c(-1, -1, -1, -1), 2, 2),
+    .package = "numDeriv"
+  )
+  expect_warning(
+    suppressMessages(laplace_resistance(opt, refit = FALSE)),
+    regexp = "not positive-definite"
+  )
+})
+
+test_that("laplace_resistance nearPD warning mentions check_basis_correlations", {
+  skip_on_cran()
+  skip_if_not_installed("numDeriv")
+  opt <- .make_surrogate_opt_result()
+  local_mocked_bindings(
+    hessian = function(func, x, ...) matrix(c(-1, -1, -1, -1), 2, 2),
+    .package = "numDeriv"
+  )
+  expect_warning(
+    suppressMessages(laplace_resistance(opt, refit = FALSE)),
+    regexp = "check_basis_correlations"
+  )
+})
+
+test_that("posterior_sample warns when covariance is not positive-definite", {
+  skip_on_cran()
+  basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  laplace     <- list(mode       = c(r_0 = 0, z_1 = 0),
+                      # PSD but singular (rank-1): chol fails, nearPD can handle it
+                      covariance = matrix(c(1, 1, 1, 1), 2, 2))
+  opt_result  <- list(bounds       = list(r_0 = c(-2, 2), z_1 = c(-3, 3)),
+                      distribution = "nb")
+  obs_points  <- data.frame(x = 0, y = 0)
+  local_mocked_bindings(
+    evaluate_full_model = function(...) list(
+      loglik           = -100,
+      intensity_params = c(alpha = 1),
+      intensity_se     = c(alpha = 0.1),
+      convergence      = 0L
+    ),
+    params_vector_to_list = function(theta, n_basis) list(r_0 = theta[1]),
+    .package = "DiffiScape"
+  )
+  expect_warning(
+    posterior_sample(laplace, opt_result, basis_stack, obs_points,
+                     n_draws = 1L, n_inner = 1L),
+    "not positive-definite"
+  )
+})
