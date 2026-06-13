@@ -431,7 +431,7 @@ loo_cv_surrogate <- function(opt_result) {
   list(
     observed    = y,
     predicted   = loo_pred,
-    residuals   = loo_pred - y,
+    residuals   = y - loo_pred,
     rmse        = rmse,
     r_squared   = r2,
     coverage_95 = coverage
