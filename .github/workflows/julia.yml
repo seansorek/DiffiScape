@@ -30,9 +30,9 @@ jobs:
 
       - uses: julia-actions/cache@v2
 
-      - name: Instantiate project
+      - name: Install Enzyme into project environment
         working-directory: inst/julia/DiffiScape
-        run: julia --project=. -e 'import Pkg; Pkg.instantiate()'
+        run: julia --project=. -e 'import Pkg; Pkg.add("Enzyme")'
 
       - name: Run tests with coverage
         working-directory: inst/julia/DiffiScape
