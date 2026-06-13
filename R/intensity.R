@@ -49,7 +49,10 @@
 #'   \item{`covariate_type`}{Character. `"smooth"` (penalised spline term,
 #'     default) or `"linear"` for fixed-slope covariate effects.}
 #'   \item{`include_spatial_re`}{Logical. Add a 2-D spatial random effect
-#'     `te(x, y)` to absorb unmeasured spatial structure. Default: `FALSE`.}
+#'     `te(x, y)` to absorb unmeasured spatial structure. Default: `FALSE`.
+#'     **Warning:** when connectivity is spatially smooth, `te(x, y)` competes
+#'     with the connectivity term (concurvity), potentially biasing gamma toward
+#'     zero. Check `mgcv::concurvity()` after fitting.}
 #'   \item{`spatial_bs`}{Character. Marginal basis for `te(x, y)`, passed
 #'     directly to `mgcv`. Default: `"cr"` (cubic regression spline).}
 #'   \item{`spatial_tensor`}{Logical. Use a tensor-product `te(x, y)` rather
@@ -267,27 +270,10 @@ compute_intensity <- function(z, alpha, gamma,
 #' Inner-loop MLE for `alpha`, `gamma`, optional covariate betas, and NB
 #' dispersion.  Uses [stats::optim()] with `"L-BFGS-B"`.
 #'
-#' @param connectivity_at_obs Numeric vector of raw connectivity at
-#'   observation locations.
-#' @param connectivity_raster A [terra::SpatRaster] for integration.
-#' @param obs_coords Data.frame / matrix with `x, y`.
-#' @param covariates_obs Named list of covariate vectors at observations
-#'   (each 0–1 scaled; `NULL` to omit).
-#' @param covariates_rasters Named list of [terra::SpatRaster] for
-#'   integration-grid covariates (`NULL` to omit).
-#' @param residualise Logical; residualise connectivity against
-#'   covariates before fitting (default `FALSE`).
+#' @inheritParams fit_intensity_nb
 #' @param config List from [default_intensity_config()].
-#' @param family An [intensity_family] object.  If `NULL` (default),
-#'   uses [family_negbin()] for backward compatibility.
-#' @param available_connectivity Numeric vector of raw connectivity at
-#'   available/background locations.  When non-`NULL`, bypasses raster
-#'   quadrature and uses these values with unit weights instead.
-#' @param available_covariates Named list of covariate vectors at available
-#'   locations.  Used together with `available_connectivity`.
-#' @return A list with `estimates`, `se`, `loglik`, `convergence`,
-#'   `c_scale`, `log_conn_mean`, `log_conn_sd`,
-#'   `residualisation_info`.
+#' @return A list matching the interface of [fit_intensity_nb()], plus
+#'   `gam_model`, `gam_edf`, `gam_deviance_explained`, `gam_aic`.
 #' @export
 fit_intensity_nb <- function(connectivity_at_obs,
                              connectivity_raster,
@@ -669,6 +655,31 @@ fit_intensity_gam <- function(connectivity_at_obs,
   )
 
   smry <- summary(gam_fit)
+
+  # ---- concurvity check when spatial RE is included -----------------------
+  if (config$include_spatial_re) {
+    conc <- tryCatch(
+      mgcv::concurvity(gam_fit, full = FALSE),
+      error = function(e) NULL
+    )
+    if (!is.null(conc)) {
+      conn_cols <- grep("connectivity", colnames(conc), value = TRUE)
+      if (length(conn_cols) > 0) {
+        worst_conn <- max(conc["worst", conn_cols], na.rm = TRUE)
+        if (is.finite(worst_conn) && worst_conn > 0.8) {
+          warning(
+            sprintf(
+              "High concurvity detected for the connectivity smooth (worst-case = %.3f > 0.8). ",
+              worst_conn
+            ),
+            "The spatial RE te(x, y) may be absorbing the connectivity signal, biasing gamma toward zero. ",
+            "Verify with mgcv::concurvity() and consider removing include_spatial_re or residualising connectivity first.",
+            call. = FALSE
+          )
+        }
+      }
+    }
+  }
 
   # ---- extract effective alpha / gamma ------------------------------------
   # Approximate linear equivalents from the parametric / smooth terms
