@@ -98,6 +98,22 @@ class TestIRLResistanceNet:
         assert deltas[-1] < 1e-3
         assert deltas[-1] < 0.05 * deltas[0]
 
+    def test_warm_start_sets_reward_skip(self):
+        """warm_start seeds the reward skip (sign-flipped) and offset from
+        log-linear params [r_0, z_1..z_K]."""
+        basis_valid, valid, grid, (nr, nc, nf) = _grid(seed=5)
+        net = tp.IRLResistanceNet(nf, hidden=8, n_layers=2, n_value_iter=20).double()
+        theta = np.array([2.5] + [0.3 * (k + 1) for k in range(nf)])
+        net.warm_start(theta)
+        with torch.no_grad():
+            # offset takes r_0; skip weights take -z (reward = -cost).
+            assert abs(float(net.offset) - 2.5) < 1e-9
+            np.testing.assert_allclose(
+                net.skip.weight.detach().numpy().ravel(), -theta[1:], atol=1e-9)
+            # forward still produces finite, positive resistance afterwards.
+            R, _ = net.forward_with_log_R(grid, valid, torch.tensor(basis_valid))
+        assert torch.isfinite(R).all() and (R > 0).all()
+
     def test_invalid_cells_have_zero_value(self):
         basis_valid, valid, grid, (nr, nc, nf) = _grid(seed=3)
         net = tp.IRLResistanceNet(nf, hidden=8, n_layers=2, n_value_iter=30).double()

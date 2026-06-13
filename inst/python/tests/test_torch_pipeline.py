@@ -23,19 +23,33 @@ def _load(name, filename):
 tp = _load("torch_pipeline", "05_torch_pipeline.py")
 
 
+def _grid(n_rows=8, n_cols=8, n_feat=3, seed=0):
+    """Build (basis_grid, valid_mask, basis_valid) for grid-context nets."""
+    rng = np.random.default_rng(seed)
+    n_cells = n_rows * n_cols
+    valid = np.ones(n_cells, dtype=bool)
+    basis_valid = rng.standard_normal((int(valid.sum()), n_feat))
+    grid = np.zeros((n_feat, n_cells))
+    grid[:, valid] = basis_valid.T
+    grid = grid.reshape(1, n_feat, n_rows, n_cols)
+    return (torch.tensor(grid, dtype=torch.float64),
+            valid,
+            torch.tensor(basis_valid, dtype=torch.float64))
+
+
 class TestResistanceNet:
     def test_forward_shape(self):
-        net = tp.ResistanceNet(n_covariates=3)
+        net = tp.ResistanceNet(n_features=3)
         out = net(torch.randn(25, 3))
         assert out.shape == (25,)
 
     def test_output_positive(self):
-        net = tp.ResistanceNet(n_covariates=3)
+        net = tp.ResistanceNet(n_features=3)
         out = net(torch.randn(25, 3))
         assert (out > 0).all()
 
     def test_gradient_flows(self):
-        net = tp.ResistanceNet(n_covariates=2)
+        net = tp.ResistanceNet(n_features=2)
         out = net(torch.randn(9, 2))
         out.sum().backward()
         assert all(p.grad is not None for p in net.parameters())
@@ -43,12 +57,22 @@ class TestResistanceNet:
 
 class TestConvResistanceNet:
     def test_forward_shape(self):
-        net = tp.ConvResistanceNet(n_covariates=3)
-        x = torch.randn(1, 3, 7, 7)
-        out = net(x)
-        assert out.shape == (1, 1, 7, 7)
+        net = tp.ConvResistanceNet(n_features=3).double()
+        grid, valid, basis_valid = _grid(n_feat=3)
+        out = net(grid, valid, basis_valid)
+        # Returns one resistance value per valid pixel.
+        assert out.shape == (int(valid.sum()),)
 
     def test_output_positive(self):
-        net = tp.ConvResistanceNet(n_covariates=3)
-        out = net(torch.randn(1, 3, 7, 7))
+        net = tp.ConvResistanceNet(n_features=3).double()
+        grid, valid, basis_valid = _grid(n_feat=3)
+        out = net(grid, valid, basis_valid)
         assert (out > 0).all()
+
+    def test_gradient_flows(self):
+        net = tp.ConvResistanceNet(n_features=2).double()
+        grid, valid, basis_valid = _grid(n_feat=2)
+        out = net(grid, valid, basis_valid)
+        out.sum().backward()
+        assert all(p.grad is not None for p in net.parameters()
+                   if p.requires_grad)
