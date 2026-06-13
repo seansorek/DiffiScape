@@ -165,10 +165,24 @@ laplace_resistance <- function(opt_result,
   neg_H <- -H
 
   # try Cholesky; fall back to nearPD
- cov_mat <- tryCatch({
+  cov_mat <- tryCatch({
     solve(neg_H)
   }, error = function(e) {
-    message("  Hessian not positive-definite, using nearPD correction")
+    param_names <- names(opt_result$bounds)
+    flat_idx    <- which(diag(neg_H) <= 0)
+    param_note  <- if (length(flat_idx) > 0)
+      paste0("; near-zero curvature in: ",
+             paste(param_names[flat_idx], collapse = ", "))
+    else ""
+    warning(
+      "Hessian is not positive-definite: the MAP is not a proper local maximum",
+      param_note, ". ",
+      "This signals non-identifiability; basis layers may be highly correlated. ",
+      "The Laplace approximation is unreliable and credible intervals may be invalid. ",
+      "Run check_basis_correlations() and consider reducing K or adding informative priors ",
+      "before trusting these results.",
+      call. = FALSE
+    )
     pd <- Matrix::nearPD(neg_H, ensureSymmetry = TRUE)
     solve(as.matrix(pd$mat))
   })
@@ -249,6 +263,19 @@ posterior_sample <- function(laplace,
 
   # Cholesky for sampling
   L <- tryCatch(chol(sigma), error = function(e) {
+    small_idx  <- which(diag(sigma) < .Machine$double.eps * max(diag(sigma)))
+    param_note <- if (length(small_idx) > 0)
+      paste0("; near-zero variance in: ",
+             paste(pnames[small_idx], collapse = ", "))
+    else ""
+    warning(
+      "Posterior covariance is not positive-definite",
+      param_note, ". ",
+      "This signals non-identifiability; basis layers may be highly correlated. ",
+      "Samples are drawn from a nearPD approximation and credible intervals may be invalid. ",
+      "Run check_basis_correlations() and consider reducing K or adding informative priors.",
+      call. = FALSE
+    )
     pd <- Matrix::nearPD(sigma, ensureSymmetry = TRUE)
     chol(as.matrix(pd$mat))
   })
