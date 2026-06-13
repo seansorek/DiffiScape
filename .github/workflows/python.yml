@@ -3,20 +3,47 @@ name: Python CI
 on:
   push:
     branches: [main, master]
+    paths:
+      - 'inst/python/**'
+      - '.github/workflows/python.yml'
   pull_request:
     branches: [main, master]
+    paths:
+      - 'inst/python/**'
+      - '.github/workflows/python.yml'
 
 jobs:
-  test:
+  lint:
+    name: Lint (ruff)
     runs-on: ubuntu-latest
-    name: Python 3.11
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff check
+        run: ruff check inst/python/
+        continue-on-error: true
+
+  test:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ matrix.python-version }}
           cache: 'pip'
           cache-dependency-path: inst/python/diff_cs/requirements.txt
 
@@ -35,6 +62,7 @@ jobs:
             -v
 
       - uses: codecov/codecov-action@v4
+        if: matrix.python-version == '3.11'
         with:
           files: inst/python/coverage.xml
           flags: python

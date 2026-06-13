@@ -1,11 +1,11 @@
 name = "DiffiScape"
-uuid = "d1ff1-5ca-pe00-0000-000000000001"
+uuid = "63833e1e-80ea-446a-a028-5045d733c8f9"
 version = "0.1.0"
 
 [deps]
-Circuitscape = "00cb2430-530b-11e9-35a1-e52950c89647"
+Circuitscape = "2b7a1792-8151-5239-925d-e2b8fdfa3201"
 Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
-Omniscape = "a38d37ab-3fee-4a3d-8067-e8b90a476944"
+Omniscape = "a38d70fc-99f5-11e9-1e3d-cbca093024c3"
 
 [compat]
 julia = ">= 1.9"
