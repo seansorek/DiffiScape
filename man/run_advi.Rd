@@ -45,10 +45,6 @@ stack used for the MAP run).}
 
 \item{n_samples}{Integer; number of posterior draws.}
 
-\item{lambda_min}{Numeric; floor on smoothing parameters.}
-
-\item{cg_tol}{Numeric; CG solver tolerance.}
-
 \item{max_iter}{Integer; ADVI iterations.}
 
 \item{lr}{Numeric; ELBO Adam learning rate.}
@@ -67,6 +63,10 @@ knobs (must match the MAP run).}
 \item{reg_mean, log_R_baseline, penalty_scale}{Prior knobs.}
 
 \item{n_knots, spline_degree, include_interactions}{Spline model knobs.}
+
+\item{lambda_min}{Numeric; floor on smoothing parameters.}
+
+\item{cg_tol}{Numeric; CG solver tolerance.}
 
 \item{seed}{Integer.}
 

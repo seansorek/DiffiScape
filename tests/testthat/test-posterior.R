@@ -130,7 +130,7 @@ test_that("laplace_resistance returns correct structure via surrogate path", {
   skip_if_not_installed("numDeriv")
   opt_result <- .make_surrogate_opt_result()
 
-  lap <- laplace_resistance(opt_result)
+  lap <- suppressWarnings(laplace_resistance(opt_result))
 
   expect_named(lap, c("mode", "covariance", "precision", "std_error"))
   expect_length(lap$mode, 2)
@@ -145,7 +145,7 @@ test_that("laplace_resistance mode matches best_params", {
   skip_if_not_installed("numDeriv")
   opt_result <- .make_surrogate_opt_result(seed = 2)
 
-  lap  <- laplace_resistance(opt_result)
+  lap  <- suppressWarnings(laplace_resistance(opt_result))
   best <- unlist(opt_result$best_params)
 
   expect_equal(lap$mode, unname(best), tolerance = 1e-10)
@@ -157,7 +157,7 @@ test_that("laplace_resistance std_error is non-negative", {
   skip_if_not_installed("numDeriv")
   opt_result <- .make_surrogate_opt_result(seed = 3)
 
-  lap <- laplace_resistance(opt_result)
+  lap <- suppressWarnings(laplace_resistance(opt_result))
   expect_true(all(lap$std_error >= 0))
 })
 
@@ -167,6 +167,18 @@ test_that("laplace_resistance covariance is symmetric", {
   skip_if_not_installed("numDeriv")
   opt_result <- .make_surrogate_opt_result(seed = 4)
 
-  lap <- laplace_resistance(opt_result)
+  lap <- suppressWarnings(laplace_resistance(opt_result))
   expect_equal(lap$covariance, t(lap$covariance), tolerance = 1e-10)
+})
+
+
+test_that("laplace_resistance warns when refit=TRUE but basis_stack/obs_points absent", {
+  skip_on_cran()
+  skip_if_not_installed("numDeriv")
+  opt_result <- .make_surrogate_opt_result(seed = 5)
+
+  expect_warning(
+    laplace_resistance(opt_result),
+    regexp = "falling back to surrogate-mean Hessian"
+  )
 })

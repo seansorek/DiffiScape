@@ -8,7 +8,7 @@ laplace_resistance(
   opt_result,
   basis_stack = NULL,
   obs_points = NULL,
-  refit = FALSE,
+  refit = TRUE,
   step = 0.001,
   omniscape_settings = list(),
   intensity_config = default_intensity_config(),
@@ -30,9 +30,14 @@ when \code{refit = TRUE} or when no surrogate is available).}
 
 \item{obs_points}{Data.frame with \verb{x, y} (required when \code{refit = TRUE}).}
 
-\item{refit}{Logical; use \code{numDeriv::hessian()} on the full model
-instead of the GP surrogate.  Automatically set to \code{TRUE} when
-\code{opt_result} has no \verb{$surrogate} (i.e., from
+\item{refit}{Logical; when \code{TRUE} (the default) the Hessian is computed
+on the true PPP log-likelihood via the Julia solver, which requires
+\code{basis_stack} and \code{obs_points}.  When both of those are \code{NULL} and a
+GP surrogate is available, a warning is emitted and the function falls
+back to the surrogate-mean Hessian automatically so that existing
+single-argument calls remain valid.  Set \code{refit = FALSE} explicitly to
+suppress the warning and force the surrogate path.  Always set to
+\code{TRUE} automatically when \code{opt_result} has no \verb{$surrogate} (i.e., from
 \code{\link[=optimize_resistance_enzyme]{optimize_resistance_enzyme()}}).}
 
 \item{step}{Finite-difference step size for Hessian computation.}
@@ -67,6 +72,8 @@ A list with \code{mode}, \code{covariance}, \code{precision}, \code{std_error}.
 }
 \description{
 Computes a Gaussian approximation to the marginal posterior of the
-resistance parameters by evaluating (or re-using) the GP surrogate
-at the MAP estimate.
+resistance parameters by numerically differentiating the true PPP
+log-likelihood at the MAP estimate (default).  When \code{basis_stack} and
+\code{obs_points} are not supplied, the function falls back to differentiating
+the GP surrogate's predicted-mean surface and emits a warning.
 }

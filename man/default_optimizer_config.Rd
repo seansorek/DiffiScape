@@ -17,71 +17,71 @@ argument of \code{\link[=optimize_resistance]{optimize_resistance()}} or \code{\
 \section{Sampling budget}{
 
 \describe{
-  \item{\code{n_init}}{Integer. Latin Hypercube Sampling design points used for
-    the initial space-filling exploration. Default: \code{20}.}
-  \item{\code{n_iter}}{Integer. Surrogate-guided (GP + acquisition) iterations
-    after the initial LHS phase. Default: \code{50}.}
-  \item{\code{seed}}{Integer. RNG seed for reproducibility. Default: \code{42}.}
+\item{\code{n_init}}{Integer. Latin Hypercube Sampling design points used for
+the initial space-filling exploration. Default: \code{20}.}
+\item{\code{n_iter}}{Integer. Surrogate-guided (GP + acquisition) iterations
+after the initial LHS phase. Default: \code{50}.}
+\item{\code{seed}}{Integer. RNG seed for reproducibility. Default: \code{42}.}
 }
 }
 
 \section{Acquisition function}{
 
 \describe{
-  \item{\code{acquisition}}{Character. \code{"TS"} (Thompson Sampling, default) or
-    \code{"EI"} (Expected Improvement).}
-  \item{\code{ts_min_sd}}{Numeric. Floor on GP predictive SD for Thompson
-    Sampling, preventing numerical collapse. Default: \code{1e-6}.}
-  \item{\code{ei_xi_scale_factor}}{Numeric. EI exploration scaling — the initial
-    xi is \code{(max(y) - min(y)) * ei_xi_scale_factor}. Default: \code{0.1}.}
-  \item{\code{ei_xi_min}}{Numeric. Minimum xi for EI (exploitation floor).
-    Default: \code{0.02}.}
-  \item{\code{ei_decay_rate_divisor}}{Numeric. Controls the xi decay rate;
-    \code{decay_rate = n_iter / ei_decay_rate_divisor}. Default: \code{5}.}
+\item{\code{acquisition}}{Character. \code{"TS"} (Thompson Sampling, default) or
+\code{"EI"} (Expected Improvement).}
+\item{\code{ts_min_sd}}{Numeric. Floor on GP predictive SD for Thompson
+Sampling, preventing numerical collapse. Default: \code{1e-6}.}
+\item{\code{ei_xi_scale_factor}}{Numeric. EI exploration scaling — the initial
+xi is \code{(max(y) - min(y)) * ei_xi_scale_factor}. Default: \code{0.1}.}
+\item{\code{ei_xi_min}}{Numeric. Minimum xi for EI (exploitation floor).
+Default: \code{0.02}.}
+\item{\code{ei_decay_rate_divisor}}{Numeric. Controls the xi decay rate;
+\code{decay_rate = n_iter / ei_decay_rate_divisor}. Default: \code{5}.}
 }
 }
 
 \section{Adaptive local search}{
 
 \describe{
-  \item{\code{sigma_initial}}{Numeric. Initial neighbourhood radius (in
-    standardised parameter space). Default: \code{0.15}.}
-  \item{\code{sigma_min}}{Numeric. Minimum neighbourhood radius. Default: \code{0.02}.}
-  \item{\code{stall_threshold}}{Integer. Iterations without improvement before
-    sigma is shrunk. Default: \code{3}.}
-  \item{\code{decay_factor}}{Numeric. Multiplicative sigma reduction on stall.
-    Default: \code{0.7}.}
-  \item{\code{local_frac_initial}}{Numeric. Initial fraction of candidates drawn
-    from the local neighbourhood. Default: \code{0.5}.}
-  \item{\code{local_frac_max}}{Numeric. Maximum local fraction. Default: \code{0.8}.}
-  \item{\code{local_frac_increment}}{Numeric. Per-stall increment to the local
-    fraction. Default: \code{0.05}.}
-  \item{\code{restart_threshold}}{Integer. Stall count that triggers a hard
-    restart from the best parameters found so far. Default: \code{5}.}
-  \item{\code{n_candidates}}{Integer. Candidate points sampled per iteration.
-    Default: \code{3000}.}
+\item{\code{sigma_initial}}{Numeric. Initial neighbourhood radius (in
+standardised parameter space). Default: \code{0.15}.}
+\item{\code{sigma_min}}{Numeric. Minimum neighbourhood radius. Default: \code{0.02}.}
+\item{\code{stall_threshold}}{Integer. Iterations without improvement before
+sigma is shrunk. Default: \code{3}.}
+\item{\code{decay_factor}}{Numeric. Multiplicative sigma reduction on stall.
+Default: \code{0.7}.}
+\item{\code{local_frac_initial}}{Numeric. Initial fraction of candidates drawn
+from the local neighbourhood. Default: \code{0.5}.}
+\item{\code{local_frac_max}}{Numeric. Maximum local fraction. Default: \code{0.8}.}
+\item{\code{local_frac_increment}}{Numeric. Per-stall increment to the local
+fraction. Default: \code{0.05}.}
+\item{\code{restart_threshold}}{Integer. Stall count that triggers a hard
+restart from the best parameters found so far. Default: \code{5}.}
+\item{\code{n_candidates}}{Integer. Candidate points sampled per iteration.
+Default: \code{3000}.}
 }
 }
 
 \section{Likelihood model}{
 
 \describe{
-  \item{\code{distribution}}{Character. Likelihood for the inner MLE step:
-    \code{"negbin"} (negative-binomial, default) or \code{"gam"} (GAM via mgcv).}
-  \item{\code{family}}{An \link{intensity_family} object, or \code{NULL} (inferred from
-    \code{distribution}). Overrides \code{distribution} when set.}
-  \item{\code{resistance_link}}{A \link{resistance_link} object, or \code{NULL} (uses
-    \code{\link[=link_exp]{link_exp()}}). Controls how raw parameters map to resistance values.}
+\item{\code{distribution}}{Character. Likelihood for the inner MLE step:
+\code{"negbin"} (negative-binomial, default) or \code{"gam"} (GAM via mgcv).}
+\item{\code{family}}{An \link{intensity_family} object, or \code{NULL} (inferred from
+\code{distribution}). Overrides \code{distribution} when set.}
+\item{\code{resistance_link}}{A \link{resistance_link} object, or \code{NULL} (uses
+\code{\link[=link_exp]{link_exp()}}). Controls how raw parameters map to resistance values.}
 }
 }
 
 \section{Connectivity solver}{
 
 \describe{
-  \item{\code{omniscape}}{Named list passed to the Omniscape solver:
-    \code{radius} (focal radius in cells, default \code{13}),
-    \code{block_size} (focal block size, default \code{5}),
-    \code{cleanup} (remove temp files after each run, default \code{TRUE}).}
+\item{\code{omniscape}}{Named list passed to the Omniscape solver:
+\code{radius} (focal radius in cells, default \code{13}),
+\code{block_size} (focal block size, default \code{5}),
+\code{cleanup} (remove temp files after each run, default \code{TRUE}).}
 }
 }
 

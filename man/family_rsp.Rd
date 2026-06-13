@@ -18,7 +18,8 @@ An \link{intensity_family} object.
 Logistic regression with a large background weight, implementing the
 Fithian & Hastie (2013) "infinite weight" trick.  Estimates a selection
 probability surface.  Includes baseline alpha (log-odds intercept).
-
+}
+\details{
 The negative log-likelihood is:
 \deqn{-\ell = -\left(\sum_i \log \sigma(f_i) +
   W \sum_j w_j \log(1 - \sigma(f_j))\right)}

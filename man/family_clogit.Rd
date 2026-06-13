@@ -22,7 +22,8 @@ An \link{intensity_family} object.
 Conditional logistic regression for paired used-available data, optionally
 stratified (one used location per stratum, any number of available).
 When strata are omitted, reduces to a global \code{\link[=family_rsf]{family_rsf()}}.
-
+}
+\details{
 Requires explicitly-provided available locations via the \code{available_points}
 argument of \code{\link[=optimize_resistance]{optimize_resistance()}}, \code{\link[=ds_optimize]{ds_optimize()}}, or
 \code{\link[=fit_intensity_selection]{fit_intensity_selection()}}.

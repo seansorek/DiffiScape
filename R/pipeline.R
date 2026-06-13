@@ -384,8 +384,7 @@ ds_posterior <- function(opt_result,
                          link                 = link_exp(),
                          family               = NULL) {
 
-  # Auto-detect: use direct Hessian when no GP surrogate is available
-  use_refit <- is.null(opt_result$surrogate)
+  use_refit <- TRUE
 
   lap <- laplace_resistance(
     opt_result,

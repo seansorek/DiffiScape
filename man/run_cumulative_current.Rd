@@ -5,8 +5,12 @@
 \title{Compute cumulative current (and optionally voltage) using the differentiable
 Julia solver}
 \usage{
-run_cumulative_current(resistance, radius = 13L, block_size = 5L,
-  output = "current")
+run_cumulative_current(
+  resistance,
+  radius = 13L,
+  block_size = 5L,
+  output = "current"
+)
 }
 \arguments{
 \item{resistance}{A single-layer \link[terra:SpatRaster-class]{terra::SpatRaster} of resistance.}

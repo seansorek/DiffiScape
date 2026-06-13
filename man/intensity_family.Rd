@@ -38,7 +38,7 @@ parameters beyond \verb{alpha, gamma, betas} (e.g. 1 for NB's theta).}
 \item{param_names_fn}{Optional function \code{(cov_names)} returning a
 character vector of parameter names for families with non-standard
 layouts (e.g., no \code{alpha}).  \code{NULL} uses the default
-\code{alpha}/\code{gamma}/\code{beta_*} naming.}
+\code{alpha}/\code{gamma}/\verb{beta_*} naming.}
 }
 \value{
 An S3 object of class \code{"intensity_family"}.

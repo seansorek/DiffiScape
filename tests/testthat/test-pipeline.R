@@ -73,3 +73,37 @@ test_that("ds_init_julia errors without Julia", {
   # Just verify the function exists and handles errors
   expect_true(is.function(ds_init_julia))
 })
+
+
+test_that("ds_posterior passes refit = TRUE to laplace_resistance", {
+  skip_on_cran()
+
+  opt_result <- list(
+    best_params  = list(r_0 = 0),
+    bounds       = list(r_0 = c(-2, 2)),
+    distribution = "negbin",
+    surrogate    = structure(list(), class = "km")
+  )
+  basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  obs_points  <- data.frame(x = 0, y = 0)
+
+  captured_refit <- NULL
+  mock_lap <- list(mode = 0, covariance = matrix(0.01, 1, 1),
+                   precision = matrix(100, 1, 1), std_error = 0.1)
+  mock_samp <- data.frame(r_0 = rnorm(3))
+
+  local_mocked_bindings(
+    laplace_resistance = function(...) {
+      args <- list(...)
+      captured_refit <<- args$refit
+      mock_lap
+    },
+    posterior_sample = function(...) mock_samp,
+    posterior_summary = function(...) data.frame(),
+    .package = "DiffiScape"
+  )
+
+  ds_posterior(opt_result, basis_stack, obs_points, n_draws = 3L, n_inner = 1L)
+
+  expect_true(captured_refit)
+})

@@ -13,9 +13,10 @@ An \link{intensity_family} object.
 Exponential RSF fitted via the Poisson/use-availability form.  Does not
 include a baseline intercept (alpha) — only relative selection is estimated.
 Requires explicitly-provided available/background locations; pass these via
-the \code{available_points} argument of \code{\link[=optimize_resistance]{optimize_resistance()}},
-\code{\link[=ds_optimize]{ds_optimize()}}, or \code{\link[=fit_intensity_selection]{fit_intensity_selection()}}.
-
+the \code{available_points} argument of \code{\link[=optimize_resistance]{optimize_resistance()}}, \code{\link[=ds_optimize]{ds_optimize()}},
+or \code{\link[=fit_intensity_selection]{fit_intensity_selection()}}.
+}
+\details{
 The negative log-likelihood is:
 \deqn{-\ell = -\left(\sum_i f(x_i) - n \cdot \log \sum_j w_j \exp f(x_j)\right)}
 where \eqn{f(x) = \gamma z + \sum_k \beta_k c_k(x)} and
