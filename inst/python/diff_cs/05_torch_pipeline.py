@@ -1059,7 +1059,10 @@ class IRLResistanceNet(nn.Module):
         0/1.  Moves into out-of-grid or invalid cells are masked out of the
         soft maximisation; the always-available 'stay' action guarantees at
         least one finite term.  Invalid cells are pinned to V = 0 so they never
-        leak value into valid neighbours."""
+        leak value into valid neighbours.
+
+        Peak memory scales with n_value_iter × grid_size because the loop is
+        fully unrolled into the autograd graph; reduce n_value_iter if OOM."""
         b, gd, NEG = self.vi_beta, self.gamma_d, -1e9
         dirs = [(-1, 0), (1, 0), (0, -1), (0, 1)]
         nbr_valid = [self._shift(valid_grid, dr, dc) for dr, dc in dirs]
@@ -4084,6 +4087,13 @@ def _setup_sampling_state(
                                 weights_only=False)
     else:
         raise ValueError("Either model_path or model_state must be provided")
+
+    _ckpt_model_type = checkpoint.get("model_type", "spline")
+    if _ckpt_model_type == "irl":
+        raise NotImplementedError(
+            "Bayesian sampling (Langevin/HMC/ADVI) is not yet supported for "
+            "model_type='irl'. Use run_torch_optimization() for MAP inference."
+        )
 
     n_features = int(checkpoint.get(
         "n_features",
