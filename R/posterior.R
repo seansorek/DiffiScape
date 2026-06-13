@@ -10,17 +10,24 @@
 #' Laplace approximation at the optimised resistance parameters
 #'
 #' Computes a Gaussian approximation to the marginal posterior of the
-#' resistance parameters by evaluating (or re-using) the GP surrogate
-#' at the MAP estimate.
+#' resistance parameters by numerically differentiating the true PPP
+#' log-likelihood at the MAP estimate (default).  When `basis_stack` and
+#' `obs_points` are not supplied, the function falls back to differentiating
+#' the GP surrogate's predicted-mean surface and emits a warning.
 #'
 #' @param opt_result Result from [optimize_resistance()] or
 #'   [optimize_resistance_enzyme()].
 #' @param basis_stack A [terra::SpatRaster] of basis functions (required
 #'   when `refit = TRUE` or when no surrogate is available).
 #' @param obs_points Data.frame with `x, y` (required when `refit = TRUE`).
-#' @param refit Logical; use `numDeriv::hessian()` on the full model
-#'   instead of the GP surrogate.  Automatically set to `TRUE` when
-#'   `opt_result` has no `$surrogate` (i.e., from
+#' @param refit Logical; when `TRUE` (the default) the Hessian is computed
+#'   on the true PPP log-likelihood via the Julia solver, which requires
+#'   `basis_stack` and `obs_points`.  When both of those are `NULL` and a
+#'   GP surrogate is available, a warning is emitted and the function falls
+#'   back to the surrogate-mean Hessian automatically so that existing
+#'   single-argument calls remain valid.  Set `refit = FALSE` explicitly to
+#'   suppress the warning and force the surrogate path.  Always set to
+#'   `TRUE` automatically when `opt_result` has no `$surrogate` (i.e., from
 #'   [optimize_resistance_enzyme()]).
 #' @param step Finite-difference step size for Hessian computation.
 #' @param omniscape_settings Named list of solver overrides: `radius`
@@ -44,7 +51,7 @@
 laplace_resistance <- function(opt_result,
                                basis_stack          = NULL,
                                obs_points           = NULL,
-                               refit                = FALSE,
+                               refit                = TRUE,
                                step                 = 1e-3,
                                omniscape_settings   = list(),
                                intensity_config     = default_intensity_config(),
@@ -62,6 +69,18 @@ laplace_resistance <- function(opt_result,
 
   # Auto-refit when no surrogate is available (Enzyme/direct path)
   if (is.null(opt_result$surrogate)) refit <- TRUE
+
+  # Graceful fallback: refit requested but full-model inputs missing
+  if (refit && !is.null(opt_result$surrogate) &&
+      (is.null(basis_stack) || is.null(obs_points))) {
+    warning(
+      "refit = TRUE requires basis_stack and obs_points; ",
+      "falling back to surrogate-mean Hessian. ",
+      "Supply basis_stack and obs_points for statistically correct intervals.",
+      call. = FALSE
+    )
+    refit <- FALSE
+  }
 
   if (!refit && !is.null(opt_result$surrogate)) {
     # Use the GP surrogate's predicted mean as the log-likelihood
