@@ -151,10 +151,24 @@
 #'     `0` uses a linear mapping. Default: `0`.}
 #' }
 #'
+#' @section IRL value-shaped model (model_type = "irl"):
+#' \describe{
+#'   \item{`beta`}{Numeric. Soft value-iteration temperature (entropy
+#'     regularisation). Default: `1.0`.}
+#'   \item{`gamma_d`}{Numeric. MDP discount / leakage for the value iteration;
+#'     must be `< 1` for the soft Bellman operator to contract. Default: `0.9`.}
+#'   \item{`n_value_iter`}{Integer. Number of (unrolled) soft value-iteration
+#'     steps. Default: `60`.}
+#'   \item{`value_scale_init`}{Numeric. Initial scale in
+#'     `log R = offset - scale * V`. Default: `1.0`.}
+#' }
+#'
 #' @section Spline-GAM model (model_type = "spline_gam"):
 #' \describe{
-#'   \item{`model_type`}{Character. `"mlp"` (default) or `"spline_gam"` for
-#'     an interpretable B-spline resistance model.}
+#'   \item{`model_type`}{Character. `"mlp"` (default), `"conv"`, `"spline_gam"`,
+#'     or `"irl"` (value-shaped resistance — a reward network is turned into a
+#'     resistance surface via soft value iteration, then run through the same
+#'     differentiable circuit solver).}
 #'   \item{`n_knots`}{Integer. Spline knots per covariate. Default: `10`.}
 #'   \item{`spline_degree`}{Integer. B-spline degree. Default: `3` (cubic).}
 #'   \item{`include_interactions`}{Logical. Add tensor-product interaction terms
@@ -245,7 +259,13 @@ default_torch_config <- function() {
     intensity_n_knots       = 5L,
     intensity_degree        = 3L,
     lambda_init_intensity   = 2.0,
-    intensity_log1p_max     = 10.0
+    intensity_log1p_max     = 10.0,
+
+    # --- IRL (value-shaped) resistance (model_type = "irl") ---
+    beta                    = 1.0,
+    gamma_d                 = 0.9,
+    n_value_iter            = 60L,
+    value_scale_init        = 1.0
   )
 }
 
@@ -305,7 +325,14 @@ default_torch_config <- function() {
 #' @param warmup_epochs Integer; linear LR warm-up epochs.
 #' @param absorption_schedule Optional numeric vector for an absorption
 #'   curriculum.
-#' @param model_type Character; `"mlp"` or `"spline_gam"`.
+#' @param model_type Character; `"mlp"`, `"conv"`, `"spline_gam"`, or `"irl"`
+#'   (value-shaped resistance from soft value iteration).
+#' @param beta Numeric; soft value-iteration temperature (IRL only).
+#' @param gamma_d Numeric; MDP discount / leakage for value iteration, `< 1`
+#'   (IRL only).
+#' @param n_value_iter Integer; unrolled soft value-iteration steps (IRL only).
+#' @param value_scale_init Numeric; initial scale in `log R = offset - scale*V`
+#'   (IRL only).
 #' @param n_knots Integer; spline knots per covariate.
 #' @param spline_degree Integer; B-spline degree.
 #' @param include_interactions Logical; tensor-product interactions.
@@ -379,7 +406,11 @@ run_torch_pipeline <- function(basis_stack,
                                 intensity_n_knots       = config$intensity_n_knots,
                                 intensity_degree        = config$intensity_degree,
                                 lambda_init_intensity   = config$lambda_init_intensity,
-                                intensity_log1p_max     = config$intensity_log1p_max) {
+                                intensity_log1p_max     = config$intensity_log1p_max,
+                                beta                    = config$beta,
+                                gamma_d                 = config$gamma_d,
+                                n_value_iter            = config$n_value_iter,
+                                value_scale_init        = config$value_scale_init) {
 
   if (!.ds_env$torch_initialized) ds_torch_setup()
 
@@ -459,7 +490,11 @@ run_torch_pipeline <- function(basis_stack,
     intensity_n_knots      = as.integer(intensity_n_knots),
     intensity_degree       = as.integer(intensity_degree),
     lambda_init_intensity  = as.double(lambda_init_intensity),
-    intensity_log1p_max    = as.double(intensity_log1p_max)
+    intensity_log1p_max    = as.double(intensity_log1p_max),
+    beta                   = as.double(beta),
+    gamma_d                = as.double(gamma_d),
+    n_value_iter           = as.integer(n_value_iter),
+    value_scale_init       = as.double(value_scale_init)
   )
 
   results_r <- reticulate::py_to_r(results)
@@ -506,6 +541,7 @@ run_torch_pipeline <- function(basis_stack,
 
   n_obs <- prep$n_obs
   method_tag <- if (model_type == "spline_gam") "torch_spline_gam_circuit"
+                else if (model_type == "irl") "torch_irl_value_circuit"
                 else "torch_nn_circuit"
 
   output <- list(
@@ -769,6 +805,68 @@ verify_spline_gradient <- function(basis_stack,
             sprintf("%.2e", result_r$max_rel_error), ")")
   } else {
     warning("  Spline gradient check FAILED (max rel error: ",
+            sprintf("%.2e", result_r$max_rel_error), ")")
+  }
+  result_r
+}
+
+
+#' Verify the IRL value-shaped resistance gradient
+#'
+#' Finite-difference gradient check on the full IRL chain:
+#' reward network -> soft value iteration -> resistance -> circuit solve.
+#' Confirms that gradients flow correctly through the unrolled value iteration.
+#'
+#' @param basis_stack [terra::SpatRaster] of basis layers.
+#' @param crop_size Integer; centre crop side length.
+#' @param solver Character; circuit solver.
+#' @param absorption Numeric.
+#' @param hidden_dim,n_hidden_layers Reward-MLP architecture.
+#' @param beta Numeric; soft value-iteration temperature.
+#' @param gamma_d Numeric; MDP discount / leakage (`< 1`).
+#' @param n_value_iter Integer; unrolled soft value-iteration steps.
+#' @param value_scale_init Numeric; initial scale in `log R = offset - scale*V`.
+#' @return A list with `pass` (logical) and `max_rel_error`.
+#' @export
+verify_irl_gradient <- function(basis_stack,
+                                crop_size        = 20L,
+                                solver           = "global_absorption",
+                                absorption       = 0.05,
+                                hidden_dim       = 16L,
+                                n_hidden_layers  = 2L,
+                                beta             = 1.0,
+                                gamma_d          = 0.9,
+                                n_value_iter     = 30L,
+                                value_scale_init = 1.0) {
+
+  if (!.ds_env$torch_initialized) ds_torch_setup()
+  np <- reticulate::import("numpy", convert = FALSE)
+  cr <- .crop_basis_for_gradient(basis_stack, crop_size)
+
+  result <- ds_torch_call(
+    "verify_softrl_gradient",
+    basis_values_np  = np$array(cr$basis_vals, dtype = np$float64),
+    valid_mask_np    = np$array(cr$valid,      dtype = np$bool_),
+    n_rows           = as.integer(cr$n_rows),
+    n_cols           = as.integer(cr$n_cols),
+    source_spacing   = 1L,
+    source_from_resistance = TRUE,
+    hidden_dim       = as.integer(hidden_dim),
+    n_hidden_layers  = as.integer(n_hidden_layers),
+    beta             = as.double(beta),
+    gamma_d          = as.double(gamma_d),
+    n_value_iter     = as.integer(n_value_iter),
+    value_scale_init = as.double(value_scale_init),
+    solver           = solver,
+    absorption       = as.double(absorption)
+  )
+
+  result_r <- reticulate::py_to_r(result)
+  if (isTRUE(result_r$pass)) {
+    message("  IRL gradient check PASSED (max rel error: ",
+            sprintf("%.2e", result_r$max_rel_error), ")")
+  } else {
+    warning("  IRL gradient check FAILED (max rel error: ",
             sprintf("%.2e", result_r$max_rel_error), ")")
   }
   result_r

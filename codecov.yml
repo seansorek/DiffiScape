@@ -1,0 +1,60 @@
+# Codecov configuration for DiffiScape's three-language codebase.
+#
+# Coverage is uploaded by three separate workflows, each with its own flag:
+#   - r      : R/   (test-coverage.yml, via covr::codecov)
+#   - python : inst/python/diff_cs/   (python.yml, via pytest-cov)
+#   - julia  : inst/julia/DiffiScape/src/   (julia.yml, via --code-coverage)
+#
+# `carryforward: true` keeps a flag's last-known coverage when a PR touches only
+# one language, so e.g. a Python-only PR doesn't blank out the R/Julia numbers.
+
+codecov:
+  require_ci_to_pass: true
+
+flag_management:
+  default_rules:
+    carryforward: true
+
+flags:
+  r:
+    paths:
+      - R/
+    carryforward: true
+  python:
+    paths:
+      - inst/python/diff_cs/
+    carryforward: true
+  julia:
+    paths:
+      - inst/julia/DiffiScape/src/
+    carryforward: true
+
+# Components surface per-language coverage in the Codecov dashboard.
+component_management:
+  individual_components:
+    - component_id: r_package
+      name: R package
+      paths:
+        - R/
+    - component_id: python_torch
+      name: Python torch backend
+      paths:
+        - inst/python/diff_cs/
+    - component_id: julia_enzyme
+      name: Julia/Enzyme backend
+      paths:
+        - inst/julia/DiffiScape/src/
+
+coverage:
+  status:
+    # Informational only — coverage is a signal here, not a merge gate.
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+
+comment:
+  layout: "header, flags, components, files"
+  require_changes: false

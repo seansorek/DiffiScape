@@ -32,7 +32,9 @@ test_that("default_torch_config contains all documented top-level keys", {
     "lambda_min",
     # Intensity spline
     "intensity_spline", "intensity_n_knots", "intensity_degree",
-    "lambda_init_intensity", "intensity_log1p_max"
+    "lambda_init_intensity", "intensity_log1p_max",
+    # IRL (value-shaped) resistance
+    "beta", "gamma_d", "n_value_iter", "value_scale_init"
   )
   missing_keys <- setdiff(required, names(cfg))
   expect_length(missing_keys, 0L)
@@ -83,6 +85,41 @@ test_that("default_torch_config use_conv default is FALSE", {
 test_that("default_torch_config intensity_spline default is FALSE", {
   cfg <- default_torch_config()
   expect_false(cfg$intensity_spline)
+})
+
+
+# ---- IRL (value-shaped) resistance config ----------------------------------
+
+test_that("default_torch_config IRL knobs have valid defaults", {
+  cfg <- default_torch_config()
+  expect_true(cfg$beta > 0)              # soft value-iteration temperature
+  expect_true(cfg$gamma_d > 0 && cfg$gamma_d < 1)  # contraction requires < 1
+  expect_true(cfg$n_value_iter >= 1)
+  expect_true(cfg$value_scale_init > 0)
+})
+
+test_that("ds_optimize exposes the 'irl' solver option", {
+  choices <- eval(formals(ds_optimize)$solver)
+  expect_true("irl" %in% choices)
+})
+
+test_that("run_torch_pipeline accepts IRL arguments", {
+  args <- names(formals(run_torch_pipeline))
+  expect_true(all(c("beta", "gamma_d", "n_value_iter", "value_scale_init")
+                  %in% args))
+  expect_true("model_type" %in% args)
+})
+
+test_that("irl_resistance_model errors without a resistance_raster", {
+  skip_if_not_installed("terra")
+  r <- terra::rast(nrows = 4, ncols = 4, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- runif(16)
+  basis <- create_basis_stack(list(a = r), rescale = FALSE)
+  expect_error(
+    irl_resistance_model(list(loglik = -1), basis),
+    "resistance_raster"
+  )
 })
 
 

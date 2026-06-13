@@ -4,3 +4,8 @@
 .Ruserdata
 __pycache__/
 *.py[cod]
+# Python test / coverage artifacts
+.coverage
+.coverage.*
+coverage.xml
+.pytest_cache/
