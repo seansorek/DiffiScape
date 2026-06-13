@@ -21,7 +21,9 @@ jobs:
           cache-dependency-path: inst/python/diff_cs/requirements.txt
 
       - name: Install dependencies
-        run: pip install -r inst/python/diff_cs/requirements.txt pytest-cov
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -r inst/python/diff_cs/requirements.txt pytest-cov
 
       - name: Run tests with coverage
         working-directory: inst/python

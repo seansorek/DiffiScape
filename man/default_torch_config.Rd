@@ -106,11 +106,27 @@ receptive field. Default: \code{TRUE}.}
 }
 }
 
+\section{IRL value-shaped model (model_type = "irl")}{
+
+\describe{
+\item{\code{beta}}{Numeric. Soft value-iteration temperature (entropy
+regularisation). Default: \code{1.0}.}
+\item{\code{gamma_d}}{Numeric. MDP discount / leakage for the value iteration;
+must be \verb{< 1} for the soft Bellman operator to contract. Default: \code{0.9}.}
+\item{\code{n_value_iter}}{Integer. Number of (unrolled) soft value-iteration
+steps. Default: \code{60}.}
+\item{\code{value_scale_init}}{Numeric. Initial scale in
+\verb{log R = offset - scale * V}. Default: \code{1.0}.}
+}
+}
+
 \section{Spline-GAM model (model_type = "spline_gam")}{
 
 \describe{
-\item{\code{model_type}}{Character. \code{"mlp"} (default) or \code{"spline_gam"} for
-an interpretable B-spline resistance model.}
+\item{\code{model_type}}{Character. \code{"mlp"} (default), \code{"conv"}, \code{"spline_gam"},
+or \code{"irl"} (value-shaped resistance — a reward network is turned into a
+resistance surface via soft value iteration, then run through the same
+differentiable circuit solver).}
 \item{\code{n_knots}}{Integer. Spline knots per covariate. Default: \code{10}.}
 \item{\code{spline_degree}}{Integer. B-spline degree. Default: \code{3} (cubic).}
 \item{\code{include_interactions}}{Logical. Add tensor-product interaction terms

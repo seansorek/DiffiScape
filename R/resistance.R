@@ -424,3 +424,50 @@ predict.resistance_model <- function(object, basis_stack = NULL, ...) {
   }
   result
 }
+
+
+#' Wrap an IRL (value-shaped) fit as a resistance_model
+#'
+#' Packages the optimised resistance raster from an IRL run
+#' ([run_torch_pipeline()] with `model_type = "irl"`, or [ds_optimize()] with
+#' `solver = "irl"`) as a custom [resistance_model()].  This lets a fit from the
+#' value-shaped pathway plug into [predict()], [ds_diagnose()], and the
+#' posterior tooling exactly like a parametric or other custom model — fulfilling
+#' the documented custom-IRL resistance pathway.
+#'
+#' @param irl_result A list returned by [run_torch_pipeline()] / [ds_optimize()]
+#'   with `solver = "irl"`; must contain a `resistance_raster` [terra::SpatRaster].
+#' @param basis_stack The [terra::SpatRaster] basis used to fit the model.
+#' @param ... Additional metadata stored on the model object.
+#' @return A [resistance_model()] object of type `"custom"`.
+#' @seealso [resistance_model()], [run_torch_pipeline()], [ds_optimize()]
+#' @export
+irl_resistance_model <- function(irl_result, basis_stack, ...) {
+
+  R_fit <- irl_result$resistance_raster
+  if (is.null(R_fit) || !inherits(R_fit, "SpatRaster")) {
+    stop(
+      "irl_result must contain a 'resistance_raster' SpatRaster ",
+      "(from run_torch_pipeline() / ds_optimize(solver = 'irl')).",
+      call. = FALSE
+    )
+  }
+
+  fn <- local({
+    R_stored <- R_fit
+    function(bs, ...) {
+      # Resample the fitted resistance onto the supplied basis grid if its
+      # geometry differs (e.g. predicting onto a new extent / resolution).
+      out <- if (isTRUE(terra::compareGeom(R_stored, bs, stopOnError = FALSE))) {
+        R_stored
+      } else {
+        terra::resample(R_stored, bs[[1]])
+      }
+      names(out) <- "resistance"
+      out
+    }
+  })
+
+  resistance_model(fn, basis_stack, type = "custom",
+                   name = "IRL value-shaped resistance", ...)
+}

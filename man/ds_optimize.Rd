@@ -16,7 +16,7 @@ ds_optimize(
   residualise = FALSE,
   available_points = NULL,
   available_covariates = NULL,
-  solver = c("surrogate", "enzyme", "torch")
+  solver = c("surrogate", "enzyme", "torch", "irl")
 )
 }
 \arguments{
@@ -52,7 +52,11 @@ supplied and the intensity model includes covariates.}
 
 \item{solver}{Character; \code{"surrogate"} (GP + Thompson Sampling or
 Expected Improvement, default), \code{"enzyme"} (L-BFGS via differentiable
-Julia solver), or \code{"torch"} (PyTorch neural-network resistance).}
+Julia solver), \code{"torch"} (PyTorch neural-network resistance), or \code{"irl"}
+(PyTorch value-shaped resistance: a reward network is turned into a
+resistance surface via soft value iteration, then run through the same
+differentiable circuit solver — a convenience alias for \code{solver = "torch"}
+with \code{model_type = "irl"}).}
 }
 \value{
 Result from \code{\link[=optimize_resistance]{optimize_resistance()}}, \code{\link[=optimize_resistance_enzyme]{optimize_resistance_enzyme()}},
