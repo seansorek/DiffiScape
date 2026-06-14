@@ -334,8 +334,9 @@ ds_predict <- function(intensity_fit,
                        intensity_config   = default_intensity_config(),
                        covariates_rasters = NULL) {
 
+  fit_obj <- intensity_fit$intensity_fit_obj %||% intensity_fit
   predict_intensity(
-    intensity_fit$intensity_params,
+    fit_obj,
     connectivity,
     covariates_rasters = covariates_rasters,
     config             = intensity_config

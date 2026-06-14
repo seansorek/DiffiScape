@@ -691,7 +691,7 @@ fit_intensity_gam <- function(connectivity_at_obs,
   list(
     estimates        = estimates,
     se               = se,
-    loglik           = as.numeric(-0.5 * gam_fit$deviance),
+    loglik           = as.numeric(stats::logLik(gam_fit)),
     convergence      = if (gam_fit$converged) 0L else 1L,
     c_scale          = std$c_scale,
     log_conn_mean    = std$mu,
