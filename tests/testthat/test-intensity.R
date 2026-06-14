@@ -344,3 +344,97 @@ test_that("fit_intensity_nb converges and loglik improves over start values", {
   expect_true("alpha" %in% names(fit$estimates))
   expect_true("gamma" %in% names(fit$estimates))
 })
+
+
+test_that("fit_intensity_gam warns on high concurvity when include_spatial_re=TRUE", {
+  skip_on_cran()
+  skip_if_not_installed("mgcv")
+
+  set.seed(77)
+  n_obs   <- 30
+  r <- terra::rast(nrows = 15, ncols = 15, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(225, mean = 4))
+  obs_pts  <- data.frame(x = runif(n_obs, 0.05, 0.95),
+                         y = runif(n_obs, 0.05, 0.95))
+  conn_obs <- abs(rnorm(n_obs, mean = 4))
+
+  cfg <- default_intensity_config()
+  cfg$include_spatial_re <- TRUE
+
+  local_mocked_bindings(
+    concurvity = function(object, full = TRUE) {
+      matrix(
+        c(0.95, 0.85, 0.70),
+        nrow = 3, ncol = 1,
+        dimnames = list(c("worst", "observed", "estimate"),
+                        c("s(connectivity)"))
+      )
+    },
+    .package = "mgcv"
+  )
+
+  ws <- character(0)
+  withCallingHandlers(
+    suppressMessages(
+      fit_intensity_gam(
+        connectivity_at_obs = conn_obs,
+        connectivity_raster = r,
+        obs_coords          = obs_pts,
+        config              = cfg
+      )
+    ),
+    warning = function(w) {
+      ws <<- c(ws, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+  expect_true(any(grepl("High concurvity detected", ws)))
+})
+
+
+test_that("fit_intensity_gam does not warn when concurvity is low", {
+  skip_on_cran()
+  skip_if_not_installed("mgcv")
+
+  set.seed(78)
+  n_obs   <- 30
+  r <- terra::rast(nrows = 15, ncols = 15, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(225, mean = 4))
+  obs_pts  <- data.frame(x = runif(n_obs, 0.05, 0.95),
+                         y = runif(n_obs, 0.05, 0.95))
+  conn_obs <- abs(rnorm(n_obs, mean = 4))
+
+  cfg <- default_intensity_config()
+  cfg$include_spatial_re <- TRUE
+
+  local_mocked_bindings(
+    concurvity = function(object, full = TRUE) {
+      matrix(
+        c(0.30, 0.20, 0.10),
+        nrow = 3, ncol = 1,
+        dimnames = list(c("worst", "observed", "estimate"),
+                        c("s(connectivity)"))
+      )
+    },
+    .package = "mgcv"
+  )
+
+  ws <- character(0)
+  withCallingHandlers(
+    suppressMessages(
+      fit_intensity_gam(
+        connectivity_at_obs = conn_obs,
+        connectivity_raster = r,
+        obs_coords          = obs_pts,
+        config              = cfg
+      )
+    ),
+    warning = function(w) {
+      ws <<- c(ws, conditionMessage(w))
+      invokeRestart("muffleWarning")
+    }
+  )
+  expect_false(any(grepl("High concurvity detected", ws)))
+})

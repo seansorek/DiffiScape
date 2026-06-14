@@ -355,6 +355,19 @@ diagnose_model <- function(intensity_fit,
   if (!is.null(moran_result)) {
     message(sprintf("  Moran's I: %.4f (p = %.4f)",
                     moran_result$observed, moran_result$p_value))
+    if (isTRUE(moran_result$p_value < 0.05)) {
+      warning(
+        sprintf(
+          "Significant residual spatial autocorrelation detected (Moran's I = %.4f, p = %.4f). ",
+          moran_result$observed, moran_result$p_value
+        ),
+        "Intensity SEs are likely optimistic. ",
+        "Consider setting include_spatial_re = TRUE in intensity_config to absorb residual spatial structure. ",
+        "Note: include_spatial_re = TRUE introduces concurvity risk when connectivity is spatially smooth; ",
+        "check mgcv::concurvity() afterward.",
+        call. = FALSE
+      )
+    }
   }
 
   list(

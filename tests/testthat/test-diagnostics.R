@@ -254,3 +254,40 @@ test_that("plot_residual_map overlays observation points without error", {
     dev.off()
   })
 })
+
+
+test_that("diagnose_model warns when Moran's I is significant", {
+  skip_on_cran()
+  skip_if_not_installed("spdep")
+  d <- .make_diag_inputs(seed = 77)
+
+  local_mocked_bindings(
+    moran_test = function(resids, coords, k = 8L) {
+      list(observed = 0.45, p_value = 0.001)
+    },
+    .package = "DiffiScape"
+  )
+
+  expect_warning(
+    suppressMessages(diagnose_model(d$nb_fit, d$obs_pts, d$raster, plot = FALSE)),
+    "Significant residual spatial autocorrelation"
+  )
+})
+
+
+test_that("diagnose_model does not warn when Moran's I is non-significant", {
+  skip_on_cran()
+  skip_if_not_installed("spdep")
+  d <- .make_diag_inputs(seed = 77)
+
+  local_mocked_bindings(
+    moran_test = function(resids, coords, k = 8L) {
+      list(observed = 0.02, p_value = 0.60)
+    },
+    .package = "DiffiScape"
+  )
+
+  expect_no_warning(
+    suppressMessages(diagnose_model(d$nb_fit, d$obs_pts, d$raster, plot = FALSE))
+  )
+})
