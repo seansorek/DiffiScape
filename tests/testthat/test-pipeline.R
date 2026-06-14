@@ -107,3 +107,60 @@ test_that("ds_posterior passes refit = TRUE to laplace_resistance", {
 
   expect_true(captured_refit)
 })
+
+
+test_that("ds_predict works when intensity_fit contains intensity_fit_obj", {
+  skip_on_cran()
+
+  set.seed(42)
+  r <- terra::rast(nrows = 10, ncols = 10, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(100, mean = 4))
+  n_obs  <- 15
+  obs_pts <- data.frame(x = runif(n_obs, 0.05, 0.95),
+                        y = runif(n_obs, 0.05, 0.95))
+  nb_fit <- fit_intensity_nb(
+    connectivity_at_obs = abs(rnorm(n_obs, mean = 4)),
+    connectivity_raster = r,
+    obs_coords          = obs_pts
+  )
+
+  # Simulate the ds_fit_intensity / evaluate_full_model return format
+  mock_full <- list(
+    loglik            = nb_fit$loglik,
+    intensity_params  = nb_fit$estimates,
+    intensity_fit_obj = nb_fit,
+    intensity_se      = nb_fit$se,
+    convergence       = nb_fit$convergence,
+    distribution      = "negbin"
+  )
+
+  result <- ds_predict(mock_full, r)
+  expect_s4_class(result, "SpatRaster")
+  expect_equal(names(result), "intensity")
+  expect_true(all(is.finite(terra::values(result)[, 1])))
+})
+
+
+test_that("ds_predict falls back gracefully when intensity_fit_obj is absent", {
+  skip_on_cran()
+
+  set.seed(43)
+  r <- terra::rast(nrows = 10, ncols = 10, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(100, mean = 4))
+  n_obs   <- 15
+  obs_pts <- data.frame(x = runif(n_obs, 0.05, 0.95),
+                        y = runif(n_obs, 0.05, 0.95))
+  nb_fit  <- fit_intensity_nb(
+    connectivity_at_obs = abs(rnorm(n_obs, mean = 4)),
+    connectivity_raster = r,
+    obs_coords          = obs_pts
+  )
+
+  # Pass the bare fit object (no intensity_fit_obj field) — triggers fallback
+  result <- ds_predict(nb_fit, r)
+  expect_s4_class(result, "SpatRaster")
+  expect_equal(names(result), "intensity")
+  expect_true(all(is.finite(terra::values(result)[, 1])))
+})
