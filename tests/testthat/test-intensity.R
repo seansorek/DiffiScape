@@ -251,7 +251,7 @@ test_that("fit_intensity_gam returns required fields with correct types", {
   }
   expect_true(inherits(fit$gam_model, "bam") || inherits(fit$gam_model, "gam"))
   expect_true(is.finite(fit$loglik))
-  expect_true(fit$loglik < 0)
+  expect_equal(fit$loglik, as.numeric(stats::logLik(fit$gam_model)), tolerance = 1e-6)
 })
 
 
