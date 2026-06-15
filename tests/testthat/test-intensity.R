@@ -344,3 +344,151 @@ test_that("fit_intensity_nb converges and loglik improves over start values", {
   expect_true("alpha" %in% names(fit$estimates))
   expect_true("gamma" %in% names(fit$estimates))
 })
+
+
+# ---------------------------------------------------------------------------
+# Tests for bug #29: residualisation applied at fit time must be mirrored at
+# prediction time.
+# ---------------------------------------------------------------------------
+
+test_that("predict_intensity (NB) applies residualisation stored in fit", {
+  # Verify that when residualise = TRUE, the stored aux_model is used during
+  # prediction, so that in-sample predicted intensities are not biased by
+  # confounding raw z with the residualised z that gamma was estimated on.
+  skip_on_cran()
+  skip_if_not_installed("terra")
+
+  set.seed(55)
+  r <- terra::rast(nrows = 10, ncols = 10, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(100, mean = 5, sd = 2))
+
+  r_cov <- terra::rast(r)
+  terra::values(r_cov) <- runif(100)
+  names(r_cov) <- "elev"
+
+  n_obs <- 20
+  set.seed(55)
+  obs_x <- runif(n_obs, 0.05, 0.95)
+  obs_y <- runif(n_obs, 0.05, 0.95)
+  conn_at_obs <- abs(rnorm(n_obs, mean = 5, sd = 2))
+  cov_obs_elev <- runif(n_obs)
+
+  # Fit with residualise = TRUE
+  fit_resid <- fit_intensity_nb(
+    connectivity_at_obs = conn_at_obs,
+    connectivity_raster = r,
+    obs_coords          = data.frame(x = obs_x, y = obs_y),
+    covariates_obs      = list(elev = cov_obs_elev),
+    covariates_rasters  = list(elev = r_cov),
+    residualise         = TRUE
+  )
+
+  # Fit without residualise = FALSE (baseline)
+  fit_plain <- fit_intensity_nb(
+    connectivity_at_obs = conn_at_obs,
+    connectivity_raster = r,
+    obs_coords          = data.frame(x = obs_x, y = obs_y),
+    covariates_obs      = list(elev = cov_obs_elev),
+    covariates_rasters  = list(elev = r_cov),
+    residualise         = FALSE
+  )
+
+  expect_true(isTRUE(fit_resid$is_residualised))
+  expect_false(isTRUE(fit_plain$is_residualised))
+  expect_true(!is.null(fit_resid$residualisation_info))
+  expect_true(!is.null(fit_resid$residualisation_info$aux_model))
+
+  # Predict with both fits
+  pred_resid <- predict_intensity(fit_resid, r,
+                                  covariates_rasters = list(elev = r_cov))
+  pred_plain <- predict_intensity(fit_plain, r,
+                                  covariates_rasters = list(elev = r_cov))
+
+  pred_resid_vals <- terra::values(pred_resid)
+  pred_plain_vals <- terra::values(pred_plain)
+
+  # Both should produce finite, positive intensities
+  expect_true(all(is.finite(pred_resid_vals), na.rm = TRUE))
+  expect_true(all(pred_resid_vals > 0, na.rm = TRUE))
+
+  # The residualised prediction must differ from the plain prediction
+  # (they solve different sub-problems), but should not be wildly extreme.
+  # More importantly, verify the fix: when residualise=TRUE, the auxiliary
+  # regression stored in fit$residualisation_info must actually be applied.
+  # We verify by manually computing what predict_intensity *should* produce.
+  C_safe <- pmax(terra::values(r), 0)
+  z_manual <- (log1p(C_safe / fit_resid$c_scale) - fit_resid$log_conn_mean) /
+    fit_resid$log_conn_sd
+
+  ri <- fit_resid$residualisation_info
+  cov_names_resid <- setdiff(names(ri$aux_coefs), "(Intercept)")
+  nd_resid <- data.frame(elev = pmax(pmin(terra::values(r_cov), 1), 0))
+  z_corrected <- z_manual - stats::predict(ri$aux_model, newdata = nd_resid)
+
+  alpha_est <- fit_resid$estimates[["alpha"]]
+  gamma_est <- fit_resid$estimates[["gamma"]]
+  beta_elev  <- fit_resid$estimates[["beta_elev"]]
+  elev_vals  <- pmax(pmin(terra::values(r_cov), 1), 0)
+  log_lambda_expected <- (if (is.na(alpha_est)) 0 else alpha_est) +
+                         gamma_est * z_corrected +
+                         (if (!is.null(beta_elev) && !is.na(beta_elev))
+                           beta_elev * elev_vals else 0)
+  expected_vals <- exp(log_lambda_expected)
+
+  expect_equal(pred_resid_vals, expected_vals, tolerance = 1e-8)
+})
+
+
+test_that("predict_intensity (NB) with residualise=TRUE differs from naive (non-residualised) prediction", {
+  # Confirm the bug would have been detectable: if the fix is absent, applying
+  # gamma * raw_z (instead of gamma * residual_z) produces different values.
+  skip_on_cran()
+  skip_if_not_installed("terra")
+
+  set.seed(77)
+  r <- terra::rast(nrows = 8, ncols = 8, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(64, mean = 4, sd = 1.5))
+
+  r_cov <- terra::rast(r)
+  terra::values(r_cov) <- runif(64)
+  names(r_cov) <- "ndvi"
+
+  n_obs <- 15
+  conn_at_obs <- abs(rnorm(n_obs, mean = 4, sd = 1.5))
+  cov_obs <- list(ndvi = runif(n_obs))
+
+  fit_resid <- fit_intensity_nb(
+    connectivity_at_obs = conn_at_obs,
+    connectivity_raster = r,
+    obs_coords          = data.frame(x = runif(n_obs, 0.1, 0.9),
+                                     y = runif(n_obs, 0.1, 0.9)),
+    covariates_obs      = cov_obs,
+    covariates_rasters  = list(ndvi = r_cov),
+    residualise         = TRUE
+  )
+
+  # Simulate naive (buggy) prediction: gamma * raw z, ignoring residualisation
+  C_safe <- pmax(terra::values(r), 0)
+  z_raw <- (log1p(C_safe / fit_resid$c_scale) - fit_resid$log_conn_mean) /
+    fit_resid$log_conn_sd
+
+  alpha_est <- fit_resid$estimates[["alpha"]]
+  gamma_est <- fit_resid$estimates[["gamma"]]
+  beta_ndvi <- fit_resid$estimates[["beta_ndvi"]]
+  ndvi_vals <- pmax(pmin(terra::values(r_cov), 1), 0)
+  naive_log_lambda <- (if (is.na(alpha_est)) 0 else alpha_est) +
+                      gamma_est * z_raw +
+                      (if (!is.null(beta_ndvi) && !is.na(beta_ndvi))
+                        beta_ndvi * ndvi_vals else 0)
+  naive_pred <- exp(naive_log_lambda)
+
+  # Fixed prediction (using corrected z after residualisation)
+  fixed_pred <- terra::values(
+    predict_intensity(fit_resid, r, covariates_rasters = list(ndvi = r_cov))
+  )
+
+  # The fixed and naive predictions must differ (the bug would make them equal)
+  expect_false(isTRUE(all.equal(fixed_pred, naive_pred, tolerance = 1e-6)))
+})

@@ -739,6 +739,27 @@ predict_intensity <- function(fit,
   z_vals <- (log1p(C_safe / fit$c_scale) - fit$log_conn_mean) /
             fit$log_conn_sd
 
+  # Apply stored residualisation if the model was fitted on residualised z.
+  # Without this, gamma is estimated against the residual but multiplied by
+  # the raw z, biasing the predicted intensity.
+  if (isTRUE(fit$is_residualised) && !is.null(fit$residualisation_info)) {
+    ri      <- fit$residualisation_info
+    # Build a newdata frame matching the covariate names used in the aux lm.
+    # covariate values come from covariates_rasters (same names).
+    cov_names_resid <- setdiff(names(ri$aux_coefs), "(Intercept)")
+    if (length(cov_names_resid) > 0 && !is.null(covariates_rasters)) {
+      nd_resid <- data.frame(dummy = seq_along(z_vals))
+      for (nm in cov_names_resid) {
+        if (!is.null(covariates_rasters[[nm]])) {
+          cv <- pmax(pmin(terra::values(covariates_rasters[[nm]]), 1), 0)
+          nd_resid[[nm]] <- cv
+        }
+      }
+      nd_resid$dummy <- NULL
+      z_vals <- z_vals - stats::predict(ri$aux_model, newdata = nd_resid)
+    }
+  }
+
   log_lambda <- alpha + gamma * z_vals
 
   # Add covariate contributions
@@ -810,6 +831,25 @@ fit_intensity_selection <- function(connectivity_at_obs,
   valid <- !is.na(C_all)
   C_v   <- pmax(C_all[valid], 0)
   z_v   <- (log1p(C_v / fit$c_scale) - fit$log_conn_mean) / fit$log_conn_sd
+
+  # Apply stored residualisation if the model was fitted on residualised z.
+  # Without this, the GAM smooth of connectivity is estimated against the
+  # residual but evaluated on the raw z, biasing the predicted intensity.
+  if (isTRUE(fit$is_residualised) && !is.null(fit$residualisation_info)) {
+    ri <- fit$residualisation_info
+    cov_names_resid <- setdiff(names(ri$aux_coefs), "(Intercept)")
+    if (length(cov_names_resid) > 0 && !is.null(covariates_rasters)) {
+      nd_resid <- data.frame(dummy = seq_along(z_v))
+      for (nm in cov_names_resid) {
+        if (!is.null(covariates_rasters[[nm]])) {
+          cv <- pmax(pmin(terra::values(covariates_rasters[[nm]]), 1), 0)
+          nd_resid[[nm]] <- cv[valid]
+        }
+      }
+      nd_resid$dummy <- NULL
+      z_v <- z_v - stats::predict(ri$aux_model, newdata = nd_resid)
+    }
+  }
 
   nd <- data.frame(
     connectivity = z_v,
