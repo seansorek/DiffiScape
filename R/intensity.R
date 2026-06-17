@@ -198,7 +198,8 @@ compute_intensity <- function(z, alpha, gamma,
 
   if (!is.null(covariates) && !is.null(betas)) {
     for (nm in names(covariates)) {
-      beta_nm <- betas[nm] %||% 0
+      beta_nm <- betas[nm]
+      if (length(beta_nm) == 0L || is.na(beta_nm)) beta_nm <- 0
       if (beta_nm != 0) {
         log_lambda <- log_lambda + beta_nm * covariates[[nm]]
       }
@@ -387,9 +388,10 @@ fit_intensity_nb <- function(connectivity_at_obs,
 
   # ---- subsample integration points ---------------------------------------
   frac <- config$integration_subsample
+  stopifnot(n_int_full > 0)
   if (frac < 1 && frac > 0) {
     set.seed(config$seed)
-    n_samp  <- round(n_int_full * frac)
+    n_samp  <- max(1L, round(n_int_full * frac))
     step_sz <- n_int_full / n_samp
     start_  <- stats::runif(1, 1, step_sz)
     idx     <- unique(round(seq(start_, n_int_full, by = step_sz)))
@@ -539,9 +541,10 @@ fit_intensity_gam <- function(connectivity_at_obs,
   cell_area  <- prod(terra::res(connectivity_raster))
 
   frac <- config$integration_subsample
+  stopifnot(n_int_full > 0)
   if (frac < 1 && frac > 0) {
     set.seed(config$seed)
-    n_samp  <- round(n_int_full * frac)
+    n_samp  <- max(1L, round(n_int_full * frac))
     step_sz <- n_int_full / n_samp
     start_  <- stats::runif(1, 1, step_sz)
     idx     <- unique(round(seq(start_, n_int_full, by = step_sz)))
