@@ -28,19 +28,25 @@ function run_omniscape(resistance_file::String, output_dir::String,
     run_dir = joinpath(output_dir, "omniscape_run")
     mkpath(run_dir)
 
-    config = Dict{String,String}(
-        "resistance_file"         => resistance_file,
-        "radius"                  => string(radius),
-        "block_size"              => string(block_size),
-        "source_from_resistance"  => source_from_resistance ? "true" : "false",
-        "project_name"            => joinpath(run_dir, "omniscape"),
-        "r_cutoff"                => "Inf",
-        "calc_normalized_current" => "false",
-        "calc_flow_potential"     => "true",
-        "write_raw_currmap"       => "false",
-    )
+    ini_path = joinpath(output_dir, "omniscape_config.ini")
+    open(ini_path, "w") do io
+        println(io, "[Required]")
+        println(io, "resistance_file = $resistance_file")
+        println(io, "radius = $radius")
+        println(io, "block_size = $block_size")
+        println(io, "project_name = $(joinpath(run_dir, "omniscape"))")
+        println(io, "")
+        println(io, "[Output options]")
+        println(io, "write_raw_currmap = false")
+        println(io, "calc_flow_potential = true")
+        println(io, "calc_normalized_current = false")
+        println(io, "")
+        println(io, "[Optional]")
+        println(io, "source_from_resistance = $(source_from_resistance ? "true" : "false")")
+        println(io, "r_cutoff = Inf")
+    end
 
-    Omniscape.run_omniscape(config)
+    Omniscape.run_omniscape(ini_path)
 
     # Omniscape prefixes project_name to each output filename.
     # Rename to the bare names that R expects.
