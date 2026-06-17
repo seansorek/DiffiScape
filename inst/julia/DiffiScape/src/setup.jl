@@ -4,6 +4,8 @@ Setup utilities for the DiffiScape Julia module.
 Called once during R package initialisation via `ds_julia_setup()`.
 """
 
+using Pkg
+
 export check_dependencies, get_version_info
 
 """
@@ -41,7 +43,6 @@ function get_version_info()::Dict{String,String}
 
     for pkg in ["Omniscape", "Circuitscape", "Enzyme"]
         info[pkg] = try
-            using Pkg
             deps = Pkg.dependencies()
             for (_, dep) in deps
                 if dep.name == pkg

@@ -10,8 +10,6 @@ Pure-Julia, Enzyme.jl-compatible implementation of:
 Designed for grids >500×500 with threaded window parallelism.
 """
 
-using LinearAlgebra: dot
-
 export SolverConfig, cumulative_current, solve_single_window,
        compute_block_centers, window_bounds
 
