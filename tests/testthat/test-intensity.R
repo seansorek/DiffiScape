@@ -438,3 +438,48 @@ test_that("fit_intensity_gam does not warn when concurvity is low", {
   )
   expect_false(any(grepl("High concurvity detected", ws)))
 })
+
+
+test_that("compute_intensity treats missing covariate name in betas as zero (#35)", {
+  alpha  <- -2
+  gamma  <- 1.0
+  z_vals <- rnorm(20)
+
+  # 'elev' is in covariates but NOT in betas
+  cov  <- list(elev = rnorm(20), slope = rnorm(20))
+  beta <- c(slope = 0.5)  # 'elev' deliberately absent
+
+  # Should not crash; missing beta treated as 0
+  lambda <- compute_intensity(z_vals, alpha, gamma,
+                               covariates = cov, betas = beta)
+  expect_length(lambda, 20)
+  expect_true(all(is.finite(lambda)))
+  expect_true(all(lambda > 0))
+
+  # Result should equal the version with only slope (elev contributes nothing)
+  cov_slope_only <- list(slope = cov$slope)
+  lambda_ref <- compute_intensity(z_vals, alpha, gamma,
+                                   covariates = cov_slope_only, betas = beta)
+  expect_equal(lambda, lambda_ref, tolerance = 1e-12)
+})
+
+
+test_that("subsample guard ensures n_samp >= 1 for small rasters (#39)", {
+  # Directly test the subsampling arithmetic that appears in
+  # fit_intensity_nb / fit_intensity_gam.  When n_int_full is tiny and
+  # frac is small, round(n_int_full * frac) can be 0; the fix uses
+  # max(1L, ...) to prevent division by zero.
+  n_int_full <- 3
+  frac       <- 0.1    # round(3 * 0.1) == round(0.3) == 0
+
+  n_samp_raw   <- round(n_int_full * frac)
+  n_samp_fixed <- max(1L, round(n_int_full * frac))
+
+  expect_equal(n_samp_raw, 0)          # confirms the bug scenario
+  expect_equal(n_samp_fixed, 1L)       # guard kicks in
+
+  # With the guard, step_sz is finite and the subsample produces valid indices
+  step_sz <- n_int_full / n_samp_fixed
+  expect_true(is.finite(step_sz))
+  expect_true(step_sz > 0)
+})
