@@ -46,7 +46,10 @@ function run_omniscape(resistance_file::String, output_dir::String,
         println(io, "r_cutoff = Inf")
     end
 
-    Omniscape.run_omniscape(ini_path)
+    @eval import Logging
+    Logging.with_logger(Logging.NullLogger()) do
+        Omniscape.run_omniscape(ini_path)
+    end
 
     # Omniscape prefixes project_name to each output filename.
     # Rename to the bare names that R expects.
@@ -101,7 +104,10 @@ function run_circuitscape(resistance_file::String, focal_file::String,
         println(io, "output_file = $(joinpath(output_dir, "cs_output"))")
     end
 
-    Circuitscape.compute(ini_file)
+    @eval import Logging
+    Logging.with_logger(Logging.NullLogger()) do
+        Circuitscape.compute(ini_file)
+    end
 
     # Rename the current map to curmap.tif (R reads from there).
     src = findfirst(f -> occursin("curmap", f), readdir(output_dir))
