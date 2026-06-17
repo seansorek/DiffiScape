@@ -54,7 +54,7 @@ run_omniscape <- function(resistance,
   start <- Sys.time()
 
   ds_julia_call(
-    "DiffiScapeMod.run_omniscape",
+    "DiffiScape.run_omniscape",
     res_path_jl,
     out_dir_jl,
     as.integer(radius),
@@ -146,7 +146,7 @@ run_circuitscape <- function(resistance,
   start <- Sys.time()
 
   ds_julia_call(
-    "DiffiScapeMod.run_circuitscape",
+    "DiffiScape.run_circuitscape",
     res_path_jl,
     focal_path_jl,
     out_dir_jl,
@@ -251,7 +251,7 @@ run_cumulative_current <- function(resistance,
 
   start <- Sys.time()
 
-  julia_result <- ds_julia_call("DiffiScapeMod.cumulative_current",
+  julia_result <- ds_julia_call("DiffiScape.cumulative_current",
                                 R_mat,
                                 as.integer(radius),
                                 as.integer(block_size),

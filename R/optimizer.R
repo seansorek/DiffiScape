@@ -205,7 +205,7 @@ optimize_resistance_enzyme <- function(basis_stack,
       R_mat[is.na(R_mat)] <- 0
 
       # Julia solver
-      cum_mat <- ds_julia_call("DiffiScapeMod.cumulative_current",
+      cum_mat <- ds_julia_call("DiffiScape.cumulative_current",
                                 R_mat,
                                 as.integer(solver_radius),
                                 as.integer(solver_block))

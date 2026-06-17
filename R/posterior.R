@@ -114,7 +114,7 @@ laplace_resistance <- function(opt_result,
                       byrow = TRUE)
       R_mat[is.na(R_mat)] <- 0
 
-      cum_mat  <- ds_julia_call("DiffiScapeMod.cumulative_current",
+      cum_mat  <- ds_julia_call("DiffiScape.cumulative_current",
                                  R_mat, solver_radius, solver_block)
       cum_vec  <- as.vector(t(cum_mat))
       cum_rast <- terra::rast(template)
