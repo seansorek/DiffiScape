@@ -6,6 +6,7 @@ version = "0.1.0"
 Circuitscape = "2b7a1792-8151-5239-925d-e2b8fdfa3201"
 Enzyme = "7da242da-08ed-463a-9acd-ee780be4f1d9"
 Omniscape = "a38d70fc-99f5-11e9-1e3d-cbca093024c3"
+Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78c"
 
 [compat]
 julia = ">= 1.9"
