@@ -47,7 +47,7 @@ function run_omniscape(resistance_file::String, output_dir::String,
     end
 
     @eval import Logging
-    Logging.with_logger(Logging.NullLogger()) do
+    Logging.with_logger(Logging.ConsoleLogger(stderr, Logging.Warn)) do
         Omniscape.run_omniscape(ini_path)
     end
 
@@ -57,9 +57,11 @@ function run_omniscape(resistance_file::String, output_dir::String,
         ("cum_curr",      "cum_currmap.tif"),
         ("flow_potential", "flow_potential.tif"),
     ]
-        src = findfirst(f -> occursin(pattern, f), readdir(run_dir))
-        if !isnothing(src) && src != dest
-            mv(joinpath(run_dir, src), joinpath(run_dir, dest), force=true)
+        files = readdir(run_dir)
+        idx = findfirst(f -> occursin(pattern, f), files)
+        if idx !== nothing
+            src = files[idx]
+            src != dest && mv(joinpath(run_dir, src), joinpath(run_dir, dest), force=true)
         end
     end
 
@@ -105,14 +107,16 @@ function run_circuitscape(resistance_file::String, focal_file::String,
     end
 
     @eval import Logging
-    Logging.with_logger(Logging.NullLogger()) do
+    Logging.with_logger(Logging.ConsoleLogger(stderr, Logging.Warn)) do
         Circuitscape.compute(ini_file)
     end
 
     # Rename the current map to curmap.tif (R reads from there).
-    src = findfirst(f -> occursin("curmap", f), readdir(output_dir))
-    if !isnothing(src) && src != "curmap.tif"
-        mv(joinpath(output_dir, src), joinpath(output_dir, "curmap.tif"), force=true)
+    files = readdir(output_dir)
+    idx = findfirst(f -> occursin("curmap", f), files)
+    if idx !== nothing
+        src = files[idx]
+        src != "curmap.tif" && mv(joinpath(output_dir, src), joinpath(output_dir, "curmap.tif"), force=true)
     end
 
     return nothing
