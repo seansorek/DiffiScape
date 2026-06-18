@@ -26,7 +26,8 @@ function run_omniscape(resistance_file::String, output_dir::String,
                        source_from_resistance::Bool)
 
     run_dir = joinpath(output_dir, "omniscape_run")
-    mkpath(run_dir)
+    # Omniscape appends _1, _2, … if the directory already exists — delete it first.
+    isdir(run_dir) && rm(run_dir, recursive=true, force=true)
 
     ini_path = joinpath(output_dir, "omniscape_config.ini")
     run_dir_fwd = replace(run_dir, "\\" => "/")  # Omniscape INI needs consistent slashes
