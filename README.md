@@ -1,4 +1,4 @@
-# DiffiScape
+# DiffiScape 0.1.0
 
 **Landscape Connectivity Optimization — a modular R framework for resistance and intensity model experimentation**
 
