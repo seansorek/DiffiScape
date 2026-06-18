@@ -440,6 +440,42 @@ test_that("fit_intensity_gam does not warn when concurvity is low", {
 })
 
 
+test_that("GAM predict errors early when covariate rasters are missing (#37)", {
+  skip_on_cran()
+  skip_if_not_installed("mgcv")
+  set.seed(37)
+
+  r <- terra::rast(nrows = 10, ncols = 10, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(100, mean = 4))
+
+  n_obs   <- 25
+  obs_x   <- runif(n_obs, 0.05, 0.95)
+  obs_y   <- runif(n_obs, 0.05, 0.95)
+  cov_obs <- list(habitat = runif(n_obs))
+
+  r_cov <- terra::rast(r)
+  terra::values(r_cov) <- runif(100)
+  names(r_cov) <- "habitat"
+
+  # Fit a GAM that includes a covariate smooth
+  fit <- fit_intensity_gam(
+    connectivity_at_obs = abs(rnorm(n_obs, mean = 4)),
+    connectivity_raster = r,
+    obs_coords          = data.frame(x = obs_x, y = obs_y),
+    covariates_obs      = cov_obs,
+    covariates_rasters  = list(habitat = r_cov)
+  )
+
+  # Predict WITHOUT supplying covariates_rasters => should error with
+  # an actionable message mentioning "covariates_rasters"
+  expect_error(
+    predict_intensity(fit, r, covariates_rasters = NULL),
+    "covariates_rasters"
+  )
+})
+
+
 test_that("compute_intensity treats missing covariate name in betas as zero (#35)", {
   alpha  <- -2
   gamma  <- 1.0
@@ -461,6 +497,54 @@ test_that("compute_intensity treats missing covariate name in betas as zero (#35
   lambda_ref <- compute_intensity(z_vals, alpha, gamma,
                                    covariates = cov_slope_only, betas = beta)
   expect_equal(lambda, lambda_ref, tolerance = 1e-12)
+})
+
+
+test_that("available covariates are clamped in selection mode (#44)", {
+  skip_on_cran()
+  set.seed(44)
+
+  n_obs <- 30
+  n_avail <- 100
+  obs_conn  <- abs(rnorm(n_obs, mean = 5))
+  avail_conn <- abs(rnorm(n_avail, mean = 5))
+  obs_pts   <- data.frame(x = runif(n_obs), y = runif(n_obs))
+
+  # Covariates with values OUTSIDE [0,1]
+  cov_obs_raw   <- list(habitat = runif(n_obs, -0.5, 1.5))
+  cov_avail_raw <- list(habitat = runif(n_avail, -0.5, 1.5))
+
+  # The fix clamps both cov_obs and cov_int to [0,1].
+  # If cov_int is not clamped, values outside [0,1] would be passed raw.
+  # We verify the fit succeeds and the internal clamped values are in [0,1]
+  # by checking that results match a manually-clamped version.
+  cov_avail_clamped <- list(
+    habitat = pmax(pmin(cov_avail_raw$habitat, 1), 0)
+  )
+  cov_obs_clamped <- list(
+    habitat = pmax(pmin(cov_obs_raw$habitat, 1), 0)
+  )
+
+  fit_raw <- fit_intensity_selection(
+    connectivity_at_obs   = obs_conn,
+    available_connectivity = avail_conn,
+    obs_coords            = obs_pts,
+    covariates_obs        = cov_obs_raw,
+    available_covariates  = cov_avail_raw
+  )
+
+  fit_clamped <- fit_intensity_selection(
+    connectivity_at_obs   = obs_conn,
+    available_connectivity = avail_conn,
+    obs_coords            = obs_pts,
+    covariates_obs        = cov_obs_clamped,
+    available_covariates  = cov_avail_clamped
+  )
+
+  # With the bug fixed, both calls should produce identical results because
+  # the function internally clamps to [0,1] anyway
+  expect_equal(fit_raw$estimates, fit_clamped$estimates, tolerance = 1e-10)
+  expect_equal(fit_raw$loglik, fit_clamped$loglik, tolerance = 1e-10)
 })
 
 
