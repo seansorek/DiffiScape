@@ -29,15 +29,16 @@ function run_omniscape(resistance_file::String, output_dir::String,
     mkpath(run_dir)
 
     ini_path = joinpath(output_dir, "omniscape_config.ini")
+    run_dir_fwd = replace(run_dir, "\\" => "/")  # Omniscape INI needs consistent slashes
     open(ini_path, "w") do io
         println(io, "[Required]")
         println(io, "resistance_file = $resistance_file")
         println(io, "radius = $radius")
         println(io, "block_size = $block_size")
-        println(io, "project_name = $(joinpath(run_dir, "omniscape"))")
+        println(io, "project_name = $run_dir_fwd")
         println(io, "")
         println(io, "[Output options]")
-        println(io, "write_raw_currmap = false")
+        println(io, "write_raw_currmap = true")
         println(io, "calc_flow_potential = true")
         println(io, "calc_normalized_current = false")
         println(io, "")
