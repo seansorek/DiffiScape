@@ -184,16 +184,19 @@ params_vector_to_list <- function(theta, n_basis) {
 #' @param params Parameters (vector, list, or data.frame).
 #' @param basis_stack A [terra::SpatRaster].
 #' @param delta Perturbation size (default 0.1).
+#' @param link A [resistance_link] object (default [link_exp()]).
+#'   Must match the link used when fitting the model.
 #' @return A data.frame with columns `parameter`, `mean_pct_change`,
 #'   `sd_pct_change`, `min_pct_change`, `max_pct_change`.
 #' @export
-resistance_sensitivity <- function(params, basis_stack, delta = 0.1) {
+resistance_sensitivity <- function(params, basis_stack, delta = 0.1,
+                                   link = link_exp()) {
 
   validate_basis_stack(basis_stack)
   n_basis <- terra::nlyr(basis_stack)
   theta <- .params_to_vector(params, n_basis)
 
-  base_R  <- create_resistance_surface(theta, basis_stack)
+  base_R  <- create_resistance_surface(theta, basis_stack, link = link)
   base_v  <- terra::values(base_R)
   valid   <- !is.na(base_v)
 
@@ -202,7 +205,7 @@ resistance_sensitivity <- function(params, basis_stack, delta = 0.1) {
   rows <- lapply(seq_along(pnames), function(i) {
     tp        <- theta
     tp[i]     <- tp[i] + delta
-    R_plus    <- create_resistance_surface(tp, basis_stack)
+    R_plus    <- create_resistance_surface(tp, basis_stack, link = link)
     plus_v    <- terra::values(R_plus)
     pct       <- (plus_v[valid] - base_v[valid]) / base_v[valid] * 100
     data.frame(
@@ -235,12 +238,12 @@ resistance_sensitivity <- function(params, basis_stack, delta = 0.1) {
 #' interchangeably with [predict()], [print()], and [summary()].
 #'
 #' Two model types are supported:
-#' * \code{"parametric"} — the log-linear model
+#' * \code{"parametric"} --- the log-linear model
 #'   \eqn{\log R(x) = r_0 + \sum_k z_k \phi_k(x)}{log R(x) = r0 + sum z_k * phi_k(x)}
 #'   (the same model implemented by [create_resistance_surface()]).
 #'   Parameters are stored in \code{object$params}; the model is also wrapped
 #'   as a callable function in \code{object$fn} for consistent interchange.
-#' * \code{"custom"} — any user-supplied function
+#' * \code{"custom"} --- any user-supplied function
 #'   \code{f(basis_stack, ...)} that returns a single-layer [terra::SpatRaster].
 #'   This pathway supports machine-learning approaches such as Inverse
 #'   Reinforcement Learning (IRL) or convolutional neural networks (CNNs):
@@ -386,7 +389,8 @@ summary.resistance_model <- function(object, ...) {
   print(object)
   if (object$type == "parametric") {
     cat("\nSensitivity (delta = 0.1):\n")
-    sens <- resistance_sensitivity(object$params, object$basis_stack)
+    sens <- resistance_sensitivity(object$params, object$basis_stack,
+                                    link = object$link)
     print(sens, row.names = FALSE, digits = 4)
   }
   invisible(object)
@@ -432,7 +436,7 @@ predict.resistance_model <- function(object, basis_stack = NULL, ...) {
 #' ([run_torch_pipeline()] with `model_type = "irl"`, or [ds_optimize()] with
 #' `solver = "irl"`) as a custom [resistance_model()].  This lets a fit from the
 #' value-shaped pathway plug into [predict()], [ds_diagnose()], and the
-#' posterior tooling exactly like a parametric or other custom model — fulfilling
+#' posterior tooling exactly like a parametric or other custom model --- fulfilling
 #' the documented custom-IRL resistance pathway.
 #'
 #' @param irl_result A list returned by [run_torch_pipeline()] / [ds_optimize()]

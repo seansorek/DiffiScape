@@ -483,3 +483,55 @@ test_that("subsample guard ensures n_samp >= 1 for small rasters (#39)", {
   expect_true(is.finite(step_sz))
   expect_true(step_sz > 0)
 })
+
+
+test_that("fit_intensity_nb errors when covariates_obs supplied without covariates_rasters (#47)", {
+  skip_on_cran()
+  skip_if_not_installed("terra")
+  set.seed(47)
+
+  r <- terra::rast(nrows = 10, ncols = 10, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(100, mean = 5))
+
+  n_obs <- 20
+  obs_x <- runif(n_obs, 0.1, 0.9)
+  obs_y <- runif(n_obs, 0.1, 0.9)
+  conn_at_obs <- abs(rnorm(n_obs, mean = 5))
+
+  # Raster mode: covariates_obs supplied, covariates_rasters is NULL
+  expect_error(
+    fit_intensity_nb(
+      connectivity_at_obs = conn_at_obs,
+      connectivity_raster = r,
+      obs_coords          = data.frame(x = obs_x, y = obs_y),
+      covariates_obs      = list(elev = runif(n_obs)),
+      covariates_rasters  = NULL
+    ),
+    "covariates_obs supplied but covariates_rasters is NULL"
+  )
+})
+
+
+test_that("fit_intensity_nb errors when covariates_obs supplied without available_covariates in selection mode (#47)", {
+  skip_on_cran()
+  set.seed(48)
+
+  n_obs <- 20
+  n_avail <- 100
+  conn_at_obs <- abs(rnorm(n_obs, mean = 5))
+  avail_conn  <- abs(rnorm(n_avail, mean = 5))
+
+  # Selection mode: covariates_obs supplied, available_covariates is NULL
+  expect_error(
+    fit_intensity_nb(
+      connectivity_at_obs    = conn_at_obs,
+      connectivity_raster    = NULL,
+      obs_coords             = data.frame(x = runif(n_obs), y = runif(n_obs)),
+      covariates_obs         = list(elev = runif(n_obs)),
+      available_connectivity = avail_conn,
+      available_covariates   = NULL
+    ),
+    "covariates_obs supplied but available_covariates is NULL"
+  )
+})

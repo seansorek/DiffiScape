@@ -291,6 +291,30 @@ fit_intensity_nb <- function(connectivity_at_obs,
 
   if (!is.null(available_connectivity)) {
     # ---- selection mode: use explicit available locations -------------------
+
+    # Validate: if covariates_obs is supplied, available_covariates must also be
+    # supplied with the same names (#47)
+    if (!is.null(covariates_obs) && length(covariates_obs) > 0) {
+      if (is.null(available_covariates) || length(available_covariates) == 0) {
+        stop(
+          "covariates_obs supplied but available_covariates is NULL. ",
+          "Integration-side covariates must be provided for: ",
+          paste(names(covariates_obs), collapse = ", "),
+          call. = FALSE
+        )
+      }
+      obs_names <- sort(names(covariates_obs))
+      int_names <- sort(names(available_covariates))
+      missing_in_int <- setdiff(obs_names, int_names)
+      if (length(missing_in_int) > 0) {
+        stop(
+          "covariates_obs contains covariates missing from available_covariates: ",
+          paste(missing_in_int, collapse = ", "),
+          call. = FALSE
+        )
+      }
+    }
+
     C_obs_raw   <- pmax(connectivity_at_obs, config$min_connectivity)
     C_int_raw   <- pmax(available_connectivity, config$min_connectivity)
     int_weights <- rep(1, length(C_int_raw))
@@ -427,6 +451,27 @@ fit_intensity_nb <- function(connectivity_at_obs,
   if (!is.null(covariates_obs) && length(covariates_obs) > 0) {
     cov_obs <- lapply(covariates_obs, function(v) pmax(pmin(v, 1), 0))
     if (length(cov_names) == 0) cov_names <- names(covariates_obs)
+  }
+
+  # Validate: if covariates_obs is supplied, covariates_rasters must also be
+  # supplied with the same names (#47)
+  if (!is.null(cov_obs) && is.null(cov_int)) {
+    stop(
+      "covariates_obs supplied but covariates_rasters is NULL. ",
+      "Integration-side covariates must be provided for: ",
+      paste(names(covariates_obs), collapse = ", "),
+      call. = FALSE
+    )
+  }
+  if (!is.null(cov_obs) && !is.null(cov_int)) {
+    missing_in_int <- setdiff(names(cov_obs), names(cov_int))
+    if (length(missing_in_int) > 0) {
+      stop(
+        "covariates_obs contains covariates missing from covariates_rasters: ",
+        paste(missing_in_int, collapse = ", "),
+        call. = FALSE
+      )
+    }
   }
 
   # ---- optional residualisation -------------------------------------------
