@@ -238,12 +238,12 @@ resistance_sensitivity <- function(params, basis_stack, delta = 0.1,
 #' interchangeably with [predict()], [print()], and [summary()].
 #'
 #' Two model types are supported:
-#' * \code{"parametric"} --- the log-linear model
+#' * \code{"parametric"} — the log-linear model
 #'   \eqn{\log R(x) = r_0 + \sum_k z_k \phi_k(x)}{log R(x) = r0 + sum z_k * phi_k(x)}
 #'   (the same model implemented by [create_resistance_surface()]).
 #'   Parameters are stored in \code{object$params}; the model is also wrapped
 #'   as a callable function in \code{object$fn} for consistent interchange.
-#' * \code{"custom"} --- any user-supplied function
+#' * \code{"custom"} — any user-supplied function
 #'   \code{f(basis_stack, ...)} that returns a single-layer [terra::SpatRaster].
 #'   This pathway supports machine-learning approaches such as Inverse
 #'   Reinforcement Learning (IRL) or convolutional neural networks (CNNs):
@@ -436,7 +436,7 @@ predict.resistance_model <- function(object, basis_stack = NULL, ...) {
 #' ([run_torch_pipeline()] with `model_type = "irl"`, or [ds_optimize()] with
 #' `solver = "irl"`) as a custom [resistance_model()].  This lets a fit from the
 #' value-shaped pathway plug into [predict()], [ds_diagnose()], and the
-#' posterior tooling exactly like a parametric or other custom model --- fulfilling
+#' posterior tooling exactly like a parametric or other custom model — fulfilling
 #' the documented custom-IRL resistance pathway.
 #'
 #' @param irl_result A list returned by [run_torch_pipeline()] / [ds_optimize()]
