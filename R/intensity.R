@@ -369,6 +369,7 @@ fit_intensity_nb <- function(connectivity_at_obs,
       loglik           = -opt$value,
       convergence      = opt$convergence,
       c_scale          = std$c_scale,
+      min_connectivity = config$min_connectivity,
       log_conn_mean    = std$mu,
       log_conn_sd      = std$sigma,
       is_residualised  = !is.null(resid_info),
@@ -501,6 +502,7 @@ fit_intensity_nb <- function(connectivity_at_obs,
     loglik           = -opt$value,
     convergence      = opt$convergence,
     c_scale          = std$c_scale,
+    min_connectivity = config$min_connectivity,
     log_conn_mean    = std$mu,
     log_conn_sd      = std$sigma,
     is_residualised  = !is.null(resid_info),
@@ -720,6 +722,7 @@ fit_intensity_gam <- function(connectivity_at_obs,
     loglik           = as.numeric(stats::logLik(gam_fit)),
     convergence      = if (gam_fit$converged) 0L else 1L,
     c_scale          = std$c_scale,
+    min_connectivity = config$min_connectivity,
     log_conn_mean    = std$mu,
     log_conn_sd      = std$sigma,
     is_residualised  = !is.null(resid_info),
@@ -761,7 +764,8 @@ predict_intensity <- function(fit,
   gamma <- fit$estimates[["gamma"]]
 
   C_vals <- terra::values(connectivity_raster)
-  C_safe <- pmax(C_vals, 0)
+  mc     <- fit$min_connectivity %||% 0
+  C_safe <- pmax(C_vals, mc)
   z_vals <- (log1p(C_safe / fit$c_scale) - fit$log_conn_mean) /
             fit$log_conn_sd
 
@@ -834,7 +838,8 @@ fit_intensity_selection <- function(connectivity_at_obs,
   C_all   <- terra::values(connectivity_raster)
 
   valid <- !is.na(C_all)
-  C_v   <- pmax(C_all[valid], 0)
+  mc    <- fit$min_connectivity %||% 0
+  C_v   <- pmax(C_all[valid], mc)
   z_v   <- (log1p(C_v / fit$c_scale) - fit$log_conn_mean) / fit$log_conn_sd
 
   nd <- data.frame(
