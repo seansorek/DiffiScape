@@ -275,6 +275,63 @@ test_that("diagnose_model warns when Moran's I is significant", {
 })
 
 
+test_that("rasterise_deviance_residuals scales intensity by cell area (#45)", {
+  skip_on_cran()
+  set.seed(45)
+
+
+  # Use a raster where cell_area != 1 (10x10 grid over [0, 10] x [0, 10]
+  # => each cell is 1x1 = 1 km^2... change to [0, 20] => 2x2 = 4 km^2)
+  r <- terra::rast(nrows = 10, ncols = 10, xmin = 0, xmax = 20,
+                   ymin = 0, ymax = 20)
+  terra::values(r) <- abs(rnorm(100, mean = 4))
+  cell_area <- prod(terra::res(r))
+  expect_true(cell_area != 1)   # confirm non-unit cells
+
+  n_obs   <- 20
+  obs_pts <- data.frame(x = runif(n_obs, 1, 19),
+                        y = runif(n_obs, 1, 19))
+  nb_fit  <- fit_intensity_nb(
+    connectivity_at_obs = abs(rnorm(n_obs, mean = 4)),
+    connectivity_raster = r,
+    obs_coords          = obs_pts
+  )
+
+  # Get predicted intensity raster (lambda, per unit area)
+  pred_rast <- predict_intensity(nb_fit, r)
+  raw_lambda <- terra::values(pred_rast)[, 1]
+
+  # Compute residuals
+  resid_r <- rasterise_deviance_residuals(nb_fit, obs_pts, r)
+  vals    <- terra::values(resid_r)[, 1]
+
+  # In cells with 0 observations the expected count = lambda * cell_area.
+  # If the function mistakenly used bare lambda (not multiplied by cell_area),
+
+  # then for a cell with 0 observations and lambda = L it would compute
+  # residuals as if mu = L instead of mu = L * cell_area.
+  # We verify by recomputing expected counts manually.
+  coords <- as.matrix(obs_pts)
+  cells  <- terra::cellFromXY(r, coords)
+  n_cells <- terra::ncell(r)
+  counts  <- rep(0L, n_cells)
+  tab     <- table(cells)
+  counts[as.integer(names(tab))] <- as.integer(tab)
+
+  # Pick a cell with 0 obs and valid lambda
+  zero_cells <- which(counts == 0 & !is.na(raw_lambda) & raw_lambda > 0)
+  expect_true(length(zero_cells) > 0)
+  idx <- zero_cells[1]
+
+  mu_correct <- raw_lambda[idx] * cell_area
+  size <- unname(nb_fit$estimates["size"])
+  if (is.null(size) || is.na(size)) size <- 1
+
+  expected_resid <- unname(compute_deviance_residuals(0L, mu_correct, size))
+  expect_equal(unname(vals[idx]), expected_resid, tolerance = 1e-6)
+})
+
+
 test_that("diagnose_model does not warn when Moran's I is non-significant", {
   skip_on_cran()
   skip_if_not_installed("spdep")

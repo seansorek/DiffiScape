@@ -116,14 +116,15 @@ rasterise_deviance_residuals <- function(intensity_fit,
   # directly from fit_intensity_nb/gam (which has $estimates at the top level).
   fit_obj <- intensity_fit$intensity_fit_obj %||% intensity_fit
 
-  # Predicted intensity per cell
+  # Predicted intensity per cell (lambda * cell_area = expected count)
   pred_rast <- predict_intensity(
     fit_obj,
     connectivity,
     covariates_rasters = covariates_rasters,
     config             = intensity_config
   )
-  fitted_vals <- terra::values(pred_rast)[, 1]
+  cell_area   <- prod(terra::res(connectivity))
+  fitted_vals <- terra::values(pred_rast)[, 1] * cell_area
 
   # Resolve the estimates vector for size / extra-param extraction
   params_vec <- fit_obj$estimates %||% intensity_fit$intensity_params

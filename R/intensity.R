@@ -324,7 +324,9 @@ fit_intensity_nb <- function(connectivity_at_obs,
     z_obs  <- std$z_obs
     z_int  <- std$z_int
 
-    cov_int  <- available_covariates
+    cov_int  <- if (!is.null(available_covariates)) {
+      lapply(available_covariates, function(v) pmax(pmin(v, 1), 0))
+    } else NULL
     cov_obs  <- if (!is.null(covariates_obs) && length(covariates_obs) > 0) {
       lapply(covariates_obs, function(v) pmax(pmin(v, 1), 0))
     } else {
@@ -898,6 +900,16 @@ fit_intensity_selection <- function(connectivity_at_obs,
       cv <- terra::values(covariates_rasters[[nm]])
       nd[[nm]] <- pmax(pmin(cv[valid], 1), 0)
     }
+  }
+
+  # Early error when the GAM expects covariates that are not in newdata
+
+  cov_terms <- setdiff(names(gam_mod$var.summary), names(nd))
+  if (length(cov_terms) > 0) {
+    stop(sprintf(
+      "GAM model requires covariate rasters not supplied via covariates_rasters: %s. Pass these rasters to predict_intensity() / ds_predict().",
+      paste(cov_terms, collapse = ", ")
+    ))
   }
 
   pred_link <- stats::predict(gam_mod, newdata = nd, type = "response")
