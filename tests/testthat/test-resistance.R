@@ -254,3 +254,43 @@ test_that("predict() on custom model accepts extra arguments via ...", {
   expect_false(isTRUE(all.equal(terra::values(R1), terra::values(R2))))
 })
 
+
+test_that("resistance_sensitivity uses the provided link function (#48)", {
+  r1 <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                    ymin = 0, ymax = 1)
+  terra::values(r1) <- runif(25)
+  basis <- create_basis_stack(list(a = r1), rescale = FALSE)
+
+  params <- list(r_0 = 1, z_1 = 0.5)
+
+  # Default link (exp) vs softplus should give different sensitivity values
+  sens_exp     <- resistance_sensitivity(params, basis, link = link_exp())
+  sens_softplus <- resistance_sensitivity(params, basis, link = link_softplus())
+
+  expect_s3_class(sens_exp, "data.frame")
+  expect_s3_class(sens_softplus, "data.frame")
+  expect_equal(nrow(sens_exp), 2)
+  expect_equal(nrow(sens_softplus), 2)
+
+  # The percentage changes should differ between link functions
+  expect_false(
+    isTRUE(all.equal(sens_exp$mean_pct_change,
+                     sens_softplus$mean_pct_change)),
+    info = "Sensitivity should differ between exp and softplus links"
+  )
+})
+
+
+test_that("summary.resistance_model forwards link to resistance_sensitivity (#48)", {
+  r1 <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                    ymin = 0, ymax = 1)
+  terra::values(r1) <- runif(25)
+  basis <- create_basis_stack(list(a = r1), rescale = FALSE)
+
+  # Create a model with softplus link
+  m <- resistance_model(c(r_0 = 1, z_1 = 0.5), basis, link = link_softplus())
+  expect_equal(m$link$name, "softplus")
+
+  # summary() should run without error and use the correct link
+  expect_output(summary(m), "Sensitivity")
+})
