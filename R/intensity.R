@@ -697,8 +697,20 @@ fit_intensity_gam <- function(connectivity_at_obs,
   p1  <- stats::predict(gam_fit, newdata = nd1, type = "link")
   gamma_eff <- as.numeric((p1 - p0) / eps)
 
-  estimates <- c(alpha = unname(alpha_eff), gamma = unname(gamma_eff))
-  se        <- c(alpha = NA_real_, gamma = NA_real_)
+  # When fit with mgcv::nb(), the NB dispersion ("theta") is estimated
+  # jointly with the smooths. Extract it so the family-aware diagnostic
+  # path can use it instead of falling back to k = 1 (Poisson).
+  gam_theta <- tryCatch(
+    {
+      th <- gam_fit$family$getTheta(TRUE)
+      if (length(th) >= 1L) as.numeric(th[1L]) else NA_real_
+    },
+    error = function(e) NA_real_
+  )
+
+  estimates <- c(alpha = unname(alpha_eff), gamma = unname(gamma_eff),
+                 size  = unname(gam_theta))
+  se        <- c(alpha = NA_real_, gamma = NA_real_, size = NA_real_)
 
   edf <- sum(smry$edf) + length(stats::coef(gam_fit))
 
