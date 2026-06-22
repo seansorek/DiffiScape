@@ -271,10 +271,30 @@ compute_intensity <- function(z, alpha, gamma,
 #' Inner-loop MLE for `alpha`, `gamma`, optional covariate betas, and NB
 #' dispersion.  Uses [stats::optim()] with `"L-BFGS-B"`.
 #'
-#' @inheritParams fit_intensity_nb
+#' @param connectivity_at_obs Numeric vector of raw connectivity at
+#'   observation locations.
+#' @param connectivity_raster A [terra::SpatRaster] for integration.
+#' @param obs_coords Data.frame / matrix with `x, y`.
+#' @param covariates_obs Named list of covariate vectors at observations
+#'   (each 0–1 scaled; `NULL` to omit).
+#' @param covariates_rasters Named list of [terra::SpatRaster] for
+#'   integration-grid covariates (`NULL` to omit).
+#' @param residualise Logical; residualise connectivity against
+#'   covariates before fitting (default `FALSE`).
 #' @param config List from [default_intensity_config()].
-#' @return A list matching the interface of [fit_intensity_nb()], plus
-#'   `gam_model`, `gam_edf`, `gam_deviance_explained`, `gam_aic`.
+#' @param family An [intensity_family] object.  If `NULL` (default),
+#'   uses [family_negbin()] for backward compatibility.
+#' @param available_connectivity Numeric vector of raw connectivity at
+#'   available/background locations.  When non-`NULL`, bypasses raster
+#'   quadrature and uses these values with unit weights instead.
+#' @param available_covariates Named list of covariate vectors at available
+#'   locations.  Used together with `available_connectivity`.
+#' @param response Optional numeric vector of observed responses.
+#'   Required when `family` is `family_gaussian()`; ignored for count
+#'   families such as `family_negbin()` and `family_poisson()`.
+#' @return A list with `estimates`, `se`, `loglik`, `convergence`,
+#'   `c_scale`, `log_conn_mean`, `log_conn_sd`,
+#'   `residualisation_info`.
 #' @export
 fit_intensity_nb <- function(connectivity_at_obs,
                              connectivity_raster,
