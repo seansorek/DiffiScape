@@ -324,11 +324,11 @@ test_that("rasterise_deviance_residuals scales intensity by cell area (#45)", {
   idx <- zero_cells[1]
 
   mu_correct <- raw_lambda[idx] * cell_area
-  size <- nb_fit$estimates["size"]
+  size <- unname(nb_fit$estimates["size"])
   if (is.null(size) || is.na(size)) size <- 1
 
-  expected_resid <- compute_deviance_residuals(0L, mu_correct, size)
-  expect_equal(vals[idx], expected_resid, tolerance = 1e-6)
+  expected_resid <- unname(compute_deviance_residuals(0L, mu_correct, size))
+  expect_equal(unname(vals[idx]), expected_resid, tolerance = 1e-6)
 })
 
 
