@@ -11,7 +11,8 @@ fit_intensity_selection(
   available_covariates = NULL,
   covariates_obs = NULL,
   config = default_intensity_config(),
-  family = family_rsf()
+  family = family_rsf(),
+  response = NULL
 )
 }
 \arguments{
@@ -32,6 +33,10 @@ locations (\code{NULL} to omit).}
 \item{config}{List from \code{\link[=default_intensity_config]{default_intensity_config()}}.}
 
 \item{family}{An \link{intensity_family} object (default \code{\link[=family_rsf]{family_rsf()}}).}
+
+\item{response}{Optional numeric vector of observed responses.
+Required when \code{family} is \code{family_gaussian()}; ignored for count
+families such as \code{family_negbin()} and \code{family_poisson()}.}
 }
 \value{
 A list matching the interface of \code{\link[=fit_intensity_nb]{fit_intensity_nb()}}.

@@ -880,6 +880,9 @@ predict_intensity <- function(fit,
 #'   (`NULL` to omit).
 #' @param config List from [default_intensity_config()].
 #' @param family An [intensity_family] object (default [family_rsf()]).
+#' @param response Optional numeric vector of observed responses.
+#'   Required when `family` is `family_gaussian()`; ignored for count
+#'   families such as `family_negbin()` and `family_poisson()`.
 #' @return A list matching the interface of [fit_intensity_nb()].
 #' @export
 fit_intensity_selection <- function(connectivity_at_obs,
