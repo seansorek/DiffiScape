@@ -759,7 +759,7 @@ fit_intensity_gam <- function(connectivity_at_obs,
                  size  = unname(gam_theta))
   se        <- c(alpha = NA_real_, gamma = NA_real_, size = NA_real_)
 
-  edf <- sum(smry$edf) + length(stats::coef(gam_fit))
+  edf <- sum(smry$edf)
 
   list(
     estimates        = estimates,
