@@ -247,17 +247,65 @@ test_that("family_gaussian with known_sd has 0 extra params", {
 
 test_that("family_gaussian negloglik returns finite value", {
   fam <- family_gaussian()
-  # theta = c(alpha, gamma, log_sd); z_obs interpreted as observed log-intensity
   set.seed(10)
-  z_obs <- abs(rnorm(20, mean = 2))
+  z_obs <- rnorm(20)
+  y_obs <- exp(abs(rnorm(20, mean = 2)))
   nll <- fam$negloglik_fn(
     theta       = c(0, 1, log(1)),
     z_obs       = z_obs,
     z_int       = rnorm(50),
     int_weights = rep(0.01, 50),
-    obs_weights = rep(1, 20)
+    obs_weights = rep(1, 20),
+    y_obs       = y_obs
   )
   expect_true(is.finite(nll))
+})
+
+test_that("family_gaussian errors without y_obs", {
+  fam <- family_gaussian()
+  expect_error(
+    fam$negloglik_fn(
+      theta       = c(0, 1, log(1)),
+      z_obs       = rnorm(10),
+      z_int       = rnorm(20),
+      int_weights = rep(0.01, 20),
+      obs_weights = rep(1, 10)
+    ),
+    "y_obs"
+  )
+})
+
+test_that("family_gaussian recovers known parameters", {
+  set.seed(42)
+  n <- 500
+  z_obs <- rnorm(n)
+  z_int <- rnorm(200)
+
+  true_alpha <- 1.0
+  true_gamma <- 0.5
+  true_sd    <- 0.3
+
+  log_mu <- true_alpha + true_gamma * z_obs
+  y_obs  <- exp(rnorm(n, mean = log_mu, sd = true_sd))
+
+  fam   <- family_gaussian()
+  inits <- fam$init_fn(0)
+
+  opt <- stats::optim(
+    par    = inits$start,
+    fn     = fam$negloglik_fn,
+    method = "L-BFGS-B",
+    lower  = inits$lower,
+    upper  = inits$upper,
+    z_obs  = z_obs, z_int = z_int,
+    int_weights = rep(0.01, 200), obs_weights = rep(1, n),
+    y_obs  = y_obs,
+    cov_obs = NULL, cov_int = NULL, cov_names = character(0)
+  )
+
+  expect_equal(opt$par[1], true_alpha, tolerance = 0.15)
+  expect_equal(opt$par[2], true_gamma, tolerance = 0.15)
+  expect_equal(exp(opt$par[3]), true_sd, tolerance = 0.1)
 })
 
 test_that("family_gaussian init_fn includes log_sd when estimating SD", {

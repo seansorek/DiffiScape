@@ -104,7 +104,8 @@ family_negbin <- function() {
                             int_weights, obs_weights,
                             cov_obs   = NULL,
                             cov_int   = NULL,
-                            cov_names = character(0)) {
+                            cov_names = character(0),
+                            ...) {
       alpha <- theta[1]
       gamma <- theta[2]
       n_cov <- length(cov_names)
@@ -176,7 +177,8 @@ family_poisson <- function() {
                             int_weights, obs_weights,
                             cov_obs   = NULL,
                             cov_int   = NULL,
-                            cov_names = character(0)) {
+                            cov_names = character(0),
+                            ...) {
       alpha <- theta[1]
       gamma <- theta[2]
       n_cov <- length(cov_names)
@@ -239,7 +241,14 @@ family_gaussian <- function(known_sd = NULL) {
                             int_weights, obs_weights,
                             cov_obs   = NULL,
                             cov_int   = NULL,
-                            cov_names = character(0)) {
+                            cov_names = character(0),
+                            y_obs     = NULL,
+                            ...) {
+      if (is.null(y_obs)) {
+        stop("family_gaussian requires an observed response vector (y_obs). ",
+             "Pass `response` to fit_intensity_nb() or supply y_obs directly.",
+             call. = FALSE)
+      }
       alpha <- theta[1]
       gamma <- theta[2]
       n_cov <- length(cov_names)
@@ -257,8 +266,7 @@ family_gaussian <- function(known_sd = NULL) {
       }
 
       mu_obs <- compute_intensity(z_obs, alpha, gamma, cov_obs, betas)
-      # Gaussian likelihood on log-intensity
-      resid <- log(pmax(mu_obs, 1e-300)) - log(pmax(z_obs, 1e-300))
+      resid <- log(pmax(mu_obs, 1e-300)) - log(pmax(y_obs, 1e-300))
       negll <- 0.5 * sum(obs_weights * (resid / sd_val)^2) +
                sum(obs_weights) * log(sd_val) +
                0.5 * sum(obs_weights) * log(2 * pi)
@@ -310,7 +318,8 @@ family_zinb <- function() {
                             int_weights, obs_weights,
                             cov_obs   = NULL,
                             cov_int   = NULL,
-                            cov_names = character(0)) {
+                            cov_names = character(0),
+                            ...) {
       alpha <- theta[1]
       gamma <- theta[2]
       n_cov <- length(cov_names)
@@ -396,7 +405,8 @@ family_rsf <- function() {
                             int_weights, obs_weights,
                             cov_obs   = NULL,
                             cov_int   = NULL,
-                            cov_names = character(0)) {
+                            cov_names = character(0),
+                            ...) {
       gamma <- theta[1]
       n_cov <- length(cov_names)
       betas <- if (n_cov > 0) {
@@ -476,7 +486,8 @@ family_rsp <- function(background_weight = 1000) {
                             int_weights, obs_weights,
                             cov_obs   = NULL,
                             cov_int   = NULL,
-                            cov_names = character(0)) {
+                            cov_names = character(0),
+                            ...) {
       alpha <- theta[1]
       gamma <- theta[2]
       n_cov <- length(cov_names)
@@ -590,7 +601,8 @@ family_clogit <- function(stratum_ids_used  = NULL,
                             int_weights, obs_weights,
                             cov_obs   = NULL,
                             cov_int   = NULL,
-                            cov_names = character(0)) {
+                            cov_names = character(0),
+                            ...) {
       gamma <- theta[1]
       n_cov <- length(cov_names)
       betas <- if (n_cov > 0) {
