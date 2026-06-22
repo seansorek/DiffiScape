@@ -205,7 +205,7 @@ optimize_resistance_enzyme <- function(basis_stack,
       R_mat[is.na(R_mat)] <- 0
 
       # Julia solver
-      cum_mat <- ds_julia_call("DiffiScapeMod.cumulative_current",
+      cum_mat <- ds_julia_call("DiffiScape.cumulative_current",
                                 R_mat,
                                 as.integer(solver_radius),
                                 as.integer(solver_block))
@@ -585,14 +585,35 @@ evaluate_full_model <- function(resistance_params,
 #' @keywords internal
 .fit_surrogate <- function(X, y) {
   if (is.data.frame(X)) X <- as.matrix(X)
-  DiceKriging::km(
-    formula    = ~1,
-    design     = X,
-    response   = y,
-    covtype    = "matern5_2", # TODO make the GP fully configurable
-    control    = list(trace = FALSE),
-    nugget.estim = TRUE,
-    nugget     = 1
+
+  # Exact-duplicate rows make the correlation matrix singular; remove them.
+  keep <- !duplicated(X)
+  X <- X[keep, , drop = FALSE]
+  y <- y[keep]
+
+  tryCatch(
+    DiceKriging::km(
+      formula      = ~1,
+      design       = X,
+      response     = y,
+      covtype      = "matern5_2",
+      control      = list(trace = FALSE),
+      nugget.estim = TRUE,
+      nugget       = 1
+    ),
+    error = function(e) {
+      # Near-duplicate points can still make the estimated-nugget path fail.
+      # Retry with a fixed regularising nugget (1 % of response variance).
+      DiceKriging::km(
+        formula      = ~1,
+        design       = X,
+        response     = y,
+        covtype      = "matern5_2",
+        control      = list(trace = FALSE),
+        nugget.estim = FALSE,
+        nugget       = max(stats::var(y) * 0.01, 1e-2)
+      )
+    }
   )
 }
 

@@ -1,3 +1,17 @@
+
+# fit_intensity_nb() renames the first extra parameter for negbin/zinb
+# families to "size" in the estimates vector, but family$extra_param_names
+# still reports the optimizer-scale name (e.g. "log_nb_theta"). Mirror that
+# rename when looking up extra params on a fit, otherwise the family-aware
+# deviance-residual path silently gets NA and falls back to k=1.
+.fit_extra_param_names <- function(family) {
+  ep <- family$extra_param_names
+  if (length(ep) > 0 && isTRUE(family$name %in% c("negbin", "zinb"))) {
+    ep[1L] <- "size"
+  }
+  ep
+}
+
 # ============================================================================
 # Diagnostics
 #
@@ -120,7 +134,7 @@ rasterise_deviance_residuals <- function(intensity_fit,
   dev_resid <- rep(NA_real_, n_cells)
 
   if (!is.null(family)) {
-    ep_names <- family$extra_param_names
+    ep_names <- .fit_extra_param_names(family)
     extra_p  <- params_vec[ep_names]
     dev_resid[valid] <- family$deviance_residuals_fn(
       counts[valid], fitted_vals[valid], extra_p
@@ -332,7 +346,7 @@ diagnose_model <- function(intensity_fit,
     size <- params_vec_plt["size"]
     if (is.null(size) || is.na(size)) size <- 1
 
-    ep_names    <- if (!is.null(family)) family$extra_param_names else NULL
+    ep_names    <- if (!is.null(family)) .fit_extra_param_names(family) else NULL
     extra_p_plt <- params_vec_plt[ep_names]
 
     grDevices::dev.new()

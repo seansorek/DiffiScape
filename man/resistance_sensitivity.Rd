@@ -4,7 +4,7 @@
 \alias{resistance_sensitivity}
 \title{Numerical sensitivity analysis for resistance parameters}
 \usage{
-resistance_sensitivity(params, basis_stack, delta = 0.1)
+resistance_sensitivity(params, basis_stack, delta = 0.1, link = link_exp())
 }
 \arguments{
 \item{params}{Parameters (vector, list, or data.frame).}
@@ -12,6 +12,9 @@ resistance_sensitivity(params, basis_stack, delta = 0.1)
 \item{basis_stack}{A \link[terra:SpatRaster-class]{terra::SpatRaster}.}
 
 \item{delta}{Perturbation size (default 0.1).}
+
+\item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).
+Must match the link used when fitting the model.}
 }
 \value{
 A data.frame with columns \code{parameter}, \code{mean_pct_change},

@@ -8,92 +8,87 @@ using Circuitscape
 export run_omniscape, run_circuitscape
 
 """
-    run_omniscape(resistance_file; radius=13, block_size=5, source_threshold=0.0)
+    run_omniscape(resistance_file, output_dir, radius, block_size, source_from_resistance)
 
-Run Omniscape on a resistance raster file and return paths to the output
-rasters (cumulative current and flow potential).
+Run Omniscape on a resistance raster file, writing outputs into
+`output_dir/omniscape_run/`. R reads `cum_currmap.tif` and
+`flow_potential.tif` from that subdirectory.
 
 # Arguments
 - `resistance_file::String`: Path to a GeoTIFF resistance raster.
+- `output_dir::String`: Directory managed by the R caller.
 - `radius::Int`: Moving-window radius (pixels).
 - `block_size::Int`: Block aggregation size.
-- `source_threshold::Float64`: Minimum source strength.
-
-# Returns
-A `Dict{String,String}` with keys `"cum_current"` and `"flow_potential"`
-pointing to output GeoTIFF paths.
+- `source_from_resistance::Bool`: Derive source strength from resistance.
 """
-function run_omniscape(resistance_file::String;
-                       radius::Int=13,
-                       block_size::Int=5,
-                       source_threshold::Float64=0.0)
+function run_omniscape(resistance_file::String, output_dir::String,
+                       radius::Int, block_size::Int,
+                       source_from_resistance::Bool)
 
-    output_dir = mktempdir()
+    run_dir = joinpath(output_dir, "omniscape_run")
+    # Omniscape appends _1, _2, … if the directory already exists — delete it first.
+    isdir(run_dir) && rm(run_dir, recursive=true, force=true)
 
-    # Build Omniscape configuration
-    config = Dict{String,String}(
-        "resistance_file"         => resistance_file,
-        "radius"                  => string(radius),
-        "block_size"              => string(block_size),
-        "source_threshold"        => string(source_threshold),
-        "project_name"            => joinpath(output_dir, "omniscape"),
-        "source_from_resistance"  => "true",
-        "r_cutoff"                => "Inf",
-        "calc_normalized_current" => "false",
-        "calc_flow_potential"     => "true",
-        "write_raw_currmap"       => "false",
-    )
+    ini_path = joinpath(output_dir, "omniscape_config.ini")
+    run_dir_fwd = replace(run_dir, "\\" => "/")  # Omniscape INI needs consistent slashes
+    open(ini_path, "w") do io
+        println(io, "[Required]")
+        println(io, "resistance_file = $resistance_file")
+        println(io, "radius = $radius")
+        println(io, "block_size = $block_size")
+        println(io, "project_name = $run_dir_fwd")
+        println(io, "")
+        println(io, "[Output options]")
+        println(io, "write_raw_currmap = true")
+        println(io, "calc_flow_potential = true")
+        println(io, "calc_normalized_current = false")
+        println(io, "")
+        println(io, "[Optional]")
+        println(io, "source_from_resistance = $(source_from_resistance ? "true" : "false")")
+        println(io, "r_cutoff = Inf")
+    end
 
-    # Run
-    Omniscape.run_omniscape(config)
+    @eval import Logging
+    Logging.with_logger(Logging.ConsoleLogger(stderr, Logging.Warn)) do
+        Omniscape.run_omniscape(ini_path)
+    end
 
-    # Locate outputs
-    cum_file  = joinpath(output_dir, "omniscape_cum_currmap.tif")
-    flow_file = joinpath(output_dir, "omniscape_flow_potential.tif")
-
-    if !isfile(cum_file)
-        # Try alternative naming
-        possible = filter(f -> occursin("cum_curr", f), readdir(output_dir))
-        if !isempty(possible)
-            cum_file = joinpath(output_dir, first(possible))
+    # Omniscape prefixes project_name to each output filename.
+    # Rename to the bare names that R expects.
+    for (pattern, dest) in [
+        ("cum_curr",      "cum_currmap.tif"),
+        ("flow_potential", "flow_potential.tif"),
+    ]
+        files = readdir(run_dir)
+        idx = findfirst(f -> occursin(pattern, f), files)
+        if idx !== nothing
+            src = files[idx]
+            src != dest && mv(joinpath(run_dir, src), joinpath(run_dir, dest), force=true)
         end
     end
 
-    if !isfile(flow_file)
-        possible = filter(f -> occursin("flow_potential", f), readdir(output_dir))
-        if !isempty(possible)
-            flow_file = joinpath(output_dir, first(possible))
-        end
-    end
-
-    return Dict{String,String}(
-        "cum_current"    => cum_file,
-        "flow_potential" => flow_file,
-        "output_dir"     => output_dir
-    )
+    return nothing
 end
 
 
 """
-    run_circuitscape(resistance_file, focal_file; mode="pairwise")
+    run_circuitscape(resistance_file, focal_file, output_dir, mode)
 
-Run Circuitscape on a resistance raster with focal nodes.
+Run Circuitscape on a resistance raster with focal nodes, writing the
+current map to `output_dir/curmap.tif` (if Circuitscape produces a
+GeoTIFF; otherwise the file is left in its native format for the R
+caller to handle).
 
 # Arguments
 - `resistance_file::String`: Path to resistance GeoTIFF.
 - `focal_file::String`: Path to focal nodes file (CSV or raster).
+- `output_dir::String`: Directory managed by the R caller.
 - `mode::String`: `"pairwise"` or `"one-to-all"`.
-
-# Returns
-A `Dict{String,String}` with key `"current_map"` pointing to the output.
 """
-function run_circuitscape(resistance_file::String,
-                          focal_file::String;
-                          mode::String="pairwise")
+function run_circuitscape(resistance_file::String, focal_file::String,
+                          output_dir::String, mode::String)
 
-    output_dir = mktempdir()
-    ini_file   = joinpath(output_dir, "cs_config.ini")
-
+    ini_file = joinpath(output_dir, "cs_config.ini")
     scenario = mode == "one-to-all" ? "one-to-all" : "pairwise"
 
     open(ini_file, "w") do io
@@ -113,18 +108,18 @@ function run_circuitscape(resistance_file::String,
         println(io, "output_file = $(joinpath(output_dir, "cs_output"))")
     end
 
-    Circuitscape.compute(ini_file)
-
-    current_file = joinpath(output_dir, "cs_output_curmap.asc")
-    if !isfile(current_file)
-        possible = filter(f -> occursin("curmap", f), readdir(output_dir))
-        if !isempty(possible)
-            current_file = joinpath(output_dir, first(possible))
-        end
+    @eval import Logging
+    Logging.with_logger(Logging.ConsoleLogger(stderr, Logging.Warn)) do
+        Circuitscape.compute(ini_file)
     end
 
-    return Dict{String,String}(
-        "current_map" => current_file,
-        "output_dir"  => output_dir
-    )
+    # Rename the current map to curmap.tif (R reads from there).
+    files = readdir(output_dir)
+    idx = findfirst(f -> occursin("curmap", f), files)
+    if idx !== nothing
+        src = files[idx]
+        src != "curmap.tif" && mv(joinpath(output_dir, src), joinpath(output_dir, "curmap.tif"), force=true)
+    end
+
+    return nothing
 end

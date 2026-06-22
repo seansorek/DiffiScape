@@ -291,6 +291,30 @@ fit_intensity_nb <- function(connectivity_at_obs,
 
   if (!is.null(available_connectivity)) {
     # ---- selection mode: use explicit available locations -------------------
+
+    # Validate: if covariates_obs is supplied, available_covariates must also be
+    # supplied with the same names (#47)
+    if (!is.null(covariates_obs) && length(covariates_obs) > 0) {
+      if (is.null(available_covariates) || length(available_covariates) == 0) {
+        stop(
+          "covariates_obs supplied but available_covariates is NULL. ",
+          "Integration-side covariates must be provided for: ",
+          paste(names(covariates_obs), collapse = ", "),
+          call. = FALSE
+        )
+      }
+      obs_names <- sort(names(covariates_obs))
+      int_names <- sort(names(available_covariates))
+      missing_in_int <- setdiff(obs_names, int_names)
+      if (length(missing_in_int) > 0) {
+        stop(
+          "covariates_obs contains covariates missing from available_covariates: ",
+          paste(missing_in_int, collapse = ", "),
+          call. = FALSE
+        )
+      }
+    }
+
     C_obs_raw   <- pmax(connectivity_at_obs, config$min_connectivity)
     C_int_raw   <- pmax(available_connectivity, config$min_connectivity)
     int_weights <- rep(1, length(C_int_raw))
@@ -371,6 +395,7 @@ fit_intensity_nb <- function(connectivity_at_obs,
       loglik           = -opt$value,
       convergence      = opt$convergence,
       c_scale          = std$c_scale,
+      min_connectivity = config$min_connectivity,
       log_conn_mean    = std$mu,
       log_conn_sd      = std$sigma,
       is_residualised  = !is.null(resid_info),
@@ -429,6 +454,27 @@ fit_intensity_nb <- function(connectivity_at_obs,
   if (!is.null(covariates_obs) && length(covariates_obs) > 0) {
     cov_obs <- lapply(covariates_obs, function(v) pmax(pmin(v, 1), 0))
     if (length(cov_names) == 0) cov_names <- names(covariates_obs)
+  }
+
+  # Validate: if covariates_obs is supplied, covariates_rasters must also be
+  # supplied with the same names (#47)
+  if (!is.null(cov_obs) && is.null(cov_int)) {
+    stop(
+      "covariates_obs supplied but covariates_rasters is NULL. ",
+      "Integration-side covariates must be provided for: ",
+      paste(names(covariates_obs), collapse = ", "),
+      call. = FALSE
+    )
+  }
+  if (!is.null(cov_obs) && !is.null(cov_int)) {
+    missing_in_int <- setdiff(names(cov_obs), names(cov_int))
+    if (length(missing_in_int) > 0) {
+      stop(
+        "covariates_obs contains covariates missing from covariates_rasters: ",
+        paste(missing_in_int, collapse = ", "),
+        call. = FALSE
+      )
+    }
   }
 
   # ---- optional residualisation -------------------------------------------
@@ -503,6 +549,7 @@ fit_intensity_nb <- function(connectivity_at_obs,
     loglik           = -opt$value,
     convergence      = opt$convergence,
     c_scale          = std$c_scale,
+    min_connectivity = config$min_connectivity,
     log_conn_mean    = std$mu,
     log_conn_sd      = std$sigma,
     is_residualised  = !is.null(resid_info),
@@ -699,10 +746,22 @@ fit_intensity_gam <- function(connectivity_at_obs,
   p1  <- stats::predict(gam_fit, newdata = nd1, type = "link")
   gamma_eff <- as.numeric((p1 - p0) / eps)
 
-  estimates <- c(alpha = unname(alpha_eff), gamma = unname(gamma_eff))
-  se        <- c(alpha = NA_real_, gamma = NA_real_)
+  # When fit with mgcv::nb(), the NB dispersion ("theta") is estimated
+  # jointly with the smooths. Extract it so the family-aware diagnostic
+  # path can use it instead of falling back to k = 1 (Poisson).
+  gam_theta <- tryCatch(
+    {
+      th <- gam_fit$family$getTheta(TRUE)
+      if (length(th) >= 1L) as.numeric(th[1L]) else NA_real_
+    },
+    error = function(e) NA_real_
+  )
 
-  edf <- sum(smry$edf) + length(stats::coef(gam_fit))
+  estimates <- c(alpha = unname(alpha_eff), gamma = unname(gamma_eff),
+                 size  = unname(gam_theta))
+  se        <- c(alpha = NA_real_, gamma = NA_real_, size = NA_real_)
+
+  edf <- sum(smry$edf)
 
   list(
     estimates        = estimates,
@@ -710,6 +769,7 @@ fit_intensity_gam <- function(connectivity_at_obs,
     loglik           = as.numeric(stats::logLik(gam_fit)),
     convergence      = if (gam_fit$converged) 0L else 1L,
     c_scale          = std$c_scale,
+    min_connectivity = config$min_connectivity,
     log_conn_mean    = std$mu,
     log_conn_sd      = std$sigma,
     is_residualised  = !is.null(resid_info),
@@ -751,7 +811,8 @@ predict_intensity <- function(fit,
   gamma <- fit$estimates[["gamma"]]
 
   C_vals <- terra::values(connectivity_raster)
-  C_safe <- pmax(C_vals, 0)
+  mc     <- fit$min_connectivity %||% 0
+  C_safe <- pmax(C_vals, mc)
   z_vals <- (log1p(C_safe / fit$c_scale) - fit$log_conn_mean) /
             fit$log_conn_sd
 
@@ -824,7 +885,8 @@ fit_intensity_selection <- function(connectivity_at_obs,
   C_all   <- terra::values(connectivity_raster)
 
   valid <- !is.na(C_all)
-  C_v   <- pmax(C_all[valid], 0)
+  mc    <- fit$min_connectivity %||% 0
+  C_v   <- pmax(C_all[valid], mc)
   z_v   <- (log1p(C_v / fit$c_scale) - fit$log_conn_mean) / fit$log_conn_sd
 
   nd <- data.frame(
