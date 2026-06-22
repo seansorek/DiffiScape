@@ -234,19 +234,19 @@ test_that("family_poisson init_fn has correct parameter count", {
 # ---- family_gaussian -------------------------------------------------------
 
 test_that("family_gaussian with known_sd = NULL has 1 extra param", {
-  fam <- family_gaussian()
+  fam <- DiffiScape:::family_gaussian()
   expect_equal(fam$n_extra_params, 1L)
   expect_equal(fam$extra_param_names, "log_sd")
 })
 
 test_that("family_gaussian with known_sd has 0 extra params", {
-  fam <- family_gaussian(known_sd = 1.5)
+  fam <- DiffiScape:::family_gaussian(known_sd = 1.5)
   expect_equal(fam$n_extra_params, 0L)
   expect_length(fam$extra_param_names, 0)
 })
 
 test_that("family_gaussian negloglik returns finite value", {
-  fam <- family_gaussian()
+  fam <- DiffiScape:::family_gaussian()
   # theta = c(alpha, gamma, log_sd); z_obs interpreted as observed log-intensity
   set.seed(10)
   z_obs <- abs(rnorm(20, mean = 2))
@@ -261,7 +261,7 @@ test_that("family_gaussian negloglik returns finite value", {
 })
 
 test_that("family_gaussian init_fn includes log_sd when estimating SD", {
-  fam <- family_gaussian()    # est_sd = TRUE
+  fam <- DiffiScape:::family_gaussian()    # est_sd = TRUE
   ini <- fam$init_fn(n_cov = 1)
   expect_length(ini$start, 4)  # alpha, gamma, beta, log_sd
   expect_length(ini$lower, 4)
@@ -269,13 +269,13 @@ test_that("family_gaussian init_fn includes log_sd when estimating SD", {
 })
 
 test_that("family_gaussian init_fn excludes log_sd with known_sd", {
-  fam <- family_gaussian(known_sd = 2.0)  # est_sd = FALSE
+  fam <- DiffiScape:::family_gaussian(known_sd = 2.0)  # est_sd = FALSE
   ini <- fam$init_fn(n_cov = 1)
   expect_length(ini$start, 3)  # alpha, gamma, beta only
 })
 
 test_that("family_gaussian deviance_residuals preserve sign", {
-  fam <- family_gaussian()
+  fam <- DiffiScape:::family_gaussian()
   y   <- c(1, 5)
   mu  <- c(3, 2)
   dr  <- fam$deviance_residuals_fn(y, mu, extra_params = list())
@@ -363,11 +363,17 @@ test_that("family_zinb init_fn has correct parameter count", {
 
 # ---- resolve_family --------------------------------------------------------
 
-test_that("resolve_family dispatches all 4 string names correctly", {
+test_that("resolve_family dispatches supported distribution names correctly", {
   expect_equal(DiffiScape:::resolve_family(distribution = "negbin")$name, "negbin")
   expect_equal(DiffiScape:::resolve_family(distribution = "poisson")$name, "poisson")
-  expect_equal(DiffiScape:::resolve_family(distribution = "gaussian")$name, "gaussian")
   expect_equal(DiffiScape:::resolve_family(distribution = "zinb")$name, "zinb")
+})
+
+test_that("resolve_family errors for gaussian distribution with informative message", {
+  expect_error(
+    DiffiScape:::resolve_family(distribution = "gaussian"),
+    "not yet supported"
+  )
 })
 
 test_that("resolve_family returns family object as-is when provided", {

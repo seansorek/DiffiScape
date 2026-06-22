@@ -10,7 +10,7 @@ resolve_family(family = NULL, distribution = "negbin")
 \item{family}{An \link{intensity_family} object, or \code{NULL}.}
 
 \item{distribution}{Character string (\code{"negbin"}, \code{"poisson"},
-\code{"gaussian"}, \code{"zinb"}).}
+\code{"zinb"}).}
 }
 \value{
 An \link{intensity_family} object.

@@ -227,7 +227,7 @@ family_poisson <- function() {
 #' @param known_sd Fixed standard deviation.  If `NULL` (default),
 #'   `log_sd` is estimated as an extra parameter.
 #' @return An [intensity_family] object.
-#' @export
+#' @keywords internal
 family_gaussian <- function(known_sd = NULL) {
   est_sd <- is.null(known_sd)
 
@@ -665,7 +665,7 @@ family_clogit <- function(stratum_ids_used  = NULL,
 #'
 #' @param family An [intensity_family] object, or `NULL`.
 #' @param distribution Character string (`"negbin"`, `"poisson"`,
-#'   `"gaussian"`, `"zinb"`).
+#'   `"zinb"`).
 #' @return An [intensity_family] object.
 #' @keywords internal
 resolve_family <- function(family = NULL, distribution = "negbin") {
@@ -678,7 +678,13 @@ resolve_family <- function(family = NULL, distribution = "negbin") {
   switch(distribution,
     negbin   = family_negbin(),
     poisson  = family_poisson(),
-    gaussian = family_gaussian(),
+    gaussian = stop(
+      'family_gaussian() is not yet supported via the distribution argument. ',
+      'Its negative log-likelihood regresses intensity on log(z_obs), which is ',
+      'the predictor itself, not an observed response variable. ',
+      'See https://github.com/seansorek/DiffiScape/issues/38 for details.',
+      call. = FALSE
+    ),
     zinb     = family_zinb(),
     stop("Unknown distribution: ", distribution,
          ". Use an intensity_family object instead.", call. = FALSE)

@@ -17,3 +17,4 @@ An \link{intensity_family} object.
 For continuous response data (e.g. density estimates).  Uses a
 Gaussian likelihood with known or estimated standard deviation.
 }
+\keyword{internal}
