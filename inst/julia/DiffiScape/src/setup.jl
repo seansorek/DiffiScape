@@ -41,7 +41,7 @@ function get_version_info()::Dict{String,String}
 
     for pkg in ["Omniscape", "Circuitscape", "Enzyme"]
         info[pkg] = try
-            using Pkg
+            @eval import Pkg
             deps = Pkg.dependencies()
             for (_, dep) in deps
                 if dep.name == pkg
