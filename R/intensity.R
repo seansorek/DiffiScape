@@ -285,9 +285,16 @@ fit_intensity_nb <- function(connectivity_at_obs,
                              config               = default_intensity_config(),
                              family               = NULL,
                              available_connectivity = NULL,
-                             available_covariates   = NULL) {
+                             available_covariates   = NULL,
+                             response               = NULL) {
 
   family <- resolve_family(family %||% config$family, "negbin")
+
+  if (family$name == "gaussian" && is.null(response)) {
+    stop("family_gaussian requires an observed response vector. ",
+         "Supply `response` to fit_intensity_nb().",
+         call. = FALSE)
+  }
 
   if (!is.null(available_connectivity)) {
     # ---- selection mode: use explicit available locations -------------------
@@ -353,6 +360,7 @@ fit_intensity_nb <- function(connectivity_at_obs,
       z_obs  = z_obs, z_int = z_int,
       int_weights = int_weights, obs_weights = obs_weights,
       cov_obs = cov_obs, cov_int = cov_int, cov_names = cov_names,
+      y_obs   = response,
       hessian = TRUE
     )
 
@@ -497,6 +505,7 @@ fit_intensity_nb <- function(connectivity_at_obs,
     z_obs  = z_obs, z_int = z_int,
     int_weights = int_weights, obs_weights = obs_weights,
     cov_obs = cov_obs, cov_int = cov_int, cov_names = cov_names,
+    y_obs   = response,
     hessian = TRUE
   )
 
@@ -859,7 +868,8 @@ fit_intensity_selection <- function(connectivity_at_obs,
                                     available_covariates = NULL,
                                     covariates_obs       = NULL,
                                     config               = default_intensity_config(),
-                                    family               = family_rsf()) {
+                                    family               = family_rsf(),
+                                    response             = NULL) {
   fit_intensity_nb(
     connectivity_at_obs    = connectivity_at_obs,
     connectivity_raster    = NULL,
@@ -869,7 +879,8 @@ fit_intensity_selection <- function(connectivity_at_obs,
     config                 = config,
     family                 = family,
     available_connectivity = available_connectivity,
-    available_covariates   = available_covariates
+    available_covariates   = available_covariates,
+    response               = response
   )
 }
 
