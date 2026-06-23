@@ -699,7 +699,6 @@ ds_ppc <- function(posterior_samples,
   )
 
   if (plot) {
-    grDevices::dev.new()
     plot_ppc(result)
   }
 
