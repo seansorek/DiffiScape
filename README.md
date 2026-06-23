@@ -40,6 +40,7 @@ install.packages("JuliaConnectoR")
 library(DiffiScape)
 
 # Run the full pipeline in one call
+# Diffiscape does not handle raster preprocessing. Make sure everything is aligned!
 result <- diffiscape(
   obs_data  = "gps_locations.csv",   # CSV with x, y columns (or shapefile)
   rasters   = "env_rasters/",        # Directory of .tif environmental layers
