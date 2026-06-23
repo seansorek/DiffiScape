@@ -19,7 +19,7 @@ optimize_resistance(
 )
 }
 \arguments{
-\item{basis_stack}{A \link[terra:SpatRaster-class]{terra::SpatRaster} of basis functions.}
+\item{basis_stack}{A \link[terra:SpatRaster]{terra::SpatRaster} of basis functions.}
 
 \item{obs_points}{Data.frame with \verb{x, y} columns of observed locations.}
 
@@ -34,7 +34,7 @@ optimize_resistance(
 
 \item{covariates_obs}{Named list of covariate vectors at obs.}
 
-\item{covariates_rasters}{Named list of \link[terra:SpatRaster-class]{terra::SpatRaster} covariates.}
+\item{covariates_rasters}{Named list of \link[terra:SpatRaster]{terra::SpatRaster} covariates.}
 
 \item{residualise}{Logical; residualise connectivity.}
 

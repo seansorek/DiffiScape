@@ -18,13 +18,11 @@ resistance_model(
 \item{params}{\itemize{
 \item \strong{parametric}: named numeric vector or list with elements
 \code{r_0, z_1, ..., z_K} (see \code{\link[=create_resistance_surface]{create_resistance_surface()}}).
-\itemize{
 \item \strong{custom}: a function \code{f(basis_stack, ...)} returning a
-single-layer \link[terra:SpatRaster-class]{terra::SpatRaster} of resistance values.
-}
+single-layer \link[terra:SpatRaster]{terra::SpatRaster} of resistance values.
 }}
 
-\item{basis_stack}{A \link[terra:SpatRaster-class]{terra::SpatRaster} with \emph{K} layers.}
+\item{basis_stack}{A \link[terra:SpatRaster]{terra::SpatRaster} with \emph{K} layers.}
 
 \item{type}{\code{"parametric"} (default) or \code{"custom"}.}
 
@@ -58,7 +56,7 @@ Two model types are supported:
 Parameters are stored in \code{object$params}; the model is also wrapped
 as a callable function in \code{object$fn} for consistent interchange.
 \item \code{"custom"} — any user-supplied function
-\code{f(basis_stack, ...)} that returns a single-layer \link[terra:SpatRaster-class]{terra::SpatRaster}.
+\code{f(basis_stack, ...)} that returns a single-layer \link[terra:SpatRaster]{terra::SpatRaster}.
 This pathway supports machine-learning approaches such as Inverse
 Reinforcement Learning (IRL) or convolutional neural networks (CNNs):
 because \eqn{d\mathrm{Connectivity}/d\theta}{dConnectivity/d-theta} is

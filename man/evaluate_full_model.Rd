@@ -24,7 +24,7 @@ evaluate_full_model(
 \arguments{
 \item{resistance_params}{Resistance parameter vector or list.}
 
-\item{basis_stack}{A \link[terra:SpatRaster-class]{terra::SpatRaster} of basis functions.}
+\item{basis_stack}{A \link[terra:SpatRaster]{terra::SpatRaster} of basis functions.}
 
 \item{obs_points}{Data.frame with \verb{x, y} columns.}
 
@@ -36,7 +36,7 @@ evaluate_full_model(
 
 \item{covariates_obs}{Named list of covariate vectors at obs.}
 
-\item{covariates_rasters}{Named list of \link[terra:SpatRaster-class]{terra::SpatRaster} covariates.}
+\item{covariates_rasters}{Named list of \link[terra:SpatRaster]{terra::SpatRaster} covariates.}
 
 \item{residualise}{Logical.}
 

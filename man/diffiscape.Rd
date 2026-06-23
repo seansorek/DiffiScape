@@ -22,6 +22,7 @@ diffiscape(
   crs = NULL,
   rescale_basis = TRUE,
   pattern = "*.tif",
+  omniscape_settings = list(),
   solver = c("surrogate", "enzyme")
 )
 }
@@ -30,7 +31,7 @@ diffiscape(
 with \verb{x, y} columns.}
 
 \item{rasters}{Either a directory, file paths, or a named list of
-\link[terra:SpatRaster-class]{terra::SpatRaster} objects.}
+\link[terra:SpatRaster]{terra::SpatRaster} objects.}
 
 \item{julia_home}{Path to the Julia binary (or \code{NULL} for PATH).}
 
@@ -67,6 +68,11 @@ supplied and the intensity model includes covariates.}
 \item{rescale_basis}{Logical; rescale basis rasters.}
 
 \item{pattern}{File pattern for raster directory.}
+
+\item{omniscape_settings}{Named list of Omniscape overrides forwarded to
+every connectivity step (final refit, posterior sampling, and
+diagnostics).  Recognised entries: \code{radius} (default \code{13L}),
+\code{block_size} (default \code{5L}), \code{cleanup} (default \code{TRUE}).}
 
 \item{solver}{Character; \code{"surrogate"} (default, GP surrogate optimiser) or
 \code{"enzyme"} (L-BFGS via differentiable Julia solver).}

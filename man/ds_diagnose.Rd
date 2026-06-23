@@ -19,7 +19,7 @@ ds_diagnose(
 
 \item{obs_points}{Data.frame with \verb{x, y}.}
 
-\item{connectivity}{A \link[terra:SpatRaster-class]{terra::SpatRaster}.}
+\item{connectivity}{A \link[terra:SpatRaster]{terra::SpatRaster}.}
 
 \item{intensity_config}{Intensity config.}
 

@@ -7,7 +7,7 @@
 validate_basis_stack(basis_stack)
 }
 \arguments{
-\item{basis_stack}{A \link[terra:SpatRaster-class]{terra::SpatRaster}.}
+\item{basis_stack}{A \link[terra:SpatRaster]{terra::SpatRaster}.}
 }
 \value{
 \code{TRUE} (invisibly) on success; stops on failure.

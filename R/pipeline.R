@@ -392,6 +392,7 @@ ds_posterior <- function(opt_result,
     basis_stack          = basis_stack,
     obs_points           = obs_points,
     refit                = use_refit,
+    omniscape_settings   = omniscape_settings,
     intensity_config     = intensity_config,
     covariates_obs       = covariates_obs,
     covariates_rasters   = covariates_rasters,
@@ -493,6 +494,10 @@ ds_diagnose <- function(intensity_fit,
 #' @param crs Target CRS for reprojection (if input is spatial file).
 #' @param rescale_basis Logical; rescale basis rasters.
 #' @param pattern File pattern for raster directory.
+#' @param omniscape_settings Named list of Omniscape overrides forwarded to
+#'   every connectivity step (final refit, posterior sampling, and
+#'   diagnostics).  Recognised entries: `radius` (default `13L`),
+#'   `block_size` (default `5L`), `cleanup` (default `TRUE`).
 #' @param solver Character; `"surrogate"` (default, GP surrogate optimiser) or
 #'   `"enzyme"` (L-BFGS via differentiable Julia solver).
 #' @return A list with `obs_points`, `basis_stack`, `opt_result`,
@@ -515,6 +520,7 @@ diffiscape <- function(obs_data,
                        crs                  = NULL,
                        rescale_basis        = TRUE,
                        pattern              = "*.tif",
+                       omniscape_settings   = list(),
                        solver               = c("surrogate", "enzyme")) {
 
   solver <- match.arg(solver)
@@ -571,6 +577,7 @@ diffiscape <- function(obs_data,
     opt_result           = opt_result,
     basis_stack          = basis_stack,
     obs_points           = obs_points,
+    omniscape_settings   = omniscape_settings,
     intensity_config     = intensity_config,
     covariates_obs       = covariates_obs,
     covariates_rasters   = covariates_rasters,
@@ -591,6 +598,7 @@ diffiscape <- function(obs_data,
       basis_stack          = basis_stack,
       obs_points           = obs_points,
       n_draws              = n_posterior,
+      omniscape_settings   = omniscape_settings,
       intensity_config     = intensity_config,
       covariates_obs       = covariates_obs,
       covariates_rasters   = covariates_rasters,
@@ -608,10 +616,17 @@ diffiscape <- function(obs_data,
   message("\n[7/7] Diagnostics...")
   final_resistance  <- create_resistance_surface(opt_result$best_params,
                                                    basis_stack, link = res_link)
+  omni_def <- list(radius = 13L, block_size = 5L, cleanup = TRUE)
+  omni_cfg <- utils::modifyList(omni_def, omniscape_settings)
   if (solver == "enzyme") {
-    final_omni <- run_cumulative_current(final_resistance)
+    final_omni <- run_cumulative_current(final_resistance,
+                                         radius     = omni_cfg$radius,
+                                         block_size = omni_cfg$block_size)
   } else {
-    final_omni <- run_omniscape(final_resistance)
+    final_omni <- run_omniscape(final_resistance,
+                                radius     = omni_cfg$radius,
+                                block_size = omni_cfg$block_size,
+                                cleanup    = omni_cfg$cleanup)
   }
   final_connectivity <- final_omni$cum_current
 

@@ -14,5 +14,5 @@ A numeric matrix with columns \code{x} and \code{y}.
 }
 \description{
 Accepts a data.frame (with \code{x} and \code{y} columns), matrix, or
-\link[terra:SpatVector-class]{terra::SpatVector} and returns the coordinates as a two-column matrix.
+\link[terra:SpatVector]{terra::SpatVector} and returns the coordinates as a two-column matrix.
 }

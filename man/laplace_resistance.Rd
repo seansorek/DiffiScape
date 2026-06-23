@@ -25,7 +25,7 @@ laplace_resistance(
 \item{opt_result}{Result from \code{\link[=optimize_resistance]{optimize_resistance()}} or
 \code{\link[=optimize_resistance_enzyme]{optimize_resistance_enzyme()}}.}
 
-\item{basis_stack}{A \link[terra:SpatRaster-class]{terra::SpatRaster} of basis functions (required
+\item{basis_stack}{A \link[terra:SpatRaster]{terra::SpatRaster} of basis functions (required
 when \code{refit = TRUE} or when no surrogate is available).}
 
 \item{obs_points}{Data.frame with \verb{x, y} (required when \code{refit = TRUE}).}

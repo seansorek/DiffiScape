@@ -14,15 +14,15 @@ predict_intensity(
 \arguments{
 \item{fit}{Result from \code{\link[=fit_intensity_nb]{fit_intensity_nb()}} or \code{\link[=fit_intensity_gam]{fit_intensity_gam()}}.}
 
-\item{connectivity_raster}{A \link[terra:SpatRaster-class]{terra::SpatRaster} of connectivity.}
+\item{connectivity_raster}{A \link[terra:SpatRaster]{terra::SpatRaster} of connectivity.}
 
-\item{covariates_rasters}{Named list of \link[terra:SpatRaster-class]{terra::SpatRaster} (or \code{NULL}).}
+\item{covariates_rasters}{Named list of \link[terra:SpatRaster]{terra::SpatRaster} (or \code{NULL}).}
 
 \item{config}{Optional intensity configuration list (currently unused;
 reserved for future extensions).}
 }
 \value{
-A \link[terra:SpatRaster-class]{terra::SpatRaster} of predicted intensity.
+A \link[terra:SpatRaster]{terra::SpatRaster} of predicted intensity.
 }
 \description{
 Predict intensity surface from a fitted model

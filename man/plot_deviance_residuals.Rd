@@ -25,7 +25,7 @@ plot_deviance_residuals(
 \item{extra_params}{Named vector of extra distribution parameters
 (used with \code{family}).}
 
-\item{...}{Extra arguments passed to \code{\link[graphics:plot.default]{graphics::plot()}}.}
+\item{...}{Extra arguments passed to \code{\link[graphics:plot]{graphics::plot()}}.}
 }
 \value{
 Invisible \code{NULL}.

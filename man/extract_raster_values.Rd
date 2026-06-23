@@ -7,7 +7,7 @@
 extract_raster_values(raster, points)
 }
 \arguments{
-\item{raster}{A \link[terra:SpatRaster-class]{terra::SpatRaster}.}
+\item{raster}{A \link[terra:SpatRaster]{terra::SpatRaster}.}
 
 \item{points}{Locations as data.frame (with x, y), matrix, or SpatVector.}
 }

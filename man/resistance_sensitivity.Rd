@@ -9,7 +9,7 @@ resistance_sensitivity(params, basis_stack, delta = 0.1, link = link_exp())
 \arguments{
 \item{params}{Parameters (vector, list, or data.frame).}
 
-\item{basis_stack}{A \link[terra:SpatRaster-class]{terra::SpatRaster}.}
+\item{basis_stack}{A \link[terra:SpatRaster]{terra::SpatRaster}.}
 
 \item{delta}{Perturbation size (default 0.1).}
 

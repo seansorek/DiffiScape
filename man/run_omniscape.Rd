@@ -14,7 +14,7 @@ run_omniscape(
 )
 }
 \arguments{
-\item{resistance}{A single-layer \link[terra:SpatRaster-class]{terra::SpatRaster} of resistance
+\item{resistance}{A single-layer \link[terra:SpatRaster]{terra::SpatRaster} of resistance
 values (from \code{\link[=create_resistance_surface]{create_resistance_surface()}}).}
 
 \item{radius}{Integer; Omniscape search radius in pixels (default 13).}
@@ -33,7 +33,7 @@ If \code{NULL}, a temp directory is used and cleaned up afterwards.}
 \value{
 A list with:
 \describe{
-\item{cum_current}{\link[terra:SpatRaster-class]{terra::SpatRaster} of cumulative current flow.}
+\item{cum_current}{\link[terra:SpatRaster]{terra::SpatRaster} of cumulative current flow.}
 \item{flow_potential}{Flow-potential raster (if available).}
 \item{elapsed_seconds}{Wall-clock time.}
 }

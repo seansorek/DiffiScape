@@ -109,6 +109,105 @@ test_that("ds_posterior passes refit = TRUE to laplace_resistance", {
 })
 
 
+test_that("ds_posterior forwards omniscape_settings to laplace and posterior_sample", {
+  skip_on_cran()
+
+  opt_result <- list(
+    best_params  = list(r_0 = 0),
+    bounds       = list(r_0 = c(-2, 2)),
+    distribution = "negbin",
+    surrogate    = structure(list(), class = "km")
+  )
+
+  basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  obs_points  <- data.frame(x = 0, y = 0)
+
+  custom_settings <- list(radius = 25L, block_size = 9L)
+  captured_lap_settings  <- NULL
+  captured_samp_settings <- NULL
+  mock_lap  <- list(mode = 0, covariance = matrix(0.01, 1, 1),
+                    precision = matrix(100, 1, 1), std_error = 0.1)
+  mock_samp <- data.frame(r_0 = rnorm(3))
+
+  local_mocked_bindings(
+    laplace_resistance = function(...) {
+      args <- list(...)
+      captured_lap_settings <<- args$omniscape_settings
+      mock_lap
+    },
+    posterior_sample = function(...) {
+      args <- list(...)
+      captured_samp_settings <<- args$omniscape_settings
+      mock_samp
+    },
+    posterior_summary = function(...) data.frame(),
+    .package = "DiffiScape"
+  )
+
+  ds_posterior(opt_result, basis_stack, obs_points,
+              n_draws = 3L, n_inner = 1L,
+              omniscape_settings = custom_settings)
+
+  expect_equal(captured_lap_settings, custom_settings)
+  expect_equal(captured_samp_settings, custom_settings)
+})
+
+
+test_that("diffiscape forwards omniscape_settings to refit, posterior, and diagnostics", {
+  skip_on_cran()
+
+  custom_settings <- list(radius = 25L, block_size = 9L)
+  captured_fit_settings  <- NULL
+  captured_post_settings <- NULL
+  captured_omni_radius   <- NULL
+
+  mock_opt   <- list(best_params = list(r_0 = 0), bounds = list(r_0 = c(-2, 2)),
+                     distribution = "negbin")
+  mock_fit   <- list(loglik = -10, intensity_params = c(0.1, 0.2),
+                     intensity_fit_obj = list(), distribution = "negbin")
+  mock_post  <- list(laplace = list(), samples = data.frame(), summary = data.frame())
+  mock_diag  <- list(deviance_residuals = numeric(0))
+  mock_conn  <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+
+  local_mocked_bindings(
+    ds_init_julia = function(...) invisible(TRUE),
+    ds_optimize = function(...) mock_opt,
+    ds_fit_intensity = function(...) {
+      args <- list(...)
+      captured_fit_settings <<- args$omniscape_settings
+      mock_fit
+    },
+    ds_posterior = function(...) {
+      args <- list(...)
+      captured_post_settings <<- args$omniscape_settings
+      mock_post
+    },
+    create_resistance_surface = function(...) mock_conn,
+    run_omniscape = function(resistance, radius = 13L, block_size = 5L, ...) {
+      captured_omni_radius <<- radius
+      list(cum_current = mock_conn, elapsed_seconds = 0.1)
+    },
+    ds_diagnose = function(...) mock_diag,
+    .package = "DiffiScape"
+  )
+
+  basis <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  obs   <- data.frame(x = c(0, 1), y = c(0, 1))
+
+  result <- diffiscape(
+    obs_data           = obs,
+    rasters            = list(layer1 = basis),
+    omniscape_settings = custom_settings,
+    n_posterior         = 3L,
+    plot               = FALSE
+  )
+
+  expect_equal(captured_fit_settings, custom_settings)
+  expect_equal(captured_post_settings, custom_settings)
+  expect_equal(captured_omni_radius, 25L)
+})
+
+
 test_that("ds_predict works when intensity_fit contains intensity_fit_obj", {
   skip_on_cran()
 

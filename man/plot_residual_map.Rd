@@ -7,7 +7,7 @@
 plot_residual_map(resid_raster, obs_points = NULL, ...)
 }
 \arguments{
-\item{resid_raster}{A \link[terra:SpatRaster-class]{terra::SpatRaster} from
+\item{resid_raster}{A \link[terra:SpatRaster]{terra::SpatRaster} from
 \code{\link[=rasterise_deviance_residuals]{rasterise_deviance_residuals()}}.}
 
 \item{obs_points}{Optional data.frame with \verb{x, y} to overlay.}

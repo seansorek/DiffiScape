@@ -13,10 +13,10 @@ run_circuitscape(
 )
 }
 \arguments{
-\item{resistance}{A single-layer \link[terra:SpatRaster-class]{terra::SpatRaster} of resistance.}
+\item{resistance}{A single-layer \link[terra:SpatRaster]{terra::SpatRaster} of resistance.}
 
 \item{focal_points}{A data.frame with \verb{x, y} columns or a
-\link[terra:SpatVector-class]{terra::SpatVector} of focal locations.}
+\link[terra:SpatVector]{terra::SpatVector} of focal locations.}
 
 \item{mode}{Character; \code{"one-to-all"} (default) or \code{"pairwise"}.}
 
@@ -27,7 +27,7 @@ run_circuitscape(
 \value{
 A list with:
 \describe{
-\item{current_map}{\link[terra:SpatRaster-class]{terra::SpatRaster} of current flow.}
+\item{current_map}{\link[terra:SpatRaster]{terra::SpatRaster} of current flow.}
 \item{resistance_distances}{Matrix of pairwise resistances
 (only for \code{mode = "pairwise"}).}
 \item{elapsed_seconds}{Wall-clock time.}

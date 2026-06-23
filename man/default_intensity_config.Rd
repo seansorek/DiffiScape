@@ -47,7 +47,10 @@ effect (only used when \code{include_spatial_re = TRUE}). Default: \code{30}.}
 \item{\code{covariate_type}}{Character. \code{"smooth"} (penalised spline term,
 default) or \code{"linear"} for fixed-slope covariate effects.}
 \item{\code{include_spatial_re}}{Logical. Add a 2-D spatial random effect
-\code{te(x, y)} to absorb unmeasured spatial structure. Default: \code{FALSE}.}
+\code{te(x, y)} to absorb unmeasured spatial structure. Default: \code{FALSE}.
+\strong{Warning:} when connectivity is spatially smooth, \code{te(x, y)} competes
+with the connectivity term (concurvity), potentially biasing gamma toward
+zero. Check \code{mgcv::concurvity()} after fitting.}
 \item{\code{spatial_bs}}{Character. Marginal basis for \code{te(x, y)}, passed
 directly to \code{mgcv}. Default: \code{"cr"} (cubic regression spline).}
 \item{\code{spatial_tensor}}{Logical. Use a tensor-product \code{te(x, y)} rather

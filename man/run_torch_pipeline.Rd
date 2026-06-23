@@ -64,7 +64,7 @@ run_torch_pipeline(
 )
 }
 \arguments{
-\item{basis_stack}{A \link[terra:SpatRaster-class]{terra::SpatRaster} with K covariate layers.}
+\item{basis_stack}{A \link[terra:SpatRaster]{terra::SpatRaster} with K covariate layers.}
 
 \item{obs_points}{Data.frame with \verb{x, y} columns (projected coords).}
 

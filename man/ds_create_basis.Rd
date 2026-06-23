@@ -8,17 +8,17 @@ ds_create_basis(rasters, pattern = "*.tif", rescale = TRUE, mask_to = NULL)
 }
 \arguments{
 \item{rasters}{Either a character vector of raster file paths, a directory
-path, or a named list of \link[terra:SpatRaster-class]{terra::SpatRaster} objects.}
+path, or a named list of \link[terra:SpatRaster]{terra::SpatRaster} objects.}
 
 \item{pattern}{Glob pattern to match files in a directory
 (default \code{"*.tif"}).}
 
 \item{rescale}{Logical; rescale rasters to [0, 1].}
 
-\item{mask_to}{Optional \link[terra:SpatRaster-class]{terra::SpatRaster} to unify masks.}
+\item{mask_to}{Optional \link[terra:SpatRaster]{terra::SpatRaster} to unify masks.}
 }
 \value{
-A \link[terra:SpatRaster-class]{terra::SpatRaster} basis stack.
+A \link[terra:SpatRaster]{terra::SpatRaster} basis stack.
 }
 \description{
 Wrapper around \code{\link[=create_basis_stack]{create_basis_stack()}} that accepts a directory or

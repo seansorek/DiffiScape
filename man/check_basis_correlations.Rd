@@ -7,7 +7,7 @@
 check_basis_correlations(basis_stack, warn_threshold = 0.7)
 }
 \arguments{
-\item{basis_stack}{A \link[terra:SpatRaster-class]{terra::SpatRaster}.}
+\item{basis_stack}{A \link[terra:SpatRaster]{terra::SpatRaster}.}
 
 \item{warn_threshold}{Absolute correlation above which a warning is
 emitted (default 0.7).}

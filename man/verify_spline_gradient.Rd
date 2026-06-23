@@ -19,7 +19,7 @@ verify_spline_gradient(
 )
 }
 \arguments{
-\item{basis_stack}{\link[terra:SpatRaster-class]{terra::SpatRaster} of basis layers.}
+\item{basis_stack}{\link[terra:SpatRaster]{terra::SpatRaster} of basis layers.}
 
 \item{crop_size}{Integer; centre crop side length.}
 

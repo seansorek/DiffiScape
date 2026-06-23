@@ -13,7 +13,7 @@ ds_torch_call(fn_name, ...)
 \item{...}{Arguments forwarded to the Python function.}
 }
 \value{
-The value returned by Python (use \code{\link[reticulate:r-py-conversion]{reticulate::py_to_r()}} if a
+The value returned by Python (use \code{\link[reticulate:py_to_r]{reticulate::py_to_r()}} if a
 manual conversion is needed).
 }
 \description{
