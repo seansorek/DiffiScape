@@ -625,6 +625,27 @@ diffiscape <- function(obs_data,
     plot               = plot
   )
 
+  ppc <- NULL
+  if (!is.null(posterior) && nrow(posterior$samples) > 0) {
+    message("\n  Posterior predictive checks...")
+    ppc <- tryCatch(
+      ds_ppc(
+        posterior_samples  = posterior$samples,
+        intensity_fit      = intensity_fit,
+        obs_points         = obs_points,
+        connectivity       = final_connectivity,
+        intensity_config   = intensity_config,
+        covariates_rasters = covariates_rasters,
+        family             = int_family,
+        plot               = plot
+      ),
+      error = function(e) {
+        message("  PPC skipped: ", conditionMessage(e))
+        NULL
+      }
+    )
+  }
+
   elapsed <- as.numeric(difftime(Sys.time(), t0, units = "mins"))
   message(sprintf("\nPipeline complete in %.1f minutes", elapsed))
 
@@ -635,6 +656,7 @@ diffiscape <- function(obs_data,
     intensity_fit  = intensity_fit,
     posterior      = posterior,
     diagnostics    = diagnostics,
+    ppc            = ppc,
     elapsed_min    = elapsed
   )
 

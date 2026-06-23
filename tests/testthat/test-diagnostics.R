@@ -348,3 +348,210 @@ test_that("diagnose_model does not warn when Moran's I is non-significant", {
     suppressMessages(diagnose_model(d$nb_fit, d$obs_pts, d$raster, plot = FALSE))
   )
 })
+
+
+# ---------------------------------------------------------------------------
+# Posterior predictive checks (ds_ppc / plot_ppc)
+# ---------------------------------------------------------------------------
+
+.make_ppc_inputs <- function(seed = 123) {
+  set.seed(seed)
+  r <- terra::rast(nrows = 10, ncols = 10, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(100, mean = 4))
+
+  n_obs   <- 25
+  obs_pts <- data.frame(x = runif(n_obs, 0.05, 0.95),
+                        y = runif(n_obs, 0.05, 0.95))
+  nb_fit  <- fit_intensity_nb(
+    connectivity_at_obs = abs(rnorm(n_obs, mean = 4)),
+    connectivity_raster = r,
+    obs_coords          = obs_pts
+  )
+
+  n_draws <- 20
+  samples <- data.frame(
+    r_0    = rnorm(n_draws, 0.5, 0.1),
+    z_1    = rnorm(n_draws, 0.3, 0.1),
+    alpha  = rnorm(n_draws, nb_fit$estimates[["alpha"]], 0.1),
+    gamma  = rnorm(n_draws, nb_fit$estimates[["gamma"]], 0.1),
+    size   = pmax(rnorm(n_draws, nb_fit$estimates[["size"]], 0.5), 0.1),
+    loglik = rnorm(n_draws, -50, 5)
+  )
+
+  list(raster = r, obs_pts = obs_pts, nb_fit = nb_fit, samples = samples)
+}
+
+
+test_that("ds_ppc returns correct structure", {
+  skip_on_cran()
+  p <- .make_ppc_inputs()
+
+  result <- suppressMessages(
+    ds_ppc(p$samples, p$nb_fit, p$obs_pts, p$raster,
+           n_sim = 10, plot = FALSE, seed = 1)
+  )
+
+  expect_s3_class(result, "ds_ppc")
+  expect_named(result, c("observed", "simulated", "bayesian_p",
+                          "n_sim", "test_quantities"))
+  expect_true(is.numeric(result$observed))
+  expect_true(is.list(result$simulated))
+  expect_true(is.numeric(result$bayesian_p))
+  expect_equal(result$n_sim, 10L)
+  expect_equal(result$test_quantities,
+               c("total_count", "vmi_ratio", "mean_deviance"))
+})
+
+
+test_that("ds_ppc Bayesian p-values are in [0, 1]", {
+  skip_on_cran()
+  p <- .make_ppc_inputs(seed = 42)
+
+  result <- suppressMessages(
+    ds_ppc(p$samples, p$nb_fit, p$obs_pts, p$raster,
+           n_sim = 15, plot = FALSE, seed = 2)
+  )
+
+  expect_true(all(result$bayesian_p >= 0 & result$bayesian_p <= 1))
+})
+
+
+test_that("ds_ppc total_count observed matches actual count", {
+  skip_on_cran()
+  p <- .make_ppc_inputs(seed = 55)
+
+  result <- suppressMessages(
+    ds_ppc(p$samples, p$nb_fit, p$obs_pts, p$raster,
+           n_sim = 5, plot = FALSE)
+  )
+
+  expect_equal(unname(result$observed[["total_count"]]), nrow(p$obs_pts))
+})
+
+
+test_that("ds_ppc n_sim is respected", {
+  skip_on_cran()
+  p <- .make_ppc_inputs()
+
+  result <- suppressMessages(
+    ds_ppc(p$samples, p$nb_fit, p$obs_pts, p$raster,
+           n_sim = 10, plot = FALSE, seed = 3)
+  )
+
+  expect_equal(length(result$simulated$total_count), 10)
+  expect_equal(length(result$simulated$vmi_ratio), 10)
+  expect_equal(length(result$simulated$mean_deviance), 10)
+})
+
+
+test_that("ds_ppc works with Poisson family", {
+  skip_on_cran()
+  p <- .make_ppc_inputs(seed = 66)
+
+  samples_pois <- p$samples[, c("r_0", "z_1", "alpha", "gamma", "loglik")]
+
+  result <- suppressMessages(
+    ds_ppc(samples_pois, p$nb_fit, p$obs_pts, p$raster,
+           family = family_poisson(), n_sim = 10, plot = FALSE, seed = 4)
+  )
+
+  expect_s3_class(result, "ds_ppc")
+  expect_equal(result$n_sim, 10L)
+})
+
+
+test_that("ds_ppc errors on unsupported family", {
+  skip_on_cran()
+  p <- .make_ppc_inputs()
+
+  expect_error(
+    suppressMessages(
+      ds_ppc(p$samples, p$nb_fit, p$obs_pts, p$raster,
+             family = family_rsf(), n_sim = 5, plot = FALSE)
+    ),
+    "not supported"
+  )
+})
+
+
+test_that("ds_ppc seed produces reproducible results", {
+  skip_on_cran()
+  p <- .make_ppc_inputs(seed = 77)
+
+  r1 <- suppressMessages(
+    ds_ppc(p$samples, p$nb_fit, p$obs_pts, p$raster,
+           n_sim = 10, plot = FALSE, seed = 99)
+  )
+  r2 <- suppressMessages(
+    ds_ppc(p$samples, p$nb_fit, p$obs_pts, p$raster,
+           n_sim = 10, plot = FALSE, seed = 99)
+  )
+
+  expect_equal(r1$simulated$total_count, r2$simulated$total_count)
+  expect_equal(r1$simulated$vmi_ratio, r2$simulated$vmi_ratio)
+})
+
+
+test_that("ds_ppc thinning reduces draws used", {
+  skip_on_cran()
+  p <- .make_ppc_inputs()
+
+  result <- suppressMessages(
+    ds_ppc(p$samples, p$nb_fit, p$obs_pts, p$raster,
+           n_sim = 200, thin = 5L, plot = FALSE)
+  )
+
+  expect_equal(result$n_sim, 4L)
+})
+
+
+test_that("plot_ppc runs without error", {
+  skip_on_cran()
+  p <- .make_ppc_inputs(seed = 88)
+
+  result <- suppressMessages(
+    ds_ppc(p$samples, p$nb_fit, p$obs_pts, p$raster,
+           n_sim = 10, plot = FALSE, seed = 5)
+  )
+
+  expect_silent({
+    pdf(tempfile(fileext = ".pdf"))
+    plot_ppc(result)
+    dev.off()
+  })
+})
+
+
+test_that("ds_ppc handles evaluate_full_model format", {
+  skip_on_cran()
+  p <- .make_ppc_inputs(seed = 33)
+
+  mock_full_result <- list(
+    loglik            = p$nb_fit$loglik,
+    intensity_params  = p$nb_fit$estimates,
+    intensity_fit_obj = p$nb_fit,
+    intensity_se      = p$nb_fit$se,
+    convergence       = p$nb_fit$convergence,
+    distribution      = "negbin"
+  )
+
+  result <- suppressMessages(
+    ds_ppc(p$samples, mock_full_result, p$obs_pts, p$raster,
+           n_sim = 5, plot = FALSE, seed = 6)
+  )
+
+  expect_s3_class(result, "ds_ppc")
+})
+
+
+test_that("ds_ppc messages when n_sim > available draws", {
+  skip_on_cran()
+  p <- .make_ppc_inputs()
+
+  expect_message(
+    ds_ppc(p$samples, p$nb_fit, p$obs_pts, p$raster,
+           n_sim = 100, plot = FALSE),
+    "Only 20 posterior draws available"
+  )
+})

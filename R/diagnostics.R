@@ -392,3 +392,355 @@ diagnose_model <- function(intensity_fit,
     prop_large      = prop_large
   )
 }
+
+
+# --------------- Posterior predictive checks ---------------------------------
+
+# Simulate one replicate of cell counts from the posterior predictive.
+.ppc_simulate_counts <- function(mu_cells, family_name, size = NULL,
+                                 pi_val = NULL) {
+  n <- length(mu_cells)
+  switch(family_name,
+    poisson = stats::rpois(n, lambda = mu_cells),
+    negbin = {
+      size_safe <- max(size, 1e-6)
+      stats::rnbinom(n, mu = mu_cells, size = size_safe)
+    },
+    zinb = {
+      size_safe <- max(size, 1e-6)
+      is_zero <- stats::runif(n) < pi_val
+      counts  <- stats::rnbinom(n, mu = mu_cells, size = size_safe)
+      ifelse(is_zero, 0L, counts)
+    },
+    stop("Posterior predictive checks are not supported for family '",
+         family_name, "'. PPC requires a count-valued distributional family ",
+         "(negbin, poisson, zinb).", call. = FALSE)
+  )
+}
+
+
+# Compute test quantities from a vector of cell counts.
+.ppc_test_quantities <- function(counts, mu_cells, tq_names,
+                                 family = NULL, size = NULL,
+                                 coords = NULL, include_moran = FALSE) {
+  out <- numeric(0)
+
+  if ("total_count" %in% tq_names) {
+    out[["total_count"]] <- sum(counts)
+  }
+
+  if ("vmi_ratio" %in% tq_names) {
+    mn <- mean(counts)
+    out[["vmi_ratio"]] <- stats::var(counts) / max(mn, 1e-10)
+  }
+
+  if ("mean_deviance" %in% tq_names) {
+    valid <- mu_cells > 0 & !is.na(mu_cells)
+    if (any(valid)) {
+      dr <- if (!is.null(family) && family$n_extra_params > 0L) {
+        ep_names <- .fit_extra_param_names(family)
+        extra_p  <- stats::setNames(size, ep_names[1L])
+        family$deviance_residuals_fn(counts[valid], mu_cells[valid], extra_p)
+      } else if (!is.null(family)) {
+        family$deviance_residuals_fn(counts[valid], mu_cells[valid], NULL)
+      } else {
+        s <- if (is.null(size) || is.na(size)) 1 else size
+        compute_deviance_residuals(counts[valid], mu_cells[valid], s)
+      }
+      out[["mean_deviance"]] <- mean(abs(dr))
+    } else {
+      out[["mean_deviance"]] <- NA_real_
+    }
+  }
+
+  if (include_moran && !is.null(coords)) {
+    moran_res <- tryCatch({
+      valid <- mu_cells > 0 & !is.na(mu_cells)
+      s <- if (is.null(size) || is.na(size)) 1 else size
+      dr <- compute_deviance_residuals(counts[valid], mu_cells[valid], s)
+      moran_test(dr, coords[valid, , drop = FALSE], k = 8L)
+    }, error = function(e) NULL)
+    out[["moran_i"]] <- if (!is.null(moran_res)) moran_res$observed else NA_real_
+  }
+
+  out
+}
+
+
+#' Posterior predictive check
+#'
+#' Simulates replicate datasets from the posterior predictive distribution
+#' and compares test quantities to the observed data.  Returns Bayesian
+#' p-values for each test quantity.
+#'
+#' @param posterior_samples Data.frame from [posterior_sample()] (one row
+#'   per draw, columns include intensity parameters such as `alpha`,
+#'   `gamma`, `beta_*`, and optionally `size`).
+#' @param intensity_fit Result from [fit_intensity_nb()],
+#'   [evaluate_full_model()], or [ds_fit_intensity()].  Supplies the
+#'   connectivity standardisation constants (`c_scale`, `log_conn_mean`,
+#'   `log_conn_sd`).
+#' @param obs_points Data.frame with `x, y`.
+#' @param connectivity A [terra::SpatRaster] of connectivity values.
+#' @param intensity_config Intensity config list.
+#' @param covariates_rasters Named list of covariate rasters (or `NULL`).
+#' @param family An [intensity_family] object, or `NULL` (defaults to NB).
+#' @param n_sim Number of posterior draws to simulate from.
+#' @param test_quantities Character vector of test quantity names.
+#'   Supported: `"total_count"`, `"vmi_ratio"`, `"mean_deviance"`.
+#' @param include_moran Logical; also compute Moran's I per replicate
+#'   (slow; requires `spdep`).
+#' @param thin Integer; use every `thin`-th row of `posterior_samples`.
+#' @param seed Optional integer seed for reproducibility.
+#' @param plot Logical; produce PPC diagnostic plots.
+#' @param verbose Logical; emit progress messages.
+#' @return A list with class `"ds_ppc"`:
+#'   \describe{
+#'     \item{`observed`}{Named numeric vector of observed test quantities.}
+#'     \item{`simulated`}{Named list of numeric vectors (one per test
+#'       quantity, length `n_sim`).}
+#'     \item{`bayesian_p`}{Named numeric vector of two-sided Bayesian
+#'       p-values.}
+#'     \item{`n_sim`}{Integer; number of simulations performed.}
+#'     \item{`test_quantities`}{Character vector of test quantity names.}
+#'   }
+#' @seealso [diagnose_model()], [posterior_sample()], [plot_ppc()]
+#' @export
+ds_ppc <- function(posterior_samples,
+                   intensity_fit,
+                   obs_points,
+                   connectivity,
+                   intensity_config   = default_intensity_config(),
+                   covariates_rasters = NULL,
+                   family             = NULL,
+                   n_sim              = 200L,
+                   test_quantities    = c("total_count", "vmi_ratio",
+                                          "mean_deviance"),
+                   include_moran      = FALSE,
+                   thin               = 1L,
+                   seed               = NULL,
+                   plot               = TRUE,
+                   verbose            = TRUE) {
+
+  if (!is.data.frame(posterior_samples) || nrow(posterior_samples) == 0) {
+    stop("posterior_samples must be a non-empty data.frame", call. = FALSE)
+  }
+
+  # Resolve fit object
+  fit_obj <- intensity_fit$intensity_fit_obj %||% intensity_fit
+
+  # Determine family name
+  family_name <- if (!is.null(family)) {
+    family$name
+  } else if (!is.null(fit_obj$distribution)) {
+    fit_obj$distribution
+  } else {
+    "negbin"
+  }
+
+  if (!is.null(fit_obj$gam_model)) {
+    stop("PPC is currently supported only for parametric intensity models ",
+         "(negbin, poisson, zinb), not GAM fits.", call. = FALSE)
+  }
+
+  if (!is.null(seed)) set.seed(seed)
+
+  # --- Pre-extract raster data (once) ---
+  C_vals    <- terra::values(connectivity)[, 1]
+  valid     <- !is.na(C_vals)
+  mc        <- fit_obj$min_connectivity %||% 0
+  C_safe    <- pmax(C_vals[valid], mc)
+  z_vals    <- (log1p(C_safe / fit_obj$c_scale) - fit_obj$log_conn_mean) /
+               fit_obj$log_conn_sd
+  cell_area <- prod(terra::res(connectivity))
+
+  # Covariate values at valid cells
+  cov_vals <- NULL
+  cov_names_vec <- character(0)
+  if (!is.null(covariates_rasters) && length(covariates_rasters) > 0) {
+    cov_names_vec <- names(covariates_rasters)
+    cov_vals <- lapply(covariates_rasters, function(r) {
+      v <- terra::values(r)[, 1]
+      pmax(pmin(v[valid], 1), 0)
+    })
+  }
+
+  # Observed counts per valid cell
+  coords    <- as_coord_matrix(obs_points)
+  cells     <- terra::cellFromXY(connectivity, coords)
+  valid_idx <- which(valid)
+  n_valid   <- length(valid_idx)
+
+  obs_counts <- rep(0L, n_valid)
+  cell_map   <- match(cells, valid_idx)
+  cell_map   <- cell_map[!is.na(cell_map)]
+  tab        <- table(cell_map)
+  obs_counts[as.integer(names(tab))] <- as.integer(tab)
+
+  cell_coords <- if (include_moran) {
+    terra::xyFromCell(connectivity, valid_idx)
+  } else {
+    NULL
+  }
+
+  # --- Select posterior draws ---
+  draw_idx <- seq(1L, nrow(posterior_samples), by = thin)
+  if (length(draw_idx) > n_sim) {
+    draw_idx <- sort(sample(draw_idx, n_sim))
+  } else if (length(draw_idx) < n_sim) {
+    if (verbose) {
+      message(sprintf("  Only %d posterior draws available (requested %d); using all.",
+                      length(draw_idx), n_sim))
+    }
+  }
+  actual_n_sim <- length(draw_idx)
+
+  # --- Compute MAP expected counts for observed test quantities ---
+  params_vec <- fit_obj$estimates %||% intensity_fit$intensity_params
+  map_alpha  <- params_vec[["alpha"]]
+  if (is.null(map_alpha) || is.na(map_alpha)) map_alpha <- 0
+  map_gamma  <- params_vec[["gamma"]]
+  map_size   <- params_vec[["size"]]
+
+  map_log_lambda <- map_alpha + map_gamma * z_vals
+  if (length(cov_names_vec) > 0) {
+    for (nm in cov_names_vec) {
+      b <- params_vec[[paste0("beta_", nm)]]
+      if (!is.null(b) && !is.na(b)) {
+        map_log_lambda <- map_log_lambda + b * cov_vals[[nm]]
+      }
+    }
+  }
+  map_mu <- exp(map_log_lambda) * cell_area
+
+  tq_all <- test_quantities
+  if (include_moran) tq_all <- union(tq_all, "moran_i")
+
+  obs_tq <- .ppc_test_quantities(
+    obs_counts, map_mu, tq_all,
+    family = family, size = map_size,
+    coords = cell_coords, include_moran = include_moran
+  )
+
+  # --- Simulation loop ---
+  sim_tq <- lapply(tq_all, function(nm) numeric(actual_n_sim))
+  names(sim_tq) <- tq_all
+
+  for (i in seq_along(draw_idx)) {
+    if (verbose && i %% 50 == 0) {
+      message(sprintf("  PPC simulation %d/%d", i, actual_n_sim))
+    }
+
+    row <- posterior_samples[draw_idx[i], , drop = FALSE]
+
+    alpha_i <- row[["alpha"]]
+    if (is.null(alpha_i) || is.na(alpha_i)) alpha_i <- 0
+    gamma_i <- row[["gamma"]]
+    size_i  <- row[["size"]]
+
+    log_lambda_i <- alpha_i + gamma_i * z_vals
+    if (length(cov_names_vec) > 0) {
+      for (nm in cov_names_vec) {
+        b <- row[[paste0("beta_", nm)]]
+        if (!is.null(b) && !is.na(b)) {
+          log_lambda_i <- log_lambda_i + b * cov_vals[[nm]]
+        }
+      }
+    }
+    mu_cells_i <- exp(log_lambda_i) * cell_area
+
+    pi_val_i <- if (family_name == "zinb" && "logit_pi" %in% names(row)) {
+      1 / (1 + exp(-row[["logit_pi"]]))
+    } else {
+      NULL
+    }
+
+    sim_counts <- .ppc_simulate_counts(mu_cells_i, family_name,
+                                       size = size_i, pi_val = pi_val_i)
+
+    sim_vals <- .ppc_test_quantities(
+      sim_counts, mu_cells_i, tq_all,
+      family = family, size = size_i,
+      coords = cell_coords, include_moran = include_moran
+    )
+
+    for (nm in tq_all) {
+      sim_tq[[nm]][i] <- sim_vals[[nm]]
+    }
+  }
+
+  # --- Bayesian p-values (two-sided) ---
+  bayesian_p <- vapply(tq_all, function(nm) {
+    obs_val <- obs_tq[[nm]]
+    sim_vec <- sim_tq[[nm]]
+    if (is.na(obs_val) || all(is.na(sim_vec))) return(NA_real_)
+    p_upper <- mean(sim_vec >= obs_val, na.rm = TRUE)
+    p_lower <- mean(sim_vec <= obs_val, na.rm = TRUE)
+    min(2 * min(p_upper, p_lower), 1)
+  }, numeric(1))
+
+  if (verbose) {
+    message("\n  Posterior predictive check summary:")
+    for (nm in tq_all) {
+      message(sprintf("    %-15s  observed = %8.2f  p = %.3f",
+                      nm, obs_tq[[nm]], bayesian_p[[nm]]))
+    }
+  }
+
+  result <- structure(
+    list(
+      observed        = obs_tq,
+      simulated       = sim_tq,
+      bayesian_p      = bayesian_p,
+      n_sim           = actual_n_sim,
+      test_quantities = tq_all
+    ),
+    class = "ds_ppc"
+  )
+
+  if (plot) {
+    grDevices::dev.new()
+    plot_ppc(result)
+  }
+
+  result
+}
+
+
+#' Plot posterior predictive check results
+#'
+#' Produces a multi-panel histogram comparing observed test quantities
+#' (red vertical line) against the posterior predictive distribution
+#' (steelblue histograms).
+#'
+#' @param ppc_result Object returned by [ds_ppc()].
+#' @param ... Extra arguments passed to [graphics::hist()].
+#' @return Invisible `NULL`.
+#' @seealso [ds_ppc()]
+#' @export
+plot_ppc <- function(ppc_result, ...) {
+
+  tq <- ppc_result$test_quantities
+  n_panels <- length(tq)
+  nc <- ceiling(sqrt(n_panels))
+  nr <- ceiling(n_panels / nc)
+
+  op <- graphics::par(mfrow = c(nr, nc))
+  on.exit(graphics::par(op))
+
+  for (nm in tq) {
+    sim_vals <- ppc_result$simulated[[nm]]
+    obs_val  <- ppc_result$observed[[nm]]
+    p_val    <- ppc_result$bayesian_p[[nm]]
+
+    graphics::hist(sim_vals, 40, freq = FALSE,
+                   col = "steelblue", border = "white",
+                   main = sprintf("PPC: %s  (p = %.3f)", nm, p_val),
+                   xlab = nm, ...)
+    graphics::abline(v = obs_val, col = "red", lwd = 2)
+    graphics::legend("topright", legend = "observed",
+                     col = "red", lwd = 2, bty = "n", cex = 0.8)
+  }
+
+  invisible(NULL)
+}
