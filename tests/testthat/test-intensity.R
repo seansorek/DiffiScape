@@ -535,3 +535,125 @@ test_that("fit_intensity_nb errors when covariates_obs supplied without availabl
     "covariates_obs supplied but available_covariates is NULL"
   )
 })
+
+
+test_that("predict_intensity applies residualisation when fit used residualise=TRUE (#29)", {
+  skip_on_cran()
+  skip_if_not_installed("terra")
+  set.seed(29)
+
+  # Create rasters
+  r <- terra::rast(nrows = 10, ncols = 10, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(100, mean = 5))
+
+  r_cov <- terra::rast(r)
+  terra::values(r_cov) <- runif(100)
+  names(r_cov) <- "habitat"
+
+  n_obs <- 25
+  obs_x <- runif(n_obs, 0.05, 0.95)
+  obs_y <- runif(n_obs, 0.05, 0.95)
+  conn_at_obs <- abs(rnorm(n_obs, mean = 5))
+  cov_obs <- list(habitat = runif(n_obs))
+
+  # Fit with residualise = TRUE
+  fit_resid <- fit_intensity_nb(
+    connectivity_at_obs = conn_at_obs,
+    connectivity_raster = r,
+    obs_coords          = data.frame(x = obs_x, y = obs_y),
+    covariates_obs      = cov_obs,
+    covariates_rasters  = list(habitat = r_cov),
+    residualise         = TRUE
+  )
+
+  # Fit without residualise
+  fit_no_resid <- fit_intensity_nb(
+    connectivity_at_obs = conn_at_obs,
+    connectivity_raster = r,
+    obs_coords          = data.frame(x = obs_x, y = obs_y),
+    covariates_obs      = cov_obs,
+    covariates_rasters  = list(habitat = r_cov),
+    residualise         = FALSE
+  )
+
+  expect_true(isTRUE(fit_resid$is_residualised))
+  expect_false(isTRUE(fit_no_resid$is_residualised))
+
+  # Predict from both
+  pred_resid    <- predict_intensity(fit_resid, r,
+                                     covariates_rasters = list(habitat = r_cov))
+  pred_no_resid <- predict_intensity(fit_no_resid, r,
+                                     covariates_rasters = list(habitat = r_cov))
+
+  vals_resid    <- terra::values(pred_resid)
+  vals_no_resid <- terra::values(pred_no_resid)
+
+  # Both should produce finite positive values
+  expect_true(all(is.finite(vals_resid[!is.na(vals_resid)])))
+  expect_true(all(vals_resid[!is.na(vals_resid)] > 0))
+
+  # The two predictions should differ (residualisation changes the z values)
+  expect_false(isTRUE(all.equal(vals_resid, vals_no_resid)),
+               info = "Residualised predictions should differ from non-residualised")
+})
+
+
+test_that("predict_intensity_gam applies residualisation when fit used residualise=TRUE (#29)", {
+  skip_on_cran()
+  skip_if_not_installed("mgcv")
+  set.seed(291)
+
+  r <- terra::rast(nrows = 10, ncols = 10, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(100, mean = 5))
+
+  r_cov <- terra::rast(r)
+  terra::values(r_cov) <- runif(100)
+  names(r_cov) <- "habitat"
+
+  n_obs <- 25
+  obs_x <- runif(n_obs, 0.05, 0.95)
+  obs_y <- runif(n_obs, 0.05, 0.95)
+  conn_at_obs <- abs(rnorm(n_obs, mean = 5))
+  cov_obs <- list(habitat = runif(n_obs))
+
+  # Fit GAM with residualise = TRUE
+  fit_resid <- fit_intensity_gam(
+    connectivity_at_obs = conn_at_obs,
+    connectivity_raster = r,
+    obs_coords          = data.frame(x = obs_x, y = obs_y),
+    covariates_obs      = cov_obs,
+    covariates_rasters  = list(habitat = r_cov),
+    residualise         = TRUE
+  )
+
+  # Fit GAM without residualise
+  fit_no_resid <- fit_intensity_gam(
+    connectivity_at_obs = conn_at_obs,
+    connectivity_raster = r,
+    obs_coords          = data.frame(x = obs_x, y = obs_y),
+    covariates_obs      = cov_obs,
+    covariates_rasters  = list(habitat = r_cov),
+    residualise         = FALSE
+  )
+
+  expect_true(isTRUE(fit_resid$is_residualised))
+
+  # Predict from both
+  pred_resid    <- predict_intensity(fit_resid, r,
+                                     covariates_rasters = list(habitat = r_cov))
+  pred_no_resid <- predict_intensity(fit_no_resid, r,
+                                     covariates_rasters = list(habitat = r_cov))
+
+  vals_resid    <- terra::values(pred_resid)
+  vals_no_resid <- terra::values(pred_no_resid)
+
+  # Both should produce finite positive values
+  expect_true(all(is.finite(vals_resid[!is.na(vals_resid)])))
+  expect_true(all(vals_resid[!is.na(vals_resid)] > 0))
+
+  # The two predictions should differ
+  expect_false(isTRUE(all.equal(vals_resid, vals_no_resid)),
+               info = "Residualised GAM predictions should differ from non-residualised")
+})

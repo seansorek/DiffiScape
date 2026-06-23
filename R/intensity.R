@@ -814,6 +814,21 @@ predict_intensity <- function(fit,
   z_vals <- (log1p(C_safe / fit$c_scale) - fit$log_conn_mean) /
             fit$log_conn_sd
 
+  # Apply residualisation if it was used at fit time (#29)
+  if (isTRUE(fit$is_residualised) && !is.null(fit$residualisation_info)) {
+    aux_mod <- fit$residualisation_info$aux_model
+    nd <- data.frame(dummy = seq_along(z_vals))
+    nd$z <- z_vals
+    for (nm in setdiff(names(stats::coef(aux_mod)), "(Intercept)")) {
+      if (!is.null(covariates_rasters) && nm %in% names(covariates_rasters)) {
+        nd[[nm]] <- pmax(pmin(terra::values(covariates_rasters[[nm]]), 1), 0)
+      } else {
+        nd[[nm]] <- rep(0, length(z_vals))
+      }
+    }
+    z_vals <- z_vals - stats::predict(aux_mod, newdata = nd)
+  }
+
   log_lambda <- alpha + gamma * z_vals
 
   # Add covariate contributions
@@ -886,6 +901,22 @@ fit_intensity_selection <- function(connectivity_at_obs,
   mc    <- fit$min_connectivity %||% 0
   C_v   <- pmax(C_all[valid], mc)
   z_v   <- (log1p(C_v / fit$c_scale) - fit$log_conn_mean) / fit$log_conn_sd
+
+  # Apply residualisation if it was used at fit time (#29)
+  if (isTRUE(fit$is_residualised) && !is.null(fit$residualisation_info)) {
+    aux_mod <- fit$residualisation_info$aux_model
+    aux_nd <- data.frame(dummy = seq_along(z_v))
+    aux_nd$z <- z_v
+    for (nm in setdiff(names(stats::coef(aux_mod)), "(Intercept)")) {
+      if (!is.null(covariates_rasters) && nm %in% names(covariates_rasters)) {
+        cv <- terra::values(covariates_rasters[[nm]])
+        aux_nd[[nm]] <- pmax(pmin(cv[valid], 1), 0)
+      } else {
+        aux_nd[[nm]] <- rep(0, length(z_v))
+      }
+    }
+    z_v <- z_v - stats::predict(aux_mod, newdata = aux_nd)
+  }
 
   nd <- data.frame(
     connectivity = z_v,
