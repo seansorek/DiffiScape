@@ -821,12 +821,12 @@ predict_intensity <- function(fit,
     nd$z <- z_vals
     for (nm in setdiff(names(stats::coef(aux_mod)), "(Intercept)")) {
       if (!is.null(covariates_rasters) && nm %in% names(covariates_rasters)) {
-        nd[[nm]] <- pmax(pmin(terra::values(covariates_rasters[[nm]]), 1), 0)
+        nd[[nm]] <- as.numeric(pmax(pmin(terra::values(covariates_rasters[[nm]]), 1), 0))
       } else {
         nd[[nm]] <- rep(0, length(z_vals))
       }
     }
-    z_vals <- z_vals - stats::predict(aux_mod, newdata = nd)
+    z_vals <- z_vals - as.numeric(stats::predict(aux_mod, newdata = nd))
   }
 
   log_lambda <- alpha + gamma * z_vals
@@ -909,13 +909,13 @@ fit_intensity_selection <- function(connectivity_at_obs,
     aux_nd$z <- z_v
     for (nm in setdiff(names(stats::coef(aux_mod)), "(Intercept)")) {
       if (!is.null(covariates_rasters) && nm %in% names(covariates_rasters)) {
-        cv <- terra::values(covariates_rasters[[nm]])
+        cv <- as.numeric(terra::values(covariates_rasters[[nm]]))
         aux_nd[[nm]] <- pmax(pmin(cv[valid], 1), 0)
       } else {
         aux_nd[[nm]] <- rep(0, length(z_v))
       }
     }
-    z_v <- z_v - stats::predict(aux_mod, newdata = aux_nd)
+    z_v <- z_v - as.numeric(stats::predict(aux_mod, newdata = aux_nd))
   }
 
   nd <- data.frame(
