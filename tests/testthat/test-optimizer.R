@@ -86,3 +86,147 @@ test_that(".create_lhs_design respects bounds for three parameters", {
   expect_true(all(design$z_1 >= -5 & design$z_1 <= 5))
   expect_true(all(design$z_2 >= 2  & design$z_2 <= 4))
 })
+
+
+# ---- optimize_resistance -----------------------------------------------------
+
+test_that("optimize_resistance returns expected result structure", {
+  skip_on_cran()
+  skip_if_not_installed("terra")
+
+  set.seed(42)
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1, nlyrs = 2)
+  terra::values(basis) <- runif(50)
+  obs <- data.frame(x = runif(10, 0.1, 0.9), y = runif(10, 0.1, 0.9))
+
+  local_mocked_bindings(
+    .outer_objective = function(theta, basis_stack, obs_points,
+                                omniscape_settings, eval_counter,
+                                log_file, ...) {
+      eval_counter$n <- eval_counter$n + 1L
+      sum(theta^2) + rnorm(1, sd = 0.01)
+    },
+    .package = "DiffiScape"
+  )
+
+  cfg <- default_optimizer_config()
+  cfg$n_init <- 5L
+  cfg$n_iter <- 2L
+  cfg$seed   <- 42L
+
+  out_dir <- withr::local_tempdir()
+  result  <- optimize_resistance(basis, obs, config = cfg,
+                                 output_dir = out_dir)
+
+  expect_type(result$best_params, "list")
+  expect_true(all(c("r_0", "z_1", "z_2") %in% names(result$best_params)))
+  expect_type(result$best_loglik, "double")
+  expect_s3_class(result$X_evaluated, "data.frame")
+  expect_type(result$y_evaluated, "double")
+  expect_equal(result$n_evaluations, 7L)
+  expect_s4_class(result$surrogate, "km")
+  expect_type(result$bounds, "list")
+})
+
+
+test_that("optimize_resistance creates output directory and saves RDS", {
+  skip_on_cran()
+  skip_if_not_installed("terra")
+
+  set.seed(43)
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1, nlyrs = 2)
+  terra::values(basis) <- runif(50)
+  obs <- data.frame(x = runif(10, 0.1, 0.9), y = runif(10, 0.1, 0.9))
+
+  local_mocked_bindings(
+    .outer_objective = function(theta, basis_stack, obs_points,
+                                omniscape_settings, eval_counter,
+                                log_file, ...) {
+      eval_counter$n <- eval_counter$n + 1L
+      sum(theta^2) + rnorm(1, sd = 0.01)
+    },
+    .package = "DiffiScape"
+  )
+
+  cfg <- default_optimizer_config()
+  cfg$n_init <- 5L
+  cfg$n_iter <- 2L
+  cfg$seed   <- 43L
+
+  parent  <- withr::local_tempdir()
+  out_dir <- file.path(parent, "opt_output")
+  result  <- optimize_resistance(basis, obs, config = cfg,
+                                 output_dir = out_dir)
+
+  expect_true(dir.exists(out_dir))
+  expect_true(file.exists(file.path(out_dir, "optimization_results.rds")))
+})
+
+
+test_that("optimize_resistance uses default bounds when NULL", {
+  skip_on_cran()
+  skip_if_not_installed("terra")
+
+  set.seed(44)
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1, nlyrs = 2)
+  terra::values(basis) <- runif(50)
+  obs <- data.frame(x = runif(10, 0.1, 0.9), y = runif(10, 0.1, 0.9))
+
+  local_mocked_bindings(
+    .outer_objective = function(theta, basis_stack, obs_points,
+                                omniscape_settings, eval_counter,
+                                log_file, ...) {
+      eval_counter$n <- eval_counter$n + 1L
+      sum(theta^2) + rnorm(1, sd = 0.01)
+    },
+    .package = "DiffiScape"
+  )
+
+  cfg <- default_optimizer_config()
+  cfg$n_init <- 5L
+  cfg$n_iter <- 2L
+  cfg$seed   <- 44L
+
+  result <- optimize_resistance(basis, obs, bounds = NULL, config = cfg,
+                                output_dir = withr::local_tempdir())
+
+  expect_equal(length(result$bounds), 3)
+  expect_true(all(c("r_0", "z_1", "z_2") %in% names(result$bounds)))
+})
+
+
+test_that("optimize_resistance works with EI acquisition", {
+  skip_on_cran()
+  skip_if_not_installed("terra")
+
+  set.seed(45)
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1, nlyrs = 2)
+  terra::values(basis) <- runif(50)
+  obs <- data.frame(x = runif(10, 0.1, 0.9), y = runif(10, 0.1, 0.9))
+
+  local_mocked_bindings(
+    .outer_objective = function(theta, basis_stack, obs_points,
+                                omniscape_settings, eval_counter,
+                                log_file, ...) {
+      eval_counter$n <- eval_counter$n + 1L
+      sum(theta^2) + rnorm(1, sd = 0.01)
+    },
+    .package = "DiffiScape"
+  )
+
+  cfg <- default_optimizer_config()
+  cfg$n_init      <- 5L
+  cfg$n_iter      <- 2L
+  cfg$seed        <- 45L
+  cfg$acquisition <- "EI"
+
+  result <- optimize_resistance(basis, obs, config = cfg,
+                                output_dir = withr::local_tempdir())
+
+  expect_equal(result$acquisition, "EI")
+  expect_false(is.null(result$xi_initial))
+})

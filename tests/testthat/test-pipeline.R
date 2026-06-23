@@ -263,3 +263,242 @@ test_that("ds_predict falls back gracefully when intensity_fit_obj is absent", {
   expect_equal(names(result), "intensity")
   expect_true(all(is.finite(terra::values(result)[, 1])))
 })
+
+
+# ---- diffiscape() wrapper tests ----------------------------------------------
+
+test_that("diffiscape errors when obs_data lacks x/y columns", {
+  expect_error(
+    diffiscape(obs_data = data.frame(a = 1, b = 2),
+               rasters  = "dummy",
+               output_dir = tempdir(),
+               plot = FALSE),
+    "x.*y"
+  )
+})
+
+
+test_that("diffiscape returns expected result structure", {
+  skip_on_cran()
+  skip_if_not_installed("terra")
+
+  mock_opt  <- list(best_params = list(r_0 = 0), bounds = list(r_0 = c(-2, 2)),
+                    distribution = "negbin")
+  mock_fit  <- list(loglik = -10, intensity_params = c(0.1, 0.2),
+                    intensity_fit_obj = list(), distribution = "negbin")
+  mock_post <- list(laplace = list(), samples = data.frame(r_0 = rnorm(3)),
+                    summary = data.frame())
+  mock_diag <- list(deviance_residuals = numeric(0))
+  mock_conn <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+
+  local_mocked_bindings(
+    ds_init_julia = function(...) invisible(TRUE),
+    ds_optimize   = function(...) mock_opt,
+    ds_fit_intensity = function(...) mock_fit,
+    ds_posterior  = function(...) mock_post,
+    create_resistance_surface = function(...) mock_conn,
+    run_omniscape = function(...) {
+      list(cum_current = mock_conn, elapsed_seconds = 0.1)
+    },
+    ds_diagnose = function(...) mock_diag,
+    ds_ppc      = function(...) list(check = "ok"),
+    .package = "DiffiScape"
+  )
+
+  basis  <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  obs    <- data.frame(x = c(0, 1), y = c(0, 1))
+  result <- diffiscape(obs_data = obs, rasters = list(layer1 = basis),
+                       output_dir = withr::local_tempdir(),
+                       n_posterior = 3L, plot = FALSE)
+
+  expect_named(result, c("obs_points", "basis_stack", "opt_result",
+                          "intensity_fit", "posterior", "diagnostics",
+                          "ppc", "elapsed_min"),
+               ignore.order = TRUE)
+  expect_type(result$elapsed_min, "double")
+})
+
+
+test_that("diffiscape skips posterior when n_posterior is 0", {
+  skip_on_cran()
+  skip_if_not_installed("terra")
+
+  mock_opt  <- list(best_params = list(r_0 = 0), bounds = list(r_0 = c(-2, 2)),
+                    distribution = "negbin")
+  mock_fit  <- list(loglik = -10, intensity_params = c(0.1, 0.2),
+                    intensity_fit_obj = list(), distribution = "negbin")
+  mock_diag <- list(deviance_residuals = numeric(0))
+  mock_conn <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+
+  posterior_called <- FALSE
+
+  local_mocked_bindings(
+    ds_init_julia = function(...) invisible(TRUE),
+    ds_optimize   = function(...) mock_opt,
+    ds_fit_intensity = function(...) mock_fit,
+    ds_posterior  = function(...) { posterior_called <<- TRUE; list() },
+    create_resistance_surface = function(...) mock_conn,
+    run_omniscape = function(...) {
+      list(cum_current = mock_conn, elapsed_seconds = 0.1)
+    },
+    ds_diagnose = function(...) mock_diag,
+    .package = "DiffiScape"
+  )
+
+  basis  <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  obs    <- data.frame(x = c(0, 1), y = c(0, 1))
+  result <- diffiscape(obs_data = obs, rasters = list(layer1 = basis),
+                       output_dir = withr::local_tempdir(),
+                       n_posterior = 0L, plot = FALSE)
+
+  expect_false(posterior_called)
+  expect_null(result$posterior)
+})
+
+
+test_that("diffiscape dispatches to run_cumulative_current for enzyme solver", {
+  skip_on_cran()
+  skip_if_not_installed("terra")
+
+  mock_opt  <- list(best_params = list(r_0 = 0), bounds = list(r_0 = c(-2, 2)),
+                    distribution = "negbin")
+  mock_fit  <- list(loglik = -10, intensity_params = c(0.1, 0.2),
+                    intensity_fit_obj = list(), distribution = "negbin")
+  mock_diag <- list(deviance_residuals = numeric(0))
+  mock_conn <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+
+  enzyme_called   <- FALSE
+  omniscape_called <- FALSE
+
+  local_mocked_bindings(
+    ds_init_julia = function(...) invisible(TRUE),
+    ds_optimize   = function(...) mock_opt,
+    ds_fit_intensity = function(...) mock_fit,
+    create_resistance_surface = function(...) mock_conn,
+    run_cumulative_current = function(...) {
+      enzyme_called <<- TRUE
+      list(cum_current = mock_conn, elapsed_seconds = 0.1)
+    },
+    run_omniscape = function(...) {
+      omniscape_called <<- TRUE
+      list(cum_current = mock_conn, elapsed_seconds = 0.1)
+    },
+    ds_diagnose = function(...) mock_diag,
+    .package = "DiffiScape"
+  )
+
+  basis  <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  obs    <- data.frame(x = c(0, 1), y = c(0, 1))
+  result <- diffiscape(obs_data = obs, rasters = list(layer1 = basis),
+                       output_dir = withr::local_tempdir(),
+                       n_posterior = 0L, plot = FALSE, solver = "enzyme")
+
+  expect_true(enzyme_called)
+  expect_false(omniscape_called)
+})
+
+
+test_that("diffiscape saves diffiscape_result.rds", {
+  skip_on_cran()
+  skip_if_not_installed("terra")
+
+  mock_opt  <- list(best_params = list(r_0 = 0), bounds = list(r_0 = c(-2, 2)),
+                    distribution = "negbin")
+  mock_fit  <- list(loglik = -10, intensity_params = c(0.1, 0.2),
+                    intensity_fit_obj = list(), distribution = "negbin")
+  mock_diag <- list(deviance_residuals = numeric(0))
+  mock_conn <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+  out_dir   <- withr::local_tempdir()
+
+  local_mocked_bindings(
+    ds_init_julia = function(...) invisible(TRUE),
+    ds_optimize   = function(...) mock_opt,
+    ds_fit_intensity = function(...) mock_fit,
+    create_resistance_surface = function(...) mock_conn,
+    run_omniscape = function(...) {
+      list(cum_current = mock_conn, elapsed_seconds = 0.1)
+    },
+    ds_diagnose = function(...) mock_diag,
+    .package = "DiffiScape"
+  )
+
+  basis <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  obs   <- data.frame(x = c(0, 1), y = c(0, 1))
+  diffiscape(obs_data = obs, rasters = list(layer1 = basis),
+             output_dir = out_dir, n_posterior = 0L, plot = FALSE)
+
+  expect_true(file.exists(file.path(out_dir, "diffiscape_result.rds")))
+})
+
+
+test_that("diffiscape handles PPC error gracefully", {
+  skip_on_cran()
+  skip_if_not_installed("terra")
+
+  mock_opt  <- list(best_params = list(r_0 = 0), bounds = list(r_0 = c(-2, 2)),
+                    distribution = "negbin")
+  mock_fit  <- list(loglik = -10, intensity_params = c(0.1, 0.2),
+                    intensity_fit_obj = list(), distribution = "negbin")
+  mock_post <- list(laplace = list(), samples = data.frame(r_0 = rnorm(3)),
+                    summary = data.frame())
+  mock_diag <- list(deviance_residuals = numeric(0))
+  mock_conn <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+
+  local_mocked_bindings(
+    ds_init_julia = function(...) invisible(TRUE),
+    ds_optimize   = function(...) mock_opt,
+    ds_fit_intensity = function(...) mock_fit,
+    ds_posterior  = function(...) mock_post,
+    create_resistance_surface = function(...) mock_conn,
+    run_omniscape = function(...) {
+      list(cum_current = mock_conn, elapsed_seconds = 0.1)
+    },
+    ds_diagnose = function(...) mock_diag,
+    ds_ppc      = function(...) stop("PPC computation failed"),
+    .package = "DiffiScape"
+  )
+
+  basis  <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  obs    <- data.frame(x = c(0, 1), y = c(0, 1))
+  result <- diffiscape(obs_data = obs, rasters = list(layer1 = basis),
+                       output_dir = withr::local_tempdir(),
+                       n_posterior = 3L, plot = FALSE)
+
+  expect_null(result$ppc)
+})
+
+
+test_that("diffiscape loads obs_data from CSV file path", {
+  skip_on_cran()
+  skip_if_not_installed("terra")
+
+  mock_opt  <- list(best_params = list(r_0 = 0), bounds = list(r_0 = c(-2, 2)),
+                    distribution = "negbin")
+  mock_fit  <- list(loglik = -10, intensity_params = c(0.1, 0.2),
+                    intensity_fit_obj = list(), distribution = "negbin")
+  mock_diag <- list(deviance_residuals = numeric(0))
+  mock_conn <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+
+  local_mocked_bindings(
+    ds_init_julia = function(...) invisible(TRUE),
+    ds_optimize   = function(...) mock_opt,
+    ds_fit_intensity = function(...) mock_fit,
+    create_resistance_surface = function(...) mock_conn,
+    run_omniscape = function(...) {
+      list(cum_current = mock_conn, elapsed_seconds = 0.1)
+    },
+    ds_diagnose = function(...) mock_diag,
+    .package = "DiffiScape"
+  )
+
+  csv_path <- tempfile(fileext = ".csv")
+  write.csv(data.frame(x = 1:5, y = 6:10), csv_path, row.names = FALSE)
+  withr::defer(unlink(csv_path))
+
+  basis  <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  result <- diffiscape(obs_data = csv_path, rasters = list(layer1 = basis),
+                       output_dir = withr::local_tempdir(),
+                       n_posterior = 0L, plot = FALSE)
+
+  expect_equal(nrow(result$obs_points), 5)
+})
