@@ -276,7 +276,9 @@ family_gaussian <- function(known_sd = NULL) {
     },
 
     deviance_residuals_fn = function(observed, fitted, extra_params) {
-      sign(observed - fitted) * abs(observed - fitted)
+      log_obs <- log(pmax(observed, 1e-300))
+      log_fit <- log(pmax(fitted,   1e-300))
+      log_obs - log_fit
     },
 
     init_fn = function(n_cov) {
