@@ -23,10 +23,10 @@ If the file exists it is loaded and returned immediately;
 otherwise the new stack is written there for future re-use.}
 }
 \value{
-A \link[terra:SpatRaster-class]{terra::SpatRaster} with one layer per input raster.
+A \link[terra:SpatRaster]{terra::SpatRaster} with one layer per input raster.
 }
 \description{
-Accepts an arbitrary named list of \link[terra:SpatRaster-class]{terra::SpatRaster} layers, validates
+Accepts an arbitrary named list of \link[terra:SpatRaster]{terra::SpatRaster} layers, validates
 alignment, optionally rescales each to [0, 1], and returns a multi-layer
 \code{SpatRaster} ready for \code{\link[=create_resistance_surface]{create_resistance_surface()}}.
 }

@@ -14,14 +14,14 @@ ds_predict(
 \arguments{
 \item{intensity_fit}{Result from \code{\link[=ds_fit_intensity]{ds_fit_intensity()}}.}
 
-\item{connectivity}{A \link[terra:SpatRaster-class]{terra::SpatRaster} of connectivity values.}
+\item{connectivity}{A \link[terra:SpatRaster]{terra::SpatRaster} of connectivity values.}
 
 \item{intensity_config}{Intensity config.}
 
 \item{covariates_rasters}{Named list of covariate rasters.}
 }
 \value{
-A \link[terra:SpatRaster-class]{terra::SpatRaster} of predicted intensity.
+A \link[terra:SpatRaster]{terra::SpatRaster} of predicted intensity.
 }
 \description{
 Generates a raster of the predicted intensity surface.

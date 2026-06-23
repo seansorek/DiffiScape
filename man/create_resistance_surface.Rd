@@ -19,7 +19,7 @@ create_resistance_surface(
 The first element is the intercept; remaining elements are
 coefficients for each basis function.}
 
-\item{basis_stack}{A \link[terra:SpatRaster-class]{terra::SpatRaster} with \emph{K} layers (from
+\item{basis_stack}{A \link[terra:SpatRaster]{terra::SpatRaster} with \emph{K} layers (from
 \code{\link[=create_basis_stack]{create_basis_stack()}}).}
 
 \item{R_min, R_max}{Numeric.
@@ -30,7 +30,7 @@ Hard floor / ceiling applied after the link (default 1 / 5000).}
 \item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}
 }
 \value{
-A single-layer \link[terra:SpatRaster-class]{terra::SpatRaster} named \code{"resistance"} or
+A single-layer \link[terra:SpatRaster]{terra::SpatRaster} named \code{"resistance"} or
 \code{"log_resistance"}.
 }
 \description{

@@ -13,7 +13,7 @@ run_cumulative_current(
 )
 }
 \arguments{
-\item{resistance}{A single-layer \link[terra:SpatRaster-class]{terra::SpatRaster} of resistance.}
+\item{resistance}{A single-layer \link[terra:SpatRaster]{terra::SpatRaster} of resistance.}
 
 \item{radius}{Integer; moving-window radius in pixels (default 13).}
 
@@ -30,9 +30,9 @@ One of \code{"current"} (default), \code{"voltage"}, or \code{"both"}.
 \value{
 A list matching the \code{\link[=run_omniscape]{run_omniscape()}} interface:
 \describe{
-\item{cum_current}{\link[terra:SpatRaster-class]{terra::SpatRaster} of cumulative current, or \code{NULL}
+\item{cum_current}{\link[terra:SpatRaster]{terra::SpatRaster} of cumulative current, or \code{NULL}
 when \code{output = "voltage"}.}
-\item{flow_potential}{\link[terra:SpatRaster-class]{terra::SpatRaster} of cumulative voltage
+\item{flow_potential}{\link[terra:SpatRaster]{terra::SpatRaster} of cumulative voltage
 (flow potential), or \code{NULL} when \code{output = "current"}.}
 \item{elapsed_seconds}{Wall-clock time.}
 }

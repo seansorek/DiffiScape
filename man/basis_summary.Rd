@@ -7,7 +7,7 @@
 basis_summary(basis_stack)
 }
 \arguments{
-\item{basis_stack}{A \link[terra:SpatRaster-class]{terra::SpatRaster}.}
+\item{basis_stack}{A \link[terra:SpatRaster]{terra::SpatRaster}.}
 }
 \value{
 A data.frame with one row per layer.

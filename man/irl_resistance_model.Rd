@@ -8,9 +8,9 @@ irl_resistance_model(irl_result, basis_stack, ...)
 }
 \arguments{
 \item{irl_result}{A list returned by \code{\link[=run_torch_pipeline]{run_torch_pipeline()}} / \code{\link[=ds_optimize]{ds_optimize()}}
-with \code{solver = "irl"}; must contain a \code{resistance_raster} \link[terra:SpatRaster-class]{terra::SpatRaster}.}
+with \code{solver = "irl"}; must contain a \code{resistance_raster} \link[terra:SpatRaster]{terra::SpatRaster}.}
 
-\item{basis_stack}{The \link[terra:SpatRaster-class]{terra::SpatRaster} basis used to fit the model.}
+\item{basis_stack}{The \link[terra:SpatRaster]{terra::SpatRaster} basis used to fit the model.}
 
 \item{...}{Additional metadata stored on the model object.}
 }

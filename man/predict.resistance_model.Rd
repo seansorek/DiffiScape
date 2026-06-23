@@ -9,7 +9,7 @@
 \arguments{
 \item{object}{A \code{\link[=resistance_model]{resistance_model()}} object (parametric or custom).}
 
-\item{basis_stack}{Optional replacement \link[terra:SpatRaster-class]{terra::SpatRaster}.  Supply
+\item{basis_stack}{Optional replacement \link[terra:SpatRaster]{terra::SpatRaster}.  Supply
 this to predict onto a different spatial extent or resolution.
 Defaults to the basis stack stored inside \code{object}.}
 
@@ -18,7 +18,7 @@ function (e.g. \code{return_log = TRUE} for parametric models,
 or any argument expected by a custom function).}
 }
 \value{
-A single-layer \link[terra:SpatRaster-class]{terra::SpatRaster} of resistance values.
+A single-layer \link[terra:SpatRaster]{terra::SpatRaster} of resistance values.
 }
 \description{
 Calls \code{object$fn(basis_stack, ...)} and validates the result.

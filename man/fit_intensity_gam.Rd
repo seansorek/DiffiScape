@@ -18,14 +18,14 @@ fit_intensity_gam(
 \item{connectivity_at_obs}{Numeric vector of raw connectivity at
 observation locations.}
 
-\item{connectivity_raster}{A \link[terra:SpatRaster-class]{terra::SpatRaster} for integration.}
+\item{connectivity_raster}{A \link[terra:SpatRaster]{terra::SpatRaster} for integration.}
 
 \item{obs_coords}{Data.frame / matrix with \verb{x, y}.}
 
 \item{covariates_obs}{Named list of covariate vectors at observations
 (each 0–1 scaled; \code{NULL} to omit).}
 
-\item{covariates_rasters}{Named list of \link[terra:SpatRaster-class]{terra::SpatRaster} for
+\item{covariates_rasters}{Named list of \link[terra:SpatRaster]{terra::SpatRaster} for
 integration-grid covariates (\code{NULL} to omit).}
 
 \item{residualise}{Logical; residualise connectivity against

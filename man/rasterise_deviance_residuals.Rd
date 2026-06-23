@@ -19,7 +19,7 @@ rasterise_deviance_residuals(
 
 \item{obs_points}{Data.frame with \verb{x, y}.}
 
-\item{connectivity}{A \link[terra:SpatRaster-class]{terra::SpatRaster} of connectivity values.}
+\item{connectivity}{A \link[terra:SpatRaster]{terra::SpatRaster} of connectivity values.}
 
 \item{intensity_config}{Intensity config.}
 
@@ -28,7 +28,7 @@ rasterise_deviance_residuals(
 \item{family}{An \link{intensity_family} object, or \code{NULL} (uses NB default).}
 }
 \value{
-A \link[terra:SpatRaster-class]{terra::SpatRaster} of deviance residuals.
+A \link[terra:SpatRaster]{terra::SpatRaster} of deviance residuals.
 }
 \description{
 Counts observations per cell, computes predicted intensity per cell,

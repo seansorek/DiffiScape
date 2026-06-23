@@ -7,7 +7,7 @@
 validate_raster_alignment(...)
 }
 \arguments{
-\item{...}{One or more \link[terra:SpatRaster-class]{terra::SpatRaster} objects.}
+\item{...}{One or more \link[terra:SpatRaster]{terra::SpatRaster} objects.}
 }
 \value{
 \code{TRUE} if aligned, \code{FALSE} otherwise.

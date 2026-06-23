@@ -15,7 +15,6 @@ Description: Gradient-based and surrogate-based optimization of landscape
 License: GPL (>= 3)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.3
 Imports:
     terra,
     mgcv,
@@ -38,3 +37,4 @@ Suggests:
     rmarkdown
 VignetteBuilder: knitr
 Config/testthat/edition: 3
+Config/roxygen2/version: 8.0.0

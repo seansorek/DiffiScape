@@ -17,7 +17,7 @@
 }
 \arguments{
 \item{theta}{Parameter vector.  Layout: \verb{c(alpha, gamma, [betas...], log_nb_theta)}.  The last element is the log-dispersion parameter
-(\code{size} in \link[stats:NegBinomial]{stats::dnbinom}).}
+(\code{size} in \link[stats:dnbinom]{stats::dnbinom}).}
 
 \item{z_obs, z_int}{Standardised connectivity at observations /
 integration points.}

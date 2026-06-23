@@ -11,7 +11,7 @@ compute_eta(link, theta, basis_values)
 
 \item{theta}{Numeric parameter vector.}
 
-\item{basis_values}{Matrix (cells x K) or \link[terra:SpatRaster-class]{terra::SpatRaster}.}
+\item{basis_values}{Matrix (cells x K) or \link[terra:SpatRaster]{terra::SpatRaster}.}
 }
 \value{
 Numeric vector (or SpatRaster) of linear predictor values.

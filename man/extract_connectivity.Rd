@@ -7,7 +7,7 @@
 extract_connectivity(connectivity, points, buffer = NULL)
 }
 \arguments{
-\item{connectivity}{A \link[terra:SpatRaster-class]{terra::SpatRaster} of connectivity / current flow.}
+\item{connectivity}{A \link[terra:SpatRaster]{terra::SpatRaster} of connectivity / current flow.}
 
 \item{points}{Locations as data.frame (with x, y), matrix, or SpatVector.}
 

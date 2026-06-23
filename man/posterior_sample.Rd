@@ -29,7 +29,7 @@ posterior_sample(
 
 \item{opt_result}{Result from \code{\link[=optimize_resistance]{optimize_resistance()}}.}
 
-\item{basis_stack}{A \link[terra:SpatRaster-class]{terra::SpatRaster} of basis functions.}
+\item{basis_stack}{A \link[terra:SpatRaster]{terra::SpatRaster} of basis functions.}
 
 \item{obs_points}{Data.frame with \verb{x, y}.}
 
@@ -72,4 +72,16 @@ A data.frame with posterior samples (one row per draw).
 For each draw of resistance parameters from the Laplace posterior,
 evaluates the inner-loop MLE and draws intensity parameters from
 the asymptotic normal.
+}
+\details{
+\strong{Approximation note.} The joint posterior produced by this function is a
+plug-in (asymptotic) approximation, \emph{not} a full Bayesian posterior.  The
+outer resistance draw comes from the Laplace approximation to the PPP
+log-likelihood; the inner intensity draw is an independent normal centred on
+the conditional MLE with frequentist asymptotic standard errors.  Because the
+two stages are sampled independently, the correlation between the inner
+standard errors and the outer \eqn{\theta} draw is ignored, which can cause
+joint credible intervals -- especially for connectivity parameters such as
+\eqn{\gamma} -- to be too narrow.  Interpret credible intervals as approximate
+guides rather than exact probability statements.
 }

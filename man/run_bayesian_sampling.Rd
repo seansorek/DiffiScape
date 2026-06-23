@@ -38,7 +38,7 @@ run_bayesian_sampling(
 )
 }
 \arguments{
-\item{basis_stack}{\link[terra:SpatRaster-class]{terra::SpatRaster} of basis layers (must match the
+\item{basis_stack}{\link[terra:SpatRaster]{terra::SpatRaster} of basis layers (must match the
 stack used for the MAP run).}
 
 \item{obs_points}{Data.frame with \verb{x, y} columns.}
