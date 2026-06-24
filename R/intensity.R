@@ -407,6 +407,15 @@ fit_intensity_nb <- function(connectivity_at_obs,
     }
 
     estimates <- opt$par
+    if (n_extra > 0) {
+      extra_idx <- seq(length(estimates) - n_extra + 1L, length(estimates))
+      for (ei in extra_idx) {
+        estimates[ei] <- exp(estimates[ei])
+      }
+    }
+    if (n_extra > 0 && family$name %in% c("negbin", "zinb")) {
+      est_names[length(est_names) - n_extra + 1L] <- "size"
+    }
     names(estimates) <- est_names
 
     se <- rep(NA_real_, length(estimates))
@@ -414,6 +423,11 @@ fit_intensity_nb <- function(connectivity_at_obs,
       H  <- opt$hessian
       V  <- solve(H)
       se <- sqrt(pmax(diag(V), 0))
+      if (n_extra > 0) {
+        for (ei in extra_idx) {
+          se[ei] <- se[ei] * estimates[ei]
+        }
+      }
     }, error = function(e) NULL)
     names(se) <- est_names
 
