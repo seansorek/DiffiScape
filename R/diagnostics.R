@@ -613,6 +613,11 @@ ds_ppc <- function(posterior_samples,
   }
   map_mu <- exp(map_log_lambda) * cell_area
 
+  if (family_name == "zinb" && "logit_pi" %in% names(params_vec)) {
+    pi_map <- 1 / (1 + exp(-params_vec[["logit_pi"]]))
+    map_mu <- map_mu * (1 - pi_map)
+  }
+
   tq_all <- test_quantities
   if (include_moran) tq_all <- union(tq_all, "moran_i")
 
@@ -658,8 +663,10 @@ ds_ppc <- function(posterior_samples,
     sim_counts <- .ppc_simulate_counts(mu_cells_i, family_name,
                                        size = size_i, pi_val = pi_val_i)
 
+    mu_expected_i <- if (!is.null(pi_val_i)) mu_cells_i * (1 - pi_val_i) else mu_cells_i
+
     sim_vals <- .ppc_test_quantities(
-      sim_counts, mu_cells_i, tq_all,
+      sim_counts, mu_expected_i, tq_all,
       family = family, size = size_i,
       coords = cell_coords, include_moran = include_moran
     )
