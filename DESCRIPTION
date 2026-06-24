@@ -33,6 +33,7 @@ Suggests:
     ggplot2,
     spdep,
     testthat (>= 3.0.0),
+    withr,
     knitr,
     rmarkdown
 VignetteBuilder: knitr

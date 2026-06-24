@@ -181,3 +181,506 @@ test_that(".prepare_torch_inputs returns correct grid dimensions", {
   expect_equal(result$n_rows, 6L)
   expect_equal(result$n_cols, 8L)
 })
+
+
+# ---- .save_mcmc_artifacts ----------------------------------------------------
+
+test_that(".save_mcmc_artifacts saves RDS and summary CSV", {
+  tmp <- withr::local_tempdir()
+  results <- list(
+    samples = matrix(rnorm(6), nrow = 3),
+    summary = list(
+      r_0 = list(mean = 1.0, sd = 0.1, q025 = 0.8, q50 = 1.0, q975 = 1.2,
+                 ess = 500),
+      z_1 = list(mean = 0.5, sd = 0.2, q025 = 0.1, q50 = 0.5, q975 = 0.9,
+                 ess = 400)
+    )
+  )
+  expect_message(
+    DiffiScape:::.save_mcmc_artifacts(results, tmp),
+    "mcmc_results\\.rds"
+  )
+  expect_true(file.exists(file.path(tmp, "mcmc_results.rds")))
+  expect_true(file.exists(file.path(tmp, "posterior_summary.csv")))
+
+  csv <- read.csv(file.path(tmp, "posterior_summary.csv"))
+  expect_equal(nrow(csv), 2)
+  expect_true(all(c("parameter", "mean", "sd", "q025", "median", "q975", "ess")
+                  %in% names(csv)))
+})
+
+
+test_that(".save_mcmc_artifacts skips CSV when summary is NULL", {
+  tmp <- withr::local_tempdir()
+  results <- list(samples = matrix(rnorm(6), nrow = 3), summary = NULL)
+  expect_message(
+    DiffiScape:::.save_mcmc_artifacts(results, tmp),
+    "mcmc_results\\.rds"
+  )
+  expect_true(file.exists(file.path(tmp, "mcmc_results.rds")))
+  expect_false(file.exists(file.path(tmp, "posterior_summary.csv")))
+})
+
+
+# ---- Bayesian sampler error paths --------------------------------------------
+
+test_that("run_bayesian_sampling errors when checkpoint is missing", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+
+  tmp <- withr::local_tempdir()
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1)
+  terra::values(basis) <- runif(25)
+  obs <- data.frame(x = 0.5, y = 0.5)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    .package = "DiffiScape"
+  )
+
+  expect_error(
+    run_bayesian_sampling(basis, obs, model_dir = tmp),
+    "Model checkpoint not found"
+  )
+})
+
+
+test_that("run_bayesian_sampling_hmc errors when checkpoint is missing", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+
+  tmp <- withr::local_tempdir()
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1)
+  terra::values(basis) <- runif(25)
+  obs <- data.frame(x = 0.5, y = 0.5)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    .package = "DiffiScape"
+  )
+
+  expect_error(
+    run_bayesian_sampling_hmc(basis, obs, model_dir = tmp),
+    "Model checkpoint not found"
+  )
+})
+
+
+test_that("run_advi errors when checkpoint is missing", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+
+  tmp <- withr::local_tempdir()
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1)
+  terra::values(basis) <- runif(25)
+  obs <- data.frame(x = 0.5, y = 0.5)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    .package = "DiffiScape"
+  )
+
+  expect_error(
+    run_advi(basis, obs, model_dir = tmp),
+    "Model checkpoint not found"
+  )
+})
+
+
+# ---- Bayesian sampler mocked integration tests ------------------------------
+
+test_that("run_bayesian_sampling dispatches to run_langevin_sampling", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+
+  tmp <- withr::local_tempdir()
+  file.create(file.path(tmp, "resistance_nn.pt"))
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1)
+  terra::values(basis) <- runif(25)
+  obs <- data.frame(x = 0.5, y = 0.5)
+
+  captured_fn <- NULL
+  captured_output_dir <- NULL
+  mock_result <- list(summary = NULL, elapsed_time = 0.1)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    .prepare_torch_inputs = function(...) {
+      list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
+           vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
+           n_obs = 1L, cell_area = 0.04)
+    },
+    ds_torch_call = function(fn_name, ...) {
+      captured_fn <<- fn_name
+      mock_result
+    },
+    .save_mcmc_artifacts = function(results_r, output_dir) {
+      captured_output_dir <<- output_dir
+      invisible(NULL)
+    },
+    .package = "DiffiScape"
+  )
+
+  run_bayesian_sampling(basis, obs, model_dir = tmp, output_dir = NULL,
+                        verbose = FALSE)
+  expect_equal(captured_fn, "run_langevin_sampling")
+  expect_equal(captured_output_dir, tmp)
+})
+
+
+test_that("run_bayesian_sampling_hmc dispatches to run_hmc_sampling", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+
+  tmp <- withr::local_tempdir()
+  file.create(file.path(tmp, "resistance_nn.pt"))
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1)
+  terra::values(basis) <- runif(25)
+  obs <- data.frame(x = 0.5, y = 0.5)
+
+  captured_fn <- NULL
+  mock_result <- list(summary = NULL, elapsed_time = 0.1, n_divergences = 0L)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    .prepare_torch_inputs = function(...) {
+      list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
+           vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
+           n_obs = 1L, cell_area = 0.04)
+    },
+    ds_torch_call = function(fn_name, ...) {
+      captured_fn <<- fn_name
+      mock_result
+    },
+    .save_mcmc_artifacts = function(...) invisible(NULL),
+    .package = "DiffiScape"
+  )
+
+  run_bayesian_sampling_hmc(basis, obs, model_dir = tmp, verbose = FALSE)
+  expect_equal(captured_fn, "run_hmc_sampling")
+})
+
+
+test_that("run_advi dispatches to run_advi Python function", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+
+  tmp <- withr::local_tempdir()
+  file.create(file.path(tmp, "resistance_nn.pt"))
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1)
+  terra::values(basis) <- runif(25)
+  obs <- data.frame(x = 0.5, y = 0.5)
+
+  captured_fn <- NULL
+  mock_result <- list(summary = NULL, elapsed_time = 0.1,
+                      converged = TRUE, best_elbo = -50.0)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    .prepare_torch_inputs = function(...) {
+      list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
+           vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
+           n_obs = 1L, cell_area = 0.04)
+    },
+    ds_torch_call = function(fn_name, ...) {
+      captured_fn <<- fn_name
+      mock_result
+    },
+    .save_mcmc_artifacts = function(...) invisible(NULL),
+    .package = "DiffiScape"
+  )
+
+  run_advi(basis, obs, model_dir = tmp, verbose = FALSE)
+  expect_equal(captured_fn, "run_advi")
+})
+
+
+test_that("run_bayesian_sampling calls ds_torch_setup when not initialized", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+
+  tmp <- withr::local_tempdir()
+  file.create(file.path(tmp, "resistance_nn.pt"))
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1)
+  terra::values(basis) <- runif(25)
+  obs <- data.frame(x = 0.5, y = 0.5)
+
+  setup_called <- FALSE
+  mock_result <- list(summary = NULL, elapsed_time = 0.1)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) { setup_called <<- TRUE; invisible(TRUE) },
+    .prepare_torch_inputs = function(...) {
+      list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
+           vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
+           n_obs = 1L, cell_area = 0.04)
+    },
+    ds_torch_call = function(...) mock_result,
+    .save_mcmc_artifacts = function(...) invisible(NULL),
+    .package = "DiffiScape"
+  )
+
+  run_bayesian_sampling(basis, obs, model_dir = tmp, verbose = FALSE)
+  expect_true(setup_called)
+})
+
+
+test_that("run_bayesian_sampling skips ds_torch_setup when already initialized", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+
+  tmp <- withr::local_tempdir()
+  file.create(file.path(tmp, "resistance_nn.pt"))
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1)
+  terra::values(basis) <- runif(25)
+  obs <- data.frame(x = 0.5, y = 0.5)
+
+  ds_env  <- get(".ds_env", envir = environment(run_bayesian_sampling))
+  old_val <- ds_env$torch_initialized
+  withr::defer(ds_env$torch_initialized <- old_val)
+  ds_env$torch_initialized <- TRUE
+
+  setup_called <- FALSE
+  mock_result <- list(summary = NULL, elapsed_time = 0.1)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) { setup_called <<- TRUE },
+    .prepare_torch_inputs = function(...) {
+      list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
+           vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
+           n_obs = 1L, cell_area = 0.04)
+    },
+    ds_torch_call = function(...) mock_result,
+    .save_mcmc_artifacts = function(...) invisible(NULL),
+    .package = "DiffiScape"
+  )
+
+  run_bayesian_sampling(basis, obs, model_dir = tmp, verbose = FALSE)
+  expect_false(setup_called)
+})
+
+
+test_that("run_bayesian_sampling forwards custom output_dir", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+
+  model_tmp <- withr::local_tempdir()
+  out_tmp   <- withr::local_tempdir()
+  file.create(file.path(model_tmp, "resistance_nn.pt"))
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1)
+  terra::values(basis) <- runif(25)
+  obs <- data.frame(x = 0.5, y = 0.5)
+
+  captured_output_dir <- NULL
+  mock_result <- list(summary = NULL, elapsed_time = 0.1)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    .prepare_torch_inputs = function(...) {
+      list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
+           vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
+           n_obs = 1L, cell_area = 0.04)
+    },
+    ds_torch_call = function(...) mock_result,
+    .save_mcmc_artifacts = function(results_r, output_dir) {
+      captured_output_dir <<- output_dir
+      invisible(NULL)
+    },
+    .package = "DiffiScape"
+  )
+
+  run_bayesian_sampling(basis, obs, model_dir = model_tmp,
+                        output_dir = out_tmp, verbose = FALSE)
+  expect_equal(captured_output_dir, out_tmp)
+})
+
+
+# ---- Bayesian sampler diagnostic warnings ------------------------------------
+
+test_that("run_bayesian_sampling_hmc warns on divergent transitions", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+
+  tmp <- withr::local_tempdir()
+  file.create(file.path(tmp, "resistance_nn.pt"))
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1)
+  terra::values(basis) <- runif(25)
+  obs <- data.frame(x = 0.5, y = 0.5)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    .prepare_torch_inputs = function(...) {
+      list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
+           vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
+           n_obs = 1L, cell_area = 0.04)
+    },
+    ds_torch_call = function(...) {
+      list(summary = NULL, elapsed_time = 0.1, n_divergences = 5L)
+    },
+    .save_mcmc_artifacts = function(...) invisible(NULL),
+    .package = "DiffiScape"
+  )
+
+  expect_warning(
+    run_bayesian_sampling_hmc(basis, obs, model_dir = tmp, verbose = FALSE),
+    "divergent transitions"
+  )
+})
+
+
+test_that("run_bayesian_sampling_hmc does not warn with 0 divergences", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+
+  tmp <- withr::local_tempdir()
+  file.create(file.path(tmp, "resistance_nn.pt"))
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1)
+  terra::values(basis) <- runif(25)
+  obs <- data.frame(x = 0.5, y = 0.5)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    .prepare_torch_inputs = function(...) {
+      list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
+           vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
+           n_obs = 1L, cell_area = 0.04)
+    },
+    ds_torch_call = function(...) {
+      list(summary = NULL, elapsed_time = 0.1, n_divergences = 0L)
+    },
+    .save_mcmc_artifacts = function(...) invisible(NULL),
+    .package = "DiffiScape"
+  )
+
+  expect_no_warning(
+    run_bayesian_sampling_hmc(basis, obs, model_dir = tmp, verbose = FALSE)
+  )
+})
+
+
+test_that("run_advi warns when not converged", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+
+  tmp <- withr::local_tempdir()
+  file.create(file.path(tmp, "resistance_nn.pt"))
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1)
+  terra::values(basis) <- runif(25)
+  obs <- data.frame(x = 0.5, y = 0.5)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    .prepare_torch_inputs = function(...) {
+      list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
+           vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
+           n_obs = 1L, cell_area = 0.04)
+    },
+    ds_torch_call = function(...) {
+      list(summary = NULL, elapsed_time = 0.1, converged = FALSE,
+           best_elbo = -100.0)
+    },
+    .save_mcmc_artifacts = function(...) invisible(NULL),
+    .package = "DiffiScape"
+  )
+
+  expect_warning(
+    run_advi(basis, obs, model_dir = tmp, verbose = FALSE),
+    "ADVI did not converge"
+  )
+})
+
+
+test_that("run_advi does not warn when converged", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+
+  tmp <- withr::local_tempdir()
+  file.create(file.path(tmp, "resistance_nn.pt"))
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1)
+  terra::values(basis) <- runif(25)
+  obs <- data.frame(x = 0.5, y = 0.5)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    .prepare_torch_inputs = function(...) {
+      list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
+           vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
+           n_obs = 1L, cell_area = 0.04)
+    },
+    ds_torch_call = function(...) {
+      list(summary = NULL, elapsed_time = 0.1, converged = TRUE,
+           best_elbo = -50.0)
+    },
+    .save_mcmc_artifacts = function(...) invisible(NULL),
+    .package = "DiffiScape"
+  )
+
+  expect_no_warning(
+    run_advi(basis, obs, model_dir = tmp, verbose = FALSE)
+  )
+})
+
+
+# ---- verify_irl_gradient -----------------------------------------------------
+
+test_that("verify_irl_gradient messages on pass", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+  skip_if_not_installed("terra")
+  skip_if_not(reticulate::py_module_available("numpy"),
+              "numpy not available")
+
+  r <- terra::rast(nrows = 25, ncols = 25, xmin = 0, xmax = 25,
+                   ymin = 0, ymax = 25, nlyrs = 2)
+  terra::values(r) <- runif(25 * 25 * 2)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    ds_torch_call = function(...) list(pass = TRUE, max_rel_error = 1e-5),
+    .package = "DiffiScape"
+  )
+
+  expect_message(
+    result <- verify_irl_gradient(r, crop_size = 10L),
+    "PASSED"
+  )
+  expect_true(result$pass)
+})
+
+
+test_that("verify_irl_gradient warns on failure", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+  skip_if_not_installed("terra")
+  skip_if_not(reticulate::py_module_available("numpy"),
+              "numpy not available")
+
+  r <- terra::rast(nrows = 25, ncols = 25, xmin = 0, xmax = 25,
+                   ymin = 0, ymax = 25, nlyrs = 2)
+  terra::values(r) <- runif(25 * 25 * 2)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    ds_torch_call = function(...) list(pass = FALSE, max_rel_error = 0.5),
+    .package = "DiffiScape"
+  )
+
+  expect_warning(
+    result <- verify_irl_gradient(r, crop_size = 10L),
+    "FAILED"
+  )
+  expect_false(result$pass)
+})
