@@ -1,10 +1,10 @@
-"""Parametric optimization for DiffiScape connectivity surfaces.
+"""Optimization for DiffiScape connectivity surfaces.
 
-Provides L-BFGS (via jaxopt) and Adam (via optax) optimizers that minimize
-the negative log-likelihood of a connectivity-based point process model.
-Both methods require JAX, jaxopt, and optax; these are imported lazily so the
-module can be loaded (and tested for import errors) even when the dependencies
-are absent.
+Provides parametric (L-BFGS / Adam) and neural (Flax-based) optimizers that
+minimize the negative log-likelihood of a connectivity-based point process
+model.  Both families require JAX and optax; neural optimization additionally
+requires Flax.  Dependencies are imported lazily so the module can be loaded
+(and tested for import errors) even when the packages are absent.
 """
 import time
 
@@ -173,4 +173,237 @@ def run_parametric_optimization(
         "n_epochs_run": int(n_run),
         "elapsed": elapsed,
         "converged": converged,
+    }
+
+
+def run_neural_optimization(
+    basis_values,
+    obs_counts,
+    valid_mask,
+    n_rows,
+    n_cols,
+    cell_area=1.0,
+    model_type="mlp",
+    model_config=None,
+    optim_config=None,
+    parameterization="resistance",
+    seed=42,
+    verbose=True,
+):
+    """Run neural-network optimization of a connectivity surface.
+
+    Creates a Flax resistance model (MLP, Conv, Spline-GAM, or IRL), defines
+    a loss function that chains
+    ``model -> exp(log_r) -> permeability -> GridGraph -> ResistanceDistance
+    -> PPP log-likelihood``,
+    and optimizes with Adam + cosine schedule + early stopping.
+
+    Parameters
+    ----------
+    basis_values : array-like
+        Covariate matrix of shape ``(n_valid_cells, n_covariates)`` for MLP /
+        Spline / IRL, or ``(H, W, C)`` for Conv.  For non-Conv models the
+        values correspond to valid cells identified by *valid_mask*.
+    obs_counts : array-like
+        Observed counts per valid cell, shape ``(n_valid_cells,)``.
+    valid_mask : array-like
+        Boolean mask of shape ``(n_rows * n_cols,)`` indicating valid cells.
+    n_rows : int
+        Number of rows in the grid.
+    n_cols : int
+        Number of columns in the grid.
+    cell_area : float, optional
+        Area of each grid cell (default: 1.0).
+    model_type : str, optional
+        One of ``"mlp"``, ``"conv"``, ``"spline_gam"``, or ``"irl"``
+        (default: ``"mlp"``).
+    model_config : dict, optional
+        Model-specific keyword arguments forwarded to the Flax module
+        constructor.  Recognised keys depend on *model_type*:
+
+        - **mlp**: ``hidden_dim`` (int, default 32), ``n_hidden_layers``
+          (int, default 2).
+        - **conv**: ``conv_channels`` (int, default 16),
+          ``n_conv_layers`` (int, default 3).
+        - **spline_gam**: ``n_knots`` (int, default 10).
+        - **irl**: ``hidden_dim`` (int, default 32),
+          ``n_hidden_layers`` (int, default 2).
+    optim_config : dict, optional
+        Optimizer settings: ``lr`` (float, default 0.01),
+        ``n_epochs`` (int, default 300), ``patience`` (int, default 30).
+    parameterization : str, optional
+        Either ``"resistance"`` or ``"permeability"`` (default:
+        ``"resistance"``).
+    seed : int, optional
+        Random seed for JAX PRNG (default: 42).
+    verbose : bool, optional
+        Whether to print progress messages (default: True).
+
+    Returns
+    -------
+    dict
+        Dictionary with keys:
+
+        - ``"resistance"`` : np.ndarray, shape ``(n_valid_cells,)`` --
+          optimized resistance values (natural scale).
+        - ``"best_loglik"`` : float -- best log-likelihood (negated loss).
+        - ``"loss_history"`` : list[float] -- per-epoch negative
+          log-likelihood.
+        - ``"n_epochs_run"`` : int -- number of epochs completed.
+        - ``"elapsed"`` : float -- wall-clock seconds.
+        - ``"model_type"`` : str -- echo of *model_type*.
+
+    Raises
+    ------
+    ImportError
+        If JAX, Flax, optax, or JAXScape are not installed.
+    ValueError
+        If *model_type* is not one of the recognised types.
+    """
+    # Validate early (before expensive imports) ----------------------------
+    if model_config is None:
+        model_config = {}
+    if optim_config is None:
+        optim_config = {}
+
+    valid_types = ("mlp", "conv", "spline_gam", "irl")
+    if model_type not in valid_types:
+        raise ValueError(
+            f"model_type must be one of {valid_types}, got '{model_type}'"
+        )
+
+    # Lazy imports -------------------------------------------------------
+    import jax
+    import jax.numpy as jnp
+    import optax
+
+    from .resistance import (
+        ResistanceMLP,
+        ResistanceConv,
+        ResistanceSpline,
+        ResistanceIRL,
+    )
+    from .core import prepare_permeability, _mean_weight
+
+    from jaxscape import GridGraph
+    from jaxscape.distances import ResistanceDistance
+
+    rng = jax.random.PRNGKey(seed)
+
+    # --- Convert inputs to JAX arrays -----------------------------------
+    basis_jnp = jnp.array(basis_values, dtype=jnp.float64)
+    obs_jnp = jnp.array(obs_counts, dtype=jnp.float64)
+    mask_jnp = jnp.array(valid_mask)
+
+    # --- Build Flax model -----------------------------------------------
+    if model_type == "mlp":
+        model = ResistanceMLP(
+            features=model_config.get("hidden_dim", 32),
+            n_hidden=model_config.get("n_hidden_layers", 2),
+        )
+    elif model_type == "conv":
+        model = ResistanceConv(
+            channels=model_config.get("conv_channels", 16),
+            n_layers=model_config.get("n_conv_layers", 3),
+        )
+    elif model_type == "spline_gam":
+        n_cov = basis_jnp.shape[1] if basis_jnp.ndim > 1 else 1
+        model = ResistanceSpline(
+            n_knots=model_config.get("n_knots", 10),
+            n_covariates=n_cov,
+        )
+    elif model_type == "irl":
+        model = ResistanceIRL(
+            hidden_dim=model_config.get("hidden_dim", 32),
+            n_hidden=model_config.get("n_hidden_layers", 2),
+        )
+
+    # Initialise model parameters
+    params = model.init(rng, basis_jnp)
+
+    # --- Optimizer setup ------------------------------------------------
+    lr = optim_config.get("lr", 0.01)
+    n_epochs = optim_config.get("n_epochs", 300)
+    patience = optim_config.get("patience", 30)
+
+    schedule = optax.cosine_decay_schedule(init_value=lr, decay_steps=n_epochs)
+    optimizer = optax.adam(learning_rate=schedule)
+    opt_state = optimizer.init(params)
+
+    # --- Loss function --------------------------------------------------
+    # PPP negative log-likelihood matching _connectivity_objective pattern:
+    #   loglik = sum(obs * log1p(conn)) - sum(exp(log1p(conn)) * cell_area)
+    # The Flax model outputs log-resistance; we exponentiate to get
+    # resistance, embed into the full grid, convert to permeability, solve
+    # for resistance distance, then evaluate the PPP objective.
+
+    def loss_fn(p):
+        log_r = model.apply(p, basis_jnp)
+        resistance = jnp.exp(log_r)
+
+        # Embed valid-cell resistance into the full grid
+        fill_val = jnp.mean(resistance)
+        full_surface = jnp.ones(n_rows * n_cols) * fill_val
+        full_surface = full_surface.at[mask_jnp].set(resistance)
+        surface_2d = full_surface.reshape((n_rows, n_cols))
+
+        # Permeability conversion and circuit solve
+        perm = prepare_permeability(surface_2d, parameterization)
+        grid = GridGraph(grid=perm, fun=_mean_weight)
+        dist_solver = ResistanceDistance()
+        source = grid.coord_to_index(jnp.array([0]), jnp.array([0]))
+        connectivity = dist_solver(grid, source)
+
+        # PPP log-likelihood on valid cells
+        conn_valid = connectivity.ravel()[mask_jnp]
+        log_lambda = jnp.log1p(conn_valid)
+        loglik = (
+            jnp.sum(obs_jnp * log_lambda)
+            - jnp.sum(jnp.exp(log_lambda) * cell_area)
+        )
+        return -loglik  # minimize negative log-likelihood
+
+    # --- Training loop --------------------------------------------------
+    grad_fn = jax.grad(loss_fn)
+    best_loss = float("inf")
+    best_params = params
+    loss_history = []
+    stall = 0
+    t0 = time.time()
+
+    for epoch in range(n_epochs):
+        g = grad_fn(params)
+        updates, opt_state = optimizer.update(g, opt_state)
+        params = optax.apply_updates(params, updates)
+        loss = float(loss_fn(params))
+        loss_history.append(loss)
+
+        if loss < best_loss:
+            best_loss = loss
+            best_params = params
+            stall = 0
+        else:
+            stall += 1
+
+        if verbose and epoch % 10 == 0:
+            print(f"  Epoch {epoch}: loss={loss:.4f}")
+
+        if stall >= patience:
+            if verbose:
+                print(f"  Early stopping at epoch {epoch}")
+            break
+
+    elapsed = time.time() - t0
+
+    # --- Extract final resistance surface -------------------------------
+    final_log_r = np.array(model.apply(best_params, basis_jnp))
+    resistance = np.exp(final_log_r)
+
+    return {
+        "resistance": resistance,
+        "best_loglik": float(-best_loss),
+        "loss_history": loss_history,
+        "n_epochs_run": len(loss_history),
+        "elapsed": elapsed,
+        "model_type": model_type,
     }

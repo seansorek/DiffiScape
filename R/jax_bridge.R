@@ -268,6 +268,61 @@ ds_jax_optimize <- function(basis_np, obs_np, valid_mask_np,
 }
 
 
+#' Run neural-network resistance optimisation via the JAX backend
+#'
+#' Calls `diffiscape_jax.optimize.run_neural_optimization`, which
+#' trains a Flax neural network (MLP, Conv, Spline-GAM, or IRL)
+#' to produce a resistance surface that maximises the connectivity-based
+#' point-process log-likelihood.
+#'
+#' The optimize module is imported lazily and cached in `.jax_env$optimize_module`.
+#'
+#' @param basis_np Numpy array of basis / covariate values.
+#' @param obs_np Numpy array of observation counts per valid cell.
+#' @param valid_mask_np Numpy boolean mask of shape (n_rows * n_cols,).
+#' @param n_rows,n_cols Integer grid dimensions.
+#' @param cell_area Numeric cell area in square map units.
+#' @param model_type Character; `"mlp"` (default), `"conv"`,
+#'   `"spline_gam"`, or `"irl"`.
+#' @param model_config Named list of model-specific parameters forwarded
+#'   to the Flax module constructor.
+#' @param optim_config Named list with `lr`, `n_epochs`, `patience`.
+#' @param ... Additional arguments forwarded to the Python function
+#'   (e.g. `parameterization`, `seed`, `verbose`).
+#' @return A list (converted from the Python dict) with `resistance`,
+#'   `best_loglik`, `loss_history`, `n_epochs_run`, `elapsed`, `model_type`.
+#' @keywords internal
+ds_jax_neural_optimize <- function(basis_np, obs_np, valid_mask_np,
+                                    n_rows, n_cols, cell_area,
+                                    model_type = "mlp",
+                                    model_config = list(),
+                                    optim_config = list(), ...) {
+
+  if (!ds_jax_check()) ds_jax_setup()
+
+  if (is.null(.jax_env$optimize_module)) {
+    module_dir <- system.file("python", package = "DiffiScape")
+    .jax_env$optimize_module <- reticulate::import_from_path(
+      "diffiscape_jax.optimize", path = module_dir)
+  }
+
+  # Convert R lists to Python dicts via reticulate
+  model_cfg_py <- if (length(model_config) > 0) model_config else NULL
+  optim_cfg_py <- if (length(optim_config) > 0) optim_config else NULL
+
+  result <- .jax_env$optimize_module$run_neural_optimization(
+    basis_np, obs_np, valid_mask_np,
+    as.integer(n_rows), as.integer(n_cols),
+    cell_area    = as.double(cell_area),
+    model_type   = model_type,
+    model_config = model_cfg_py,
+    optim_config = optim_cfg_py,
+    ...
+  )
+  reticulate::py_to_r(result)
+}
+
+
 #' Install Python dependencies for the JAX backend
 #'
 #' Convenience wrapper around [reticulate::py_install()] that installs the

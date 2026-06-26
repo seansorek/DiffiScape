@@ -133,10 +133,24 @@ default_optimizer_config <- function() {
 #' `jax.grad` through the JAXScape differentiable circuit solver.
 #' This is the JAX replacement for [optimize_resistance_enzyme()].
 #'
+#' When `model_type` is not `"parametric"`, dispatches to the Flax
+#' neural-network optimizer ([ds_jax_neural_optimize()]) instead of
+#' the parametric optimizer.  Recognised neural model types are
+#' `"mlp"`, `"conv"`, `"spline_gam"`, and `"irl"`.
+#'
 #' @inheritParams optimize_resistance_enzyme
 #' @param method Character; `"lbfgs"` (default) or `"adam"`.
+#'   Ignored when `model_type` is not `"parametric"`.
 #' @param parameterization Character; `"resistance"` (default) or
 #'   `"permeability"`.
+#' @param model_type Character; `"parametric"` (default, existing
+#'   L-BFGS / Adam path), `"mlp"`, `"conv"`, `"spline_gam"`, or
+#'   `"irl"` (Flax neural-network resistance models).
+#' @param model_config Named list of model-specific parameters
+#'   forwarded to the Flax module constructor (ignored for
+#'   `model_type = "parametric"`).
+#' @param optim_config Named list with `lr`, `n_epochs`, `patience`
+#'   for the neural optimizer (ignored for `model_type = "parametric"`).
 #' @return A list with `best_params`, `best_loglik`, `bounds`,
 #'   `n_evaluations`, `distribution`, `convergence`.
 #' @export
@@ -152,7 +166,27 @@ optimize_resistance_gradient <- function(basis_stack,
                                          available_points     = NULL,
                                          available_covariates = NULL,
                                          method               = "lbfgs",
-                                         parameterization     = "resistance") {
+                                         parameterization     = "resistance",
+                                         model_type           = "parametric",
+                                         model_config         = list(),
+                                         optim_config         = list()) {
+
+  model_type <- match.arg(model_type,
+    c("parametric", "mlp", "conv", "spline_gam", "irl"))
+
+  # --- Neural path: dispatch to Flax optimizer ----------------------------
+  if (model_type != "parametric") {
+    return(.optimize_neural(
+      basis_stack      = basis_stack,
+      obs_points       = obs_points,
+      config           = config,
+      output_dir       = output_dir,
+      parameterization = parameterization,
+      model_type       = model_type,
+      model_config     = model_config,
+      optim_config     = optim_config
+    ))
+  }
 
   method <- match.arg(method, c("lbfgs", "adam"))
 
@@ -269,6 +303,116 @@ optimize_resistance_gradient <- function(basis_stack,
     n_evaluations = result$n_epochs_run,
     distribution  = distribution,
     convergence   = convergence
+  )
+}
+
+
+# --------------- Neural optimizer helper ------------------------------------
+
+#' Internal dispatch to Flax neural-network resistance optimization
+#'
+#' Prepares inputs and calls [ds_jax_neural_optimize()], then reshapes
+#' the result to match the return format of [optimize_resistance_gradient()].
+#'
+#' @keywords internal
+.optimize_neural <- function(basis_stack,
+                              obs_points,
+                              config           = default_optimizer_config(),
+                              output_dir       = tempdir(),
+                              parameterization = "resistance",
+                              model_type       = "mlp",
+                              model_config     = list(),
+                              optim_config     = list()) {
+
+  if (!requireNamespace("reticulate", quietly = TRUE)) {
+    stop("Package 'reticulate' is required for neural optimization. ",
+         "Install with install.packages('reticulate').",
+         call. = FALSE)
+  }
+
+  np <- reticulate::import("numpy", convert = FALSE)
+
+  n_basis   <- terra::nlyr(basis_stack)
+  n_rows    <- terra::nrow(basis_stack)
+  n_cols    <- terra::ncol(basis_stack)
+  cell_area <- prod(terra::res(basis_stack))
+
+  if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+  basis_matrix <- as.matrix(basis_stack)
+  valid_mask   <- stats::complete.cases(basis_matrix)
+  basis_values <- basis_matrix[valid_mask, , drop = FALSE]
+
+  # Tabulate observation counts per valid cell
+  cell_indices <- terra::cellFromXY(
+    basis_stack,
+    cbind(obs_points$x, obs_points$y)
+  )
+  valid_obs <- !is.na(cell_indices) & valid_mask[cell_indices]
+  if (any(!valid_obs)) {
+    message(sprintf("  Dropped %d obs outside valid cells", sum(!valid_obs)))
+  }
+  cell_indices <- cell_indices[valid_obs]
+
+  obs_table        <- table(cell_indices)
+  obs_counts_full  <- rep(0L, terra::ncell(basis_stack))
+  obs_counts_full[as.integer(names(obs_table))] <- as.integer(obs_table)
+  obs_counts_valid <- obs_counts_full[valid_mask]
+
+  basis_np <- np$array(basis_values, dtype = np$float64)
+  obs_np   <- np$array(as.double(obs_counts_valid), dtype = np$float64)
+  vmask_np <- np$array(valid_mask, dtype = np$bool_)
+
+  seed <- config$seed %||% 42L
+
+  # Fill optim_config defaults from config if not already set
+  if (is.null(optim_config$n_epochs)) {
+    optim_config$n_epochs <- as.integer(config$n_iter %||% 300L)
+  }
+
+  distribution <- config$distribution %||% "negbin"
+
+  message("\n", strrep("=", 60))
+  message(sprintf("JAX neural optimizer (%s, %s parameterization)",
+                  model_type, parameterization))
+  message(sprintf("  Grid: %d x %d (%d valid cells)",
+                  n_rows, n_cols, sum(valid_mask)))
+  message(sprintf("  Observations: %d GPS fixes", sum(obs_counts_valid)))
+  message(strrep("=", 60))
+
+  result <- ds_jax_neural_optimize(
+    basis_np      = basis_np,
+    obs_np        = obs_np,
+    valid_mask_np = vmask_np,
+    n_rows        = n_rows,
+    n_cols        = n_cols,
+    cell_area     = cell_area,
+    model_type    = model_type,
+    model_config  = model_config,
+    optim_config  = optim_config,
+    parameterization = parameterization,
+    seed             = as.integer(seed),
+    verbose          = TRUE
+  )
+
+  message(sprintf(
+    "\nNeural optimisation complete: %d epochs, loglik = %.2f (%.1f s)",
+    result$n_epochs_run, result$best_loglik, result$elapsed
+  ))
+
+  list(
+    best_params   = NULL,
+    best_loglik   = result$best_loglik,
+    resistance    = result$resistance,
+    X_evaluated   = NULL,
+    y_evaluated   = NULL,
+    surrogate     = NULL,
+    bounds        = NULL,
+    n_evaluations = result$n_epochs_run,
+    distribution  = distribution,
+    convergence   = 0L,
+    loss_history  = result$loss_history,
+    model_type    = result$model_type
   )
 }
 

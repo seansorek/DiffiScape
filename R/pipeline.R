@@ -120,9 +120,10 @@ ds_init_julia <- function(julia_home = NULL, force = FALSE) {
 #' Optimise resistance parameters
 #'
 #' Wrapper that dispatches to [optimize_resistance()] (GP surrogate),
-#' [optimize_resistance_enzyme()] (L-BFGS via differentiable Julia
-#' solver), or [run_torch_pipeline()] (PyTorch neural-network resistance)
-#' depending on `solver`.
+#' [optimize_resistance_gradient()] (L-BFGS / Adam via JAX auto-diff,
+#' or Flax neural-network resistance when `model_type` is set),
+#' [run_torch_pipeline()] (PyTorch neural-network resistance), depending
+#' on `solver`.
 #'
 #' @param basis_stack Basis function stack.
 #' @param obs_points Data.frame with `x, y`.
@@ -130,6 +131,8 @@ ds_init_julia <- function(julia_home = NULL, force = FALSE) {
 #' @param config Optimiser config (see [default_optimizer_config()]).
 #'   For `solver = "torch"`, may contain a `torch` sublist whose entries
 #'   are forwarded to [run_torch_pipeline()].
+#'   For `solver = "gradient"` with a neural `model_type`, may contain
+#'   `model_config` and `optim_config` sublists.
 #' @param intensity_config Intensity config (see [default_intensity_config()]).
 #' @param output_dir Directory for logs.
 #' @param covariates_obs Named list of covariate vectors.
@@ -149,8 +152,12 @@ ds_init_julia <- function(julia_home = NULL, force = FALSE) {
 #'   `"torch"` (PyTorch neural-network resistance), or `"irl"`
 #'   (PyTorch value-shaped resistance: a reward network is turned into a
 #'   resistance surface via soft value iteration, then run through the same
-#'   differentiable circuit solver — a convenience alias for `solver = "torch"`
+#'   differentiable circuit solver -- a convenience alias for `solver = "torch"`
 #'   with `model_type = "irl"`).
+#' @param model_type Character; `"parametric"` (default), `"mlp"`,
+#'   `"conv"`, `"spline_gam"`, or `"irl"`.  When not `"parametric"`,
+#'   the gradient solver dispatches to the Flax neural-network
+#'   optimizer instead of the parametric L-BFGS/Adam path.
 #' @return Result from [optimize_resistance()],
 #'   [optimize_resistance_gradient()], or [run_torch_pipeline()].
 #' @export
@@ -166,7 +173,8 @@ ds_optimize <- function(basis_stack,
                         available_points     = NULL,
                         available_covariates = NULL,
                         solver               = c("surrogate", "gradient",
-                                                 "enzyme", "torch", "irl")) {
+                                                 "enzyme", "torch", "irl"),
+                        model_type           = "parametric") {
 
   solver <- match.arg(solver)
 
@@ -188,7 +196,10 @@ ds_optimize <- function(basis_stack,
       covariates_rasters   = covariates_rasters,
       residualise          = residualise,
       available_points     = available_points,
-      available_covariates = available_covariates
+      available_covariates = available_covariates,
+      model_type           = model_type,
+      model_config         = config$model_config %||% list(),
+      optim_config         = config$optim_config %||% list()
     ))
   }
 
