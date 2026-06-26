@@ -23,6 +23,39 @@ DEFAULT_P_MIN = 1.0 / 5000.0
 DEFAULT_P_MAX = 1.0
 
 
+def ppp_loglik(connectivity_valid, obs_counts, cell_area, alpha=0.0, gamma=1.0):
+    """Poisson point process log-likelihood.
+
+    Computes the log-likelihood under the intensity model
+
+        log lambda = alpha + gamma * log(1 + C)
+
+    where *C* is connectivity (resistance distance) and *alpha* / *gamma*
+    are learnable parameters.
+
+    Parameters
+    ----------
+    connectivity_valid : jnp.ndarray, shape (n_valid,)
+        Connectivity values at valid cells.
+    obs_counts : jnp.ndarray, shape (n_valid,)
+        Observed counts per valid cell.
+    cell_area : float
+        Area of each cell (for intensity integration).
+    alpha : float or jnp scalar
+        Intensity intercept (learnable).
+    gamma : float or jnp scalar
+        Connectivity coefficient (learnable).
+
+    Returns
+    -------
+    float
+        Scalar log-likelihood.
+    """
+    log_lambda = alpha + gamma * jnp.log1p(connectivity_valid)
+    lam = jnp.exp(log_lambda)
+    return jnp.sum(obs_counts * log_lambda) - jnp.sum(lam * cell_area)
+
+
 def prepare_permeability(
     surface,
     parameterization,
@@ -194,20 +227,25 @@ def _apply_link(params, basis_values, link_fn):
 def _connectivity_objective(params, basis_values, valid_mask, n_rows, n_cols,
                             cell_area, link_fn, radius, block_size,
                             parameterization, obs_counts=None):
-    """Compute a scalar connectivity objective for gradient computation.
+    """Compute a scalar PPP log-likelihood for gradient-based optimization.
 
     Builds the full chain: params -> link function -> resistance surface ->
-    permeability -> GridGraph -> ResistanceDistance -> connectivity -> log-likelihood.
+    permeability -> GridGraph -> ResistanceDistance -> connectivity ->
+    PPP log-likelihood.
 
-    The log-likelihood is a simplified point process proxy:
-    ``loglik = sum(log1p(connectivity))``. The full intensity model stays in R;
-    this is sufficient to validate that ``jax.value_and_grad`` flows through
-    JAXScape correctly.
+    The last two elements of *params* are the intensity parameters
+    ``(alpha, gamma)`` for the PPP model
+    ``log lambda = alpha + gamma * log(1 + C)``.
+    The remaining elements are passed to :func:`_apply_link` as resistance
+    parameters.
 
     Parameters
     ----------
     params : jax.numpy.ndarray
-        Parameter vector (intercept + basis coefficients).
+        Parameter vector ``[r_0, z_1, ..., z_K, alpha, gamma]``.
+        The first ``len(params) - 2`` elements are resistance parameters
+        (intercept + basis coefficients); the last two are the PPP intensity
+        intercept and connectivity coefficient.
     basis_values : jax.numpy.ndarray
         Basis matrix of shape (n_valid_cells, n_basis).
     valid_mask : jax.numpy.ndarray
@@ -227,14 +265,19 @@ def _connectivity_objective(params, basis_values, valid_mask, n_rows, n_cols,
     parameterization : str
         Either "resistance" or "permeability".
     obs_counts : jax.numpy.ndarray, optional
-        Observed counts per cell (unused in simplified version).
+        Observed counts per valid cell.
 
     Returns
     -------
     float
         Scalar log-likelihood value.
     """
-    resistance_flat = _apply_link(params, basis_values, link_fn)
+    # Split params: resistance params and intensity params (alpha, gamma)
+    resistance_params = params[:-2]
+    alpha = params[-2]
+    gamma = params[-1]
+
+    resistance_flat = _apply_link(resistance_params, basis_values, link_fn)
 
     # Build the full resistance surface from valid cells
     full_surface = jnp.ones(n_rows * n_cols) * jnp.mean(resistance_flat)
@@ -247,10 +290,9 @@ def _connectivity_objective(params, basis_values, valid_mask, n_rows, n_cols,
     source = grid.coord_to_index(jnp.array([0]), jnp.array([0]))
     connectivity = distance(grid, source)
 
-    # Simplified log-likelihood: sum of log(1 + connectivity)
-    log_conn = jnp.log1p(connectivity)
-    loglik = jnp.sum(log_conn)
-    return loglik
+    # PPP log-likelihood on valid cells
+    conn_valid = connectivity.ravel()[valid_mask]
+    return ppp_loglik(conn_valid, obs_counts, cell_area, alpha, gamma)
 
 
 def solve_with_grad(params, basis_values, valid_mask, n_rows, n_cols,
@@ -262,10 +304,14 @@ def solve_with_grad(params, basis_values, valid_mask, n_rows, n_cols,
     both the log-likelihood value and its gradient with respect to ``params``
     in a single forward+backward pass through JAXScape.
 
+    The parameter vector layout is
+    ``[r_0, z_1, ..., z_K, alpha, gamma]`` where the last two elements are
+    the PPP intensity intercept and connectivity coefficient.
+
     Parameters
     ----------
     params : array-like
-        Parameter vector (intercept + basis coefficients).
+        Parameter vector ``[r_0, z_1, ..., z_K, alpha, gamma]``.
     basis_values : array-like
         Basis matrix of shape (n_valid_cells, n_basis).
     valid_mask : array-like
@@ -285,7 +331,7 @@ def solve_with_grad(params, basis_values, valid_mask, n_rows, n_cols,
     parameterization : str, optional
         Either "resistance" or "permeability" (default: "resistance").
     obs_counts : array-like, optional
-        Observed counts per cell (unused in simplified version).
+        Observed counts per valid cell.
 
     Returns
     -------
@@ -294,6 +340,8 @@ def solve_with_grad(params, basis_values, valid_mask, n_rows, n_cols,
         - "connectivity": np.ndarray of resistance distances (flattened)
         - "grad_params": np.ndarray of shape (len(params),) with parameter gradients
         - "loglik": float, the scalar log-likelihood value
+        - "alpha": float, the PPP intensity intercept
+        - "gamma": float, the PPP connectivity coefficient
         - "elapsed": float, time elapsed in seconds
     """
     if jnp is None:
@@ -315,7 +363,8 @@ def solve_with_grad(params, basis_values, valid_mask, n_rows, n_cols,
     elapsed = time.time() - t0
 
     # Also compute connectivity array for the return dict
-    resistance_flat = _apply_link(params_jnp, basis_jnp, link_fn)
+    resistance_params = params_jnp[:-2]
+    resistance_flat = _apply_link(resistance_params, basis_jnp, link_fn)
     full_surface = jnp.ones(n_rows * n_cols) * jnp.mean(resistance_flat)
     full_surface = full_surface.at[mask_jnp].set(resistance_flat)
     surface_2d = full_surface.reshape((n_rows, n_cols))
@@ -329,5 +378,7 @@ def solve_with_grad(params, basis_values, valid_mask, n_rows, n_cols,
         "connectivity": connectivity,
         "loglik": float(loglik),
         "grad_params": np.array(grad),
+        "alpha": float(params_jnp[-2]),
+        "gamma": float(params_jnp[-1]),
         "elapsed": elapsed,
     }

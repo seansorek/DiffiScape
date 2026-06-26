@@ -178,7 +178,11 @@ class TestRunNutsSampling:
         )
 
         assert "params" in result["samples"]
+        assert "alpha" in result["samples"]
+        assert "gamma" in result["samples"]
         assert result["samples"]["params"].shape[0] == n_samples
+        assert result["samples"]["alpha"].shape[0] == n_samples
+        assert result["samples"]["gamma"].shape[0] == n_samples
         assert isinstance(result["samples"]["params"], np.ndarray)
 
     def test_nuts_divergences_is_int(self, tiny_problem):
@@ -235,9 +239,14 @@ class TestRunNutsSampling:
         )
 
         assert "params" in result["summary"]
+        assert "alpha" in result["summary"]
+        assert "gamma" in result["summary"]
         param_summary = result["summary"]["params"]
         for key in ("mean", "sd", "q025", "q50", "q975"):
             assert key in param_summary
+        for site in ("alpha", "gamma"):
+            for key in ("mean", "sd", "q025", "q50", "q975"):
+                assert key in result["summary"][site]
 
 
 class TestRunAdviSampling:
@@ -305,7 +314,11 @@ class TestRunAdviSampling:
         )
 
         assert "params" in result["samples"]
+        assert "alpha" in result["samples"]
+        assert "gamma" in result["samples"]
         assert result["samples"]["params"].shape[0] == n_samples
+        assert result["samples"]["alpha"].shape[0] == n_samples
+        assert result["samples"]["gamma"].shape[0] == n_samples
         assert isinstance(result["samples"]["params"], np.ndarray)
 
     def test_advi_best_elbo_is_float(self, tiny_problem):

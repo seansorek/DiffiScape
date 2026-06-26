@@ -54,11 +54,15 @@ class TestRunParametricOptimization:
         )
 
         assert "best_params" in result
+        assert "alpha" in result
+        assert "gamma" in result
         assert "best_loglik" in result
         assert "loss_history" in result
         assert "n_epochs_run" in result
         assert "elapsed" in result
         assert "converged" in result
+        assert isinstance(result["alpha"], float)
+        assert isinstance(result["gamma"], float)
 
     def test_lbfgs_param_shape(self, small_problem):
         """Test that L-BFGS returns params with correct shape."""
@@ -149,11 +153,15 @@ class TestRunParametricOptimization:
         )
 
         assert "best_params" in result
+        assert "alpha" in result
+        assert "gamma" in result
         assert "best_loglik" in result
         assert "loss_history" in result
         assert "n_epochs_run" in result
         assert "elapsed" in result
         assert "converged" in result
+        assert isinstance(result["alpha"], float)
+        assert isinstance(result["gamma"], float)
 
     def test_adam_records_loss_history(self, small_problem):
         """Test that Adam records per-epoch loss history."""

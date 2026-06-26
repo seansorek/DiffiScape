@@ -29,7 +29,7 @@ try:
 except ImportError:
     numpyro = None
 
-from .core import prepare_permeability, _mean_weight
+from .core import prepare_permeability, _mean_weight, ppp_loglik
 
 try:
     from jaxscape import GridGraph, ResistanceDistance
@@ -94,6 +94,9 @@ def _build_numpyro_model(flax_model, basis_jnp, obs_jnp, valid_mask,
             "params",
             dist.Normal(jnp.zeros(n_params), jnp.ones(n_params) * 2.0),
         )
+        alpha = numpyro.sample("alpha", dist.Normal(0.0, 2.0))
+        gamma = numpyro.sample("gamma", dist.Normal(1.0, 1.0))
+
         params_tree = unflatten(param_vec)
         log_r = flax_model.apply(params_tree, basis_jnp)
         resistance = jnp.exp(log_r)
@@ -111,13 +114,9 @@ def _build_numpyro_model(flax_model, basis_jnp, obs_jnp, valid_mask,
         source = grid.coord_to_index(jnp.array([0]), jnp.array([0]))
         connectivity = dist_solver(grid, source)
 
-        # PPP log-likelihood on valid cells
+        # PPP log-likelihood on valid cells with learnable alpha/gamma
         conn_valid = connectivity.ravel()[valid_mask]
-        log_lambda = jnp.log1p(conn_valid)
-        loglik = (
-            jnp.sum(obs_jnp * log_lambda)
-            - jnp.sum(jnp.exp(log_lambda) * cell_area)
-        )
+        loglik = ppp_loglik(conn_valid, obs_jnp, cell_area, alpha, gamma)
         numpyro.factor("loglik", loglik)
 
     return model, flat_params, unflatten
@@ -256,7 +255,11 @@ def run_nuts_sampling(
 
     rng = jax.random.PRNGKey(seed)
     t0 = time.time()
-    mcmc.run(rng, init_params={"params": flat_init})
+    mcmc.run(rng, init_params={
+        "params": flat_init,
+        "alpha": jnp.array(0.0),
+        "gamma": jnp.array(1.0),
+    })
     elapsed = time.time() - t0
 
     samples = mcmc.get_samples()

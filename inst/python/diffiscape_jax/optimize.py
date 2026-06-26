@@ -38,6 +38,11 @@ def run_parametric_optimization(
     either L-BFGS (second-order, via ``jaxopt.LBFGS``) or Adam (first-order,
     via ``optax.adam`` with early stopping).
 
+    The parameter vector passed to the objective has layout
+    ``[r_0, z_1, ..., z_K, alpha, gamma]``.  The caller's *init_params*
+    should contain only the resistance parameters (intercept + basis
+    coefficients); ``alpha=0`` and ``gamma=1`` are appended automatically.
+
     Parameters
     ----------
     basis_values : array-like
@@ -53,7 +58,7 @@ def run_parametric_optimization(
     cell_area : float, optional
         Area of each grid cell (default: 1.0).
     init_params : array-like, optional
-        Initial parameter vector (intercept + basis coefficients).
+        Initial resistance parameter vector (intercept + basis coefficients).
         If None, defaults to zeros of length n_basis + 1.
     link_fn : str, optional
         Link function name: "exp", "softplus", or "identity" (default: "exp").
@@ -82,7 +87,10 @@ def run_parametric_optimization(
     dict
         Dictionary with keys:
 
-        - ``"best_params"`` : np.ndarray -- optimized parameter vector.
+        - ``"best_params"`` : np.ndarray -- optimized resistance parameter
+          vector (without alpha/gamma).
+        - ``"alpha"`` : float -- optimized PPP intensity intercept.
+        - ``"gamma"`` : float -- optimized PPP connectivity coefficient.
         - ``"best_loglik"`` : float -- best log-likelihood (negated loss).
         - ``"loss_history"`` : list[float] -- per-iteration negative log-likelihood.
         - ``"n_epochs_run"`` : int -- number of iterations/epochs completed.
@@ -108,10 +116,13 @@ def run_parametric_optimization(
         )
 
     # Convert inputs to JAX arrays.
-    params = jnp.array(init_params, dtype=jnp.float64)
+    resistance_params = jnp.array(init_params, dtype=jnp.float64)
     basis_jnp = jnp.array(basis_values, dtype=jnp.float64)
     mask_jnp = jnp.array(valid_mask)
     obs_jnp = jnp.array(obs_counts, dtype=jnp.float64)
+
+    # Append intensity params: alpha=0 (intercept), gamma=1 (coefficient)
+    params = jnp.concatenate([resistance_params, jnp.array([0.0, 1.0])])
 
     def neg_loglik(p):
         return -_connectivity_objective(
@@ -166,8 +177,15 @@ def run_parametric_optimization(
 
     elapsed = time.time() - t0
 
+    # Split best_params back into resistance params and intensity params
+    best_resistance_params = np.array(best_params[:-2])
+    best_alpha = float(best_params[-2])
+    best_gamma = float(best_params[-1])
+
     return {
-        "best_params": np.array(best_params),
+        "best_params": best_resistance_params,
+        "alpha": best_alpha,
+        "gamma": best_gamma,
         "best_loglik": float(-best_loss),
         "loss_history": loss_history,
         "n_epochs_run": int(n_run),
@@ -283,7 +301,7 @@ def run_neural_optimization(
         ResistanceSpline,
         ResistanceIRL,
     )
-    from .core import prepare_permeability, _mean_weight
+    from .core import prepare_permeability, _mean_weight, ppp_loglik
 
     from jaxscape import GridGraph, ResistanceDistance
 
@@ -318,7 +336,11 @@ def run_neural_optimization(
         )
 
     # Initialise model parameters
-    params = model.init(rng, basis_jnp)
+    flax_params = model.init(rng, basis_jnp)
+
+    # Intensity parameters: alpha (intercept), gamma (connectivity coeff)
+    intensity_params = {"alpha": jnp.array(0.0), "gamma": jnp.array(1.0)}
+    params = (flax_params, intensity_params)
 
     # --- Optimizer setup ------------------------------------------------
     lr = optim_config.get("lr", 0.01)
@@ -330,14 +352,15 @@ def run_neural_optimization(
     opt_state = optimizer.init(params)
 
     # --- Loss function --------------------------------------------------
-    # PPP negative log-likelihood matching _connectivity_objective pattern:
-    #   loglik = sum(obs * log1p(conn)) - sum(exp(log1p(conn)) * cell_area)
+    # PPP negative log-likelihood with learnable alpha/gamma:
+    #   log lambda = alpha + gamma * log(1 + C)
     # The Flax model outputs log-resistance; we exponentiate to get
     # resistance, embed into the full grid, convert to permeability, solve
     # for resistance distance, then evaluate the PPP objective.
 
-    def loss_fn(p):
-        log_r = model.apply(p, basis_jnp)
+    def loss_fn(all_params):
+        flax_p, int_p = all_params
+        log_r = model.apply(flax_p, basis_jnp)
         resistance = jnp.exp(log_r)
 
         # Embed valid-cell resistance into the full grid
@@ -355,10 +378,9 @@ def run_neural_optimization(
 
         # PPP log-likelihood on valid cells
         conn_valid = connectivity.ravel()[mask_jnp]
-        log_lambda = jnp.log1p(conn_valid)
-        loglik = (
-            jnp.sum(obs_jnp * log_lambda)
-            - jnp.sum(jnp.exp(log_lambda) * cell_area)
+        loglik = ppp_loglik(
+            conn_valid, obs_jnp, cell_area,
+            int_p["alpha"], int_p["gamma"],
         )
         return -loglik  # minimize negative log-likelihood
 
@@ -395,11 +417,14 @@ def run_neural_optimization(
     elapsed = time.time() - t0
 
     # --- Extract final resistance surface -------------------------------
-    final_log_r = np.array(model.apply(best_params, basis_jnp))
+    best_flax_params, best_intensity = best_params
+    final_log_r = np.array(model.apply(best_flax_params, basis_jnp))
     resistance = np.exp(final_log_r)
 
     return {
         "resistance": resistance,
+        "alpha": float(best_intensity["alpha"]),
+        "gamma": float(best_intensity["gamma"]),
         "best_loglik": float(-best_loss),
         "loss_history": loss_history,
         "n_epochs_run": len(loss_history),

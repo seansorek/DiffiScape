@@ -50,10 +50,12 @@ class TestRunNeuralOptimization:
         )
 
         expected_keys = {
-            "resistance", "best_loglik", "loss_history",
+            "resistance", "alpha", "gamma", "best_loglik", "loss_history",
             "n_epochs_run", "elapsed", "model_type",
         }
         assert expected_keys == set(result.keys())
+        assert isinstance(result["alpha"], float)
+        assert isinstance(result["gamma"], float)
 
     def test_mlp_resistance_shape(self, small_problem):
         """Test that MLP produces resistance with correct shape."""

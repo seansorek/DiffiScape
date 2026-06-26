@@ -112,22 +112,28 @@ class TestSolveWithGrad:
         rng = np.random.default_rng(42)
         basis = rng.standard_normal((n_rows * n_cols, n_basis))
         valid_mask = np.ones(n_rows * n_cols, dtype=bool)
-        params = np.array([3.0, 0.5, -0.3])
+        obs = rng.poisson(5, n_rows * n_cols).astype(float)
+        # params: [r_0, z_1, z_2, alpha, gamma]
+        params = np.array([3.0, 0.5, -0.3, 0.0, 1.0])
 
         result = solve_with_grad(
             params, basis, valid_mask, n_rows, n_cols,
             cell_area=1.0, link_fn="exp", radius=3, block_size=2,
-            parameterization="resistance",
+            parameterization="resistance", obs_counts=obs,
         )
 
         assert isinstance(result, dict)
         assert "connectivity" in result
         assert "grad_params" in result
         assert "loglik" in result
+        assert "alpha" in result
+        assert "gamma" in result
         assert "elapsed" in result
         assert result["elapsed"] > 0
         assert np.isfinite(result["loglik"])
         assert np.all(np.isfinite(result["grad_params"]))
+        assert result["alpha"] == pytest.approx(0.0)
+        assert result["gamma"] == pytest.approx(1.0)
 
     def test_solve_with_grad_finite_difference(self):
         """Compare jax.grad against finite-difference gradient."""
@@ -138,7 +144,9 @@ class TestSolveWithGrad:
         rng = np.random.default_rng(42)
         basis = rng.standard_normal((n_rows * n_cols, n_basis))
         valid_mask = np.ones(n_rows * n_cols, dtype=bool)
-        params = np.array([3.0, 0.5, -0.3])  # r_0, z_1, z_2
+        obs = rng.poisson(5, n_rows * n_cols).astype(float)
+        # params: [r_0, z_1, z_2, alpha, gamma]
+        params = np.array([3.0, 0.5, -0.3, 0.0, 1.0])
 
         result = solve_with_grad(
             params, basis, valid_mask, n_rows, n_cols,
@@ -146,6 +154,7 @@ class TestSolveWithGrad:
             link_fn="exp",
             radius=3, block_size=2,
             parameterization="resistance",
+            obs_counts=obs,
         )
 
         assert "grad_params" in result
@@ -161,10 +170,12 @@ class TestSolveWithGrad:
             params_m[i] -= eps
             r_p = solve_with_grad(params_p, basis, valid_mask, n_rows, n_cols,
                                   cell_area=1.0, link_fn="exp", radius=3,
-                                  block_size=2, parameterization="resistance")
+                                  block_size=2, parameterization="resistance",
+                                  obs_counts=obs)
             r_m = solve_with_grad(params_m, basis, valid_mask, n_rows, n_cols,
                                   cell_area=1.0, link_fn="exp", radius=3,
-                                  block_size=2, parameterization="resistance")
+                                  block_size=2, parameterization="resistance",
+                                  obs_counts=obs)
             fd = (r_p["loglik"] - r_m["loglik"]) / (2 * eps)
             np.testing.assert_allclose(
                 result["grad_params"][i], fd,
@@ -181,12 +192,14 @@ class TestSolveWithGrad:
         rng = np.random.default_rng(99)
         basis = rng.standard_normal((n_rows * n_cols, n_basis))
         valid_mask = np.ones(n_rows * n_cols, dtype=bool)
-        params = np.array([2.0, 0.3, -0.1])
+        obs = rng.poisson(5, n_rows * n_cols).astype(float)
+        # params: [r_0, z_1, z_2, alpha, gamma]
+        params = np.array([2.0, 0.3, -0.1, 0.0, 1.0])
 
         result = solve_with_grad(
             params, basis, valid_mask, n_rows, n_cols,
             cell_area=1.0, link_fn="softplus", radius=3, block_size=2,
-            parameterization="resistance",
+            parameterization="resistance", obs_counts=obs,
         )
 
         assert np.all(np.isfinite(result["grad_params"]))
