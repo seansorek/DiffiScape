@@ -9,3 +9,4 @@ __pycache__/
 .coverage.*
 coverage.xml
 .pytest_cache/
+.superpowers/
