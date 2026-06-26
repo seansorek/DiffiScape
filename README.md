@@ -288,7 +288,7 @@ cfg$family <- my_family
 
 ## Resistance Link Functions
 
-The link function maps the linear predictor η(x) = r₀ + Σₖ zₖ φₖ(x) to the resistance surface R(x). Swapping links changes the shape of the resistance surface without touching the optimizer or Julia solver.
+The link function maps the linear predictor η(x) = r₀ + Σₖ zₖ φₖ(x) to the resistance surface R(x). Swapping links changes the shape of the resistance surface without touching the optimizer or circuit solver.
 
 | Link | Formula | Notes |
 |------|---------|-------|
