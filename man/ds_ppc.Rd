@@ -24,7 +24,7 @@ ds_ppc(
 \arguments{
 \item{posterior_samples}{Data.frame from \code{\link[=posterior_sample]{posterior_sample()}} (one row
 per draw, columns include intensity parameters such as \code{alpha},
-\code{gamma}, \code{beta_*}, and optionally \code{size}).}
+\code{gamma}, \verb{beta_*}, and optionally \code{size}).}
 
 \item{intensity_fit}{Result from \code{\link[=fit_intensity_nb]{fit_intensity_nb()}},
 \code{\link[=evaluate_full_model]{evaluate_full_model()}}, or \code{\link[=ds_fit_intensity]{ds_fit_intensity()}}.  Supplies the
@@ -33,7 +33,7 @@ connectivity standardisation constants (\code{c_scale}, \code{log_conn_mean},
 
 \item{obs_points}{Data.frame with \verb{x, y}.}
 
-\item{connectivity}{A \link[terra:SpatRaster-class]{terra::SpatRaster} of connectivity values.}
+\item{connectivity}{A \link[terra:SpatRaster]{terra::SpatRaster} of connectivity values.}
 
 \item{intensity_config}{Intensity config list.}
 
@@ -60,13 +60,13 @@ Supported: \code{"total_count"}, \code{"vmi_ratio"}, \code{"mean_deviance"}.}
 \value{
 A list with class \code{"ds_ppc"}:
 \describe{
-  \item{\code{observed}}{Named numeric vector of observed test quantities.}
-  \item{\code{simulated}}{Named list of numeric vectors (one per test
-    quantity, length \code{n_sim}).}
-  \item{\code{bayesian_p}}{Named numeric vector of two-sided Bayesian
-    p-values.}
-  \item{\code{n_sim}}{Integer; number of simulations performed.}
-  \item{\code{test_quantities}}{Character vector of test quantity names.}
+\item{\code{observed}}{Named numeric vector of observed test quantities.}
+\item{\code{simulated}}{Named list of numeric vectors (one per test
+quantity, length \code{n_sim}).}
+\item{\code{bayesian_p}}{Named numeric vector of two-sided Bayesian
+p-values.}
+\item{\code{n_sim}}{Integer; number of simulations performed.}
+\item{\code{test_quantities}}{Character vector of test quantity names.}
 }
 }
 \description{
