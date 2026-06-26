@@ -285,8 +285,7 @@ def run_neural_optimization(
     )
     from .core import prepare_permeability, _mean_weight
 
-    from jaxscape import GridGraph
-    from jaxscape.distances import ResistanceDistance
+    from jaxscape import GridGraph, ResistanceDistance
 
     rng = jax.random.PRNGKey(seed)
 

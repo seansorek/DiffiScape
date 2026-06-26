@@ -1,0 +1,363 @@
+"""Tests for Bayesian sampling in diffiscape_jax.sample."""
+import numpy as np
+import pytest
+
+# Skip all tests if dependencies are not available
+jax = pytest.importorskip("jax")
+jnp = pytest.importorskip("jax.numpy")
+pytest.importorskip("flax")
+pytest.importorskip("numpyro")
+pytest.importorskip("jaxscape")
+
+from diffiscape_jax.sample import (
+    _build_numpyro_model,
+    _summarize_samples,
+    run_nuts_sampling,
+    run_advi_sampling,
+)
+from diffiscape_jax.resistance import ResistanceMLP
+
+
+class TestBuildNumpyroModel:
+    """Tests for _build_numpyro_model helper."""
+
+    @pytest.fixture()
+    def tiny_problem(self):
+        """Create a tiny 6x6 problem for testing."""
+        n_rows, n_cols, n_basis = 6, 6, 2
+        n_cells = n_rows * n_cols
+        rng = np.random.default_rng(42)
+        basis = rng.standard_normal((n_cells, n_basis))
+        obs = rng.poisson(3, n_cells).astype(float)
+        valid = np.ones(n_cells, dtype=bool)
+
+        model = ResistanceMLP(features=8, n_hidden=1)
+        init_rng = jax.random.PRNGKey(0)
+        init_params = model.init(init_rng, jnp.array(basis))
+
+        return {
+            "model": model,
+            "init_params": init_params,
+            "basis": basis,
+            "obs": obs,
+            "valid": valid,
+            "n_rows": n_rows,
+            "n_cols": n_cols,
+        }
+
+    def test_returns_tuple_of_three(self, tiny_problem):
+        """Test that _build_numpyro_model returns (model_fn, flat_init, unflatten_fn)."""
+        result = _build_numpyro_model(
+            tiny_problem["model"],
+            jnp.array(tiny_problem["basis"]),
+            jnp.array(tiny_problem["obs"]),
+            jnp.array(tiny_problem["valid"]),
+            tiny_problem["n_rows"],
+            tiny_problem["n_cols"],
+            cell_area=1.0,
+            parameterization="resistance",
+            init_params=tiny_problem["init_params"],
+        )
+        assert len(result) == 3
+        model_fn, flat_init, unflatten_fn = result
+        assert callable(model_fn)
+        assert callable(unflatten_fn)
+        assert flat_init.ndim == 1
+
+    def test_flat_params_roundtrip(self, tiny_problem):
+        """Test that flattening and unflattening params preserves structure."""
+        _, flat_init, unflatten_fn = _build_numpyro_model(
+            tiny_problem["model"],
+            jnp.array(tiny_problem["basis"]),
+            jnp.array(tiny_problem["obs"]),
+            jnp.array(tiny_problem["valid"]),
+            tiny_problem["n_rows"],
+            tiny_problem["n_cols"],
+            cell_area=1.0,
+            parameterization="resistance",
+            init_params=tiny_problem["init_params"],
+        )
+        rebuilt = unflatten_fn(flat_init)
+        orig_leaves = jax.tree.leaves(tiny_problem["init_params"])
+        rebuilt_leaves = jax.tree.leaves(rebuilt)
+        assert len(orig_leaves) == len(rebuilt_leaves)
+        for o, r in zip(orig_leaves, rebuilt_leaves):
+            np.testing.assert_array_equal(np.array(o), np.array(r))
+
+
+class TestSummarizeSamples:
+    """Tests for _summarize_samples helper."""
+
+    def test_scalar_samples(self):
+        """Test summary of a 1-D sample array."""
+        samples = {"x": np.random.randn(100)}
+        summary = _summarize_samples(samples)
+        assert "x" in summary
+        for key in ("mean", "sd", "q025", "q50", "q975"):
+            assert key in summary["x"]
+        assert summary["x"]["q025"] <= summary["x"]["q50"] <= summary["x"]["q975"]
+
+    def test_vector_samples(self):
+        """Test summary of a 2-D sample array (n_samples x n_params)."""
+        samples = {"params": np.random.randn(50, 5)}
+        summary = _summarize_samples(samples)
+        assert "params" in summary
+        # Per-column summaries
+        for key in ("mean", "sd", "q025", "q50", "q975"):
+            assert key in summary["params"]
+            assert len(summary["params"][key]) == 5
+
+    def test_empty_dict(self):
+        """Test that an empty samples dict returns empty summary."""
+        assert _summarize_samples({}) == {}
+
+
+class TestRunNutsSampling:
+    """Tests for run_nuts_sampling."""
+
+    @pytest.fixture()
+    def tiny_problem(self):
+        """Create a tiny 6x6 problem for testing."""
+        n_rows, n_cols, n_basis = 6, 6, 2
+        n_cells = n_rows * n_cols
+        rng = np.random.default_rng(42)
+        basis = rng.standard_normal((n_cells, n_basis))
+        obs = rng.poisson(3, n_cells).astype(float)
+        valid = np.ones(n_cells, dtype=bool)
+
+        model = ResistanceMLP(features=8, n_hidden=1)
+        init_rng = jax.random.PRNGKey(0)
+        init_params = model.init(init_rng, jnp.array(basis))
+
+        return {
+            "model": model,
+            "init_params": init_params,
+            "basis": basis,
+            "obs": obs,
+            "valid": valid,
+            "n_rows": n_rows,
+            "n_cols": n_cols,
+        }
+
+    def test_nuts_returns_expected_keys(self, tiny_problem):
+        """Test that NUTS sampling returns dict with all expected keys."""
+        result = run_nuts_sampling(
+            tiny_problem["model"],
+            tiny_problem["init_params"],
+            tiny_problem["basis"],
+            tiny_problem["obs"],
+            tiny_problem["valid"],
+            tiny_problem["n_rows"],
+            tiny_problem["n_cols"],
+            cell_area=1.0,
+            parameterization="resistance",
+            n_samples=10,
+            warmup=5,
+            seed=42,
+        )
+
+        expected_keys = {"samples", "summary", "n_divergences", "elapsed"}
+        assert expected_keys == set(result.keys())
+
+    def test_nuts_samples_shape(self, tiny_problem):
+        """Test that NUTS produces samples with correct shape."""
+        n_samples = 10
+        result = run_nuts_sampling(
+            tiny_problem["model"],
+            tiny_problem["init_params"],
+            tiny_problem["basis"],
+            tiny_problem["obs"],
+            tiny_problem["valid"],
+            tiny_problem["n_rows"],
+            tiny_problem["n_cols"],
+            cell_area=1.0,
+            parameterization="resistance",
+            n_samples=n_samples,
+            warmup=5,
+            seed=42,
+        )
+
+        assert "params" in result["samples"]
+        assert result["samples"]["params"].shape[0] == n_samples
+        assert isinstance(result["samples"]["params"], np.ndarray)
+
+    def test_nuts_divergences_is_int(self, tiny_problem):
+        """Test that n_divergences is a non-negative integer."""
+        result = run_nuts_sampling(
+            tiny_problem["model"],
+            tiny_problem["init_params"],
+            tiny_problem["basis"],
+            tiny_problem["obs"],
+            tiny_problem["valid"],
+            tiny_problem["n_rows"],
+            tiny_problem["n_cols"],
+            cell_area=1.0,
+            n_samples=10,
+            warmup=5,
+            seed=42,
+        )
+
+        assert isinstance(result["n_divergences"], int)
+        assert result["n_divergences"] >= 0
+
+    def test_nuts_elapsed_positive(self, tiny_problem):
+        """Test that elapsed time is positive."""
+        result = run_nuts_sampling(
+            tiny_problem["model"],
+            tiny_problem["init_params"],
+            tiny_problem["basis"],
+            tiny_problem["obs"],
+            tiny_problem["valid"],
+            tiny_problem["n_rows"],
+            tiny_problem["n_cols"],
+            cell_area=1.0,
+            n_samples=10,
+            warmup=5,
+            seed=42,
+        )
+
+        assert result["elapsed"] > 0
+
+    def test_nuts_summary_has_quantiles(self, tiny_problem):
+        """Test that summary contains quantile information."""
+        result = run_nuts_sampling(
+            tiny_problem["model"],
+            tiny_problem["init_params"],
+            tiny_problem["basis"],
+            tiny_problem["obs"],
+            tiny_problem["valid"],
+            tiny_problem["n_rows"],
+            tiny_problem["n_cols"],
+            cell_area=1.0,
+            n_samples=10,
+            warmup=5,
+            seed=42,
+        )
+
+        assert "params" in result["summary"]
+        param_summary = result["summary"]["params"]
+        for key in ("mean", "sd", "q025", "q50", "q975"):
+            assert key in param_summary
+
+
+class TestRunAdviSampling:
+    """Tests for run_advi_sampling."""
+
+    @pytest.fixture()
+    def tiny_problem(self):
+        """Create a tiny 6x6 problem for testing."""
+        n_rows, n_cols, n_basis = 6, 6, 2
+        n_cells = n_rows * n_cols
+        rng = np.random.default_rng(42)
+        basis = rng.standard_normal((n_cells, n_basis))
+        obs = rng.poisson(3, n_cells).astype(float)
+        valid = np.ones(n_cells, dtype=bool)
+
+        model = ResistanceMLP(features=8, n_hidden=1)
+        init_rng = jax.random.PRNGKey(0)
+        init_params = model.init(init_rng, jnp.array(basis))
+
+        return {
+            "model": model,
+            "init_params": init_params,
+            "basis": basis,
+            "obs": obs,
+            "valid": valid,
+            "n_rows": n_rows,
+            "n_cols": n_cols,
+        }
+
+    def test_advi_returns_expected_keys(self, tiny_problem):
+        """Test that ADVI sampling returns dict with all expected keys."""
+        result = run_advi_sampling(
+            tiny_problem["model"],
+            tiny_problem["init_params"],
+            tiny_problem["basis"],
+            tiny_problem["obs"],
+            tiny_problem["valid"],
+            tiny_problem["n_rows"],
+            tiny_problem["n_cols"],
+            cell_area=1.0,
+            parameterization="resistance",
+            n_samples=10,
+            max_iter=20,
+            seed=42,
+        )
+
+        expected_keys = {"samples", "summary", "best_elbo", "converged", "elapsed"}
+        assert expected_keys == set(result.keys())
+
+    def test_advi_samples_shape(self, tiny_problem):
+        """Test that ADVI produces samples with correct shape."""
+        n_samples = 10
+        result = run_advi_sampling(
+            tiny_problem["model"],
+            tiny_problem["init_params"],
+            tiny_problem["basis"],
+            tiny_problem["obs"],
+            tiny_problem["valid"],
+            tiny_problem["n_rows"],
+            tiny_problem["n_cols"],
+            cell_area=1.0,
+            n_samples=n_samples,
+            max_iter=20,
+            seed=42,
+        )
+
+        assert "params" in result["samples"]
+        assert result["samples"]["params"].shape[0] == n_samples
+        assert isinstance(result["samples"]["params"], np.ndarray)
+
+    def test_advi_best_elbo_is_float(self, tiny_problem):
+        """Test that best_elbo is a float."""
+        result = run_advi_sampling(
+            tiny_problem["model"],
+            tiny_problem["init_params"],
+            tiny_problem["basis"],
+            tiny_problem["obs"],
+            tiny_problem["valid"],
+            tiny_problem["n_rows"],
+            tiny_problem["n_cols"],
+            cell_area=1.0,
+            n_samples=10,
+            max_iter=20,
+            seed=42,
+        )
+
+        assert isinstance(result["best_elbo"], float)
+
+    def test_advi_converged_is_bool(self, tiny_problem):
+        """Test that converged is a boolean."""
+        result = run_advi_sampling(
+            tiny_problem["model"],
+            tiny_problem["init_params"],
+            tiny_problem["basis"],
+            tiny_problem["obs"],
+            tiny_problem["valid"],
+            tiny_problem["n_rows"],
+            tiny_problem["n_cols"],
+            cell_area=1.0,
+            n_samples=10,
+            max_iter=20,
+            seed=42,
+        )
+
+        assert isinstance(result["converged"], bool)
+
+    def test_advi_elapsed_positive(self, tiny_problem):
+        """Test that elapsed time is positive."""
+        result = run_advi_sampling(
+            tiny_problem["model"],
+            tiny_problem["init_params"],
+            tiny_problem["basis"],
+            tiny_problem["obs"],
+            tiny_problem["valid"],
+            tiny_problem["n_rows"],
+            tiny_problem["n_cols"],
+            cell_area=1.0,
+            n_samples=10,
+            max_iter=20,
+            seed=42,
+        )
+
+        assert result["elapsed"] > 0

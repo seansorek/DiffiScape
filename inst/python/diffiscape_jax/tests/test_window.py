@@ -12,8 +12,7 @@ except ImportError:
     pass
 
 try:
-    from jaxscape import GridGraph
-    from jaxscape.distances import ResistanceDistance
+    from jaxscape import GridGraph, ResistanceDistance
     jaxscape_available = True
 except ImportError:
     pass

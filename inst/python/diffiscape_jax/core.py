@@ -11,8 +11,7 @@ except ImportError:
     jnp = None
 
 try:
-    from jaxscape import GridGraph
-    from jaxscape.distances import ResistanceDistance
+    from jaxscape import GridGraph, ResistanceDistance
 except ImportError:
     GridGraph = None
     ResistanceDistance = None
