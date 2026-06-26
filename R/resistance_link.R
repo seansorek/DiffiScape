@@ -5,7 +5,7 @@
 # linear predictor eta = r_0 + sum_k z_k * phi_k(x) to the resistance
 # surface R(x).  By swapping link objects the same basis-based
 # parameterisation can produce very different resistance surfaces without
-# touching the optimiser, Julia solver, or pipeline code.
+# touching the optimiser, solver, or pipeline code.
 #
 # Each link bundles:
 #   forward_fn(eta, R_min, R_max) -> R   (linear predictor -> resistance)

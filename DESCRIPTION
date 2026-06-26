@@ -1,17 +1,16 @@
 Package: DiffiScape
-Title: Differentiable Landscape Connectivity Optimization via CircuitScape.jl
-    and Enzyme.jl
+Title: Differentiable Landscape Connectivity Optimization
 Version: 0.1.0
 Authors@R: 
     person("Sean", "Sorek", , "sssorek1@gmail.com", role = c("aut", "cre"))
 Description: Gradient-based and surrogate-based optimization of landscape
-    connectivity surfaces. Combines circuit-theory connectivity computation
-    (Omniscape.jl / Circuitscape.jl) with automatic differentiation
-    (Enzyme.jl) to fit Poisson Point Process models of animal movement.
-    Users supply environmental rasters and GPS locations; DiffiScape
-    estimates resistance parameters that best explain observed spatial
-    intensity. Supports negative binomial and GAM-based intensity models
-    via 'mgcv'.
+    connectivity surfaces. Uses JAX-based differentiable circuit-theory
+    connectivity computation (via JAXScape) with automatic differentiation
+    to fit Poisson Point Process models of animal movement. Users supply
+    environmental rasters and GPS locations; DiffiScape estimates resistance
+    parameters that best explain observed spatial intensity. Supports
+    negative binomial and GAM-based intensity models via 'mgcv'. Requires
+    Python with jax, jaxscape, flax, and numpyro (via 'reticulate').
 License: GPL (>= 3)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
@@ -28,7 +27,6 @@ Imports:
     grDevices,
     utils
 Suggests:
-    JuliaConnectoR,
     reticulate,
     ggplot2,
     spdep,

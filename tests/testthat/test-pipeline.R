@@ -65,16 +65,6 @@ test_that("ds_create_basis reads from directory", {
 })
 
 
-test_that("ds_init_julia errors without Julia", {
-  # This test is expected to fail unless Julia is installed
-  skip_if_not_installed("JuliaConnectoR")
-  skip_on_cran()
-
-  # Just verify the function exists and handles errors
-  expect_true(is.function(ds_init_julia))
-})
-
-
 test_that("ds_posterior passes refit = TRUE to laplace_resistance", {
   skip_on_cran()
 
@@ -159,7 +149,7 @@ test_that("diffiscape forwards omniscape_settings to refit, posterior, and diagn
   custom_settings <- list(radius = 25L, block_size = 9L)
   captured_fit_settings  <- NULL
   captured_post_settings <- NULL
-  captured_omni_radius   <- NULL
+  captured_jax_radius    <- NULL
 
   mock_opt   <- list(best_params = list(r_0 = 0), bounds = list(r_0 = c(-2, 2)),
                      distribution = "negbin")
@@ -170,7 +160,6 @@ test_that("diffiscape forwards omniscape_settings to refit, posterior, and diagn
   mock_conn  <- terra::rast(nrows = 2, ncols = 2, vals = 1)
 
   local_mocked_bindings(
-    ds_init_julia = function(...) invisible(TRUE),
     ds_optimize = function(...) mock_opt,
     ds_fit_intensity = function(...) {
       args <- list(...)
@@ -183,9 +172,9 @@ test_that("diffiscape forwards omniscape_settings to refit, posterior, and diagn
       mock_post
     },
     create_resistance_surface = function(...) mock_conn,
-    run_omniscape = function(resistance, radius = 13L, block_size = 5L, ...) {
-      captured_omni_radius <<- radius
-      list(cum_current = mock_conn, elapsed_seconds = 0.1)
+    ds_jax_connectivity = function(resistance, radius = 13L, block_size = 5L, ...) {
+      captured_jax_radius <<- radius
+      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
     },
     ds_diagnose = function(...) mock_diag,
     .package = "DiffiScape"
@@ -204,7 +193,7 @@ test_that("diffiscape forwards omniscape_settings to refit, posterior, and diagn
 
   expect_equal(captured_fit_settings, custom_settings)
   expect_equal(captured_post_settings, custom_settings)
-  expect_equal(captured_omni_radius, 25L)
+  expect_equal(captured_jax_radius, 25L)
 })
 
 
@@ -292,13 +281,12 @@ test_that("diffiscape returns expected result structure", {
   mock_conn <- terra::rast(nrows = 2, ncols = 2, vals = 1)
 
   local_mocked_bindings(
-    ds_init_julia = function(...) invisible(TRUE),
     ds_optimize   = function(...) mock_opt,
     ds_fit_intensity = function(...) mock_fit,
     ds_posterior  = function(...) mock_post,
     create_resistance_surface = function(...) mock_conn,
-    run_omniscape = function(...) {
-      list(cum_current = mock_conn, elapsed_seconds = 0.1)
+    ds_jax_connectivity = function(...) {
+      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
     },
     ds_diagnose = function(...) mock_diag,
     ds_ppc      = function(...) list(check = "ok"),
@@ -333,13 +321,12 @@ test_that("diffiscape skips posterior when n_posterior is 0", {
   posterior_called <- FALSE
 
   local_mocked_bindings(
-    ds_init_julia = function(...) invisible(TRUE),
     ds_optimize   = function(...) mock_opt,
     ds_fit_intensity = function(...) mock_fit,
     ds_posterior  = function(...) { posterior_called <<- TRUE; list() },
     create_resistance_surface = function(...) mock_conn,
-    run_omniscape = function(...) {
-      list(cum_current = mock_conn, elapsed_seconds = 0.1)
+    ds_jax_connectivity = function(...) {
+      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
     },
     ds_diagnose = function(...) mock_diag,
     .package = "DiffiScape"
@@ -367,21 +354,15 @@ test_that("diffiscape dispatches to ds_jax_connectivity for gradient solver", {
   mock_diag <- list(deviance_residuals = numeric(0))
   mock_conn <- terra::rast(nrows = 2, ncols = 2, vals = 1)
 
-  jax_called       <- FALSE
-  omniscape_called <- FALSE
+  jax_called <- FALSE
 
   local_mocked_bindings(
-    ds_init_julia = function(...) invisible(TRUE),
     ds_optimize   = function(...) mock_opt,
     ds_fit_intensity = function(...) mock_fit,
     create_resistance_surface = function(...) mock_conn,
     ds_jax_connectivity = function(...) {
       jax_called <<- TRUE
       list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
-    },
-    run_omniscape = function(...) {
-      omniscape_called <<- TRUE
-      list(cum_current = mock_conn, elapsed_seconds = 0.1)
     },
     ds_diagnose = function(...) mock_diag,
     .package = "DiffiScape"
@@ -399,7 +380,6 @@ test_that("diffiscape dispatches to ds_jax_connectivity for gradient solver", {
   )
 
   expect_true(jax_called)
-  expect_false(omniscape_called)
 })
 
 
@@ -414,21 +394,15 @@ test_that("diffiscape uses ds_jax_connectivity for solver='gradient'", {
   mock_diag <- list(deviance_residuals = numeric(0))
   mock_conn <- terra::rast(nrows = 2, ncols = 2, vals = 1)
 
-  jax_called       <- FALSE
-  omniscape_called <- FALSE
+  jax_called <- FALSE
 
   local_mocked_bindings(
-    ds_init_julia = function(...) invisible(TRUE),
     ds_optimize   = function(...) mock_opt,
     ds_fit_intensity = function(...) mock_fit,
     create_resistance_surface = function(...) mock_conn,
     ds_jax_connectivity = function(...) {
       jax_called <<- TRUE
       list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
-    },
-    run_omniscape = function(...) {
-      omniscape_called <<- TRUE
-      list(cum_current = mock_conn, elapsed_seconds = 0.1)
     },
     ds_diagnose = function(...) mock_diag,
     .package = "DiffiScape"
@@ -441,7 +415,6 @@ test_that("diffiscape uses ds_jax_connectivity for solver='gradient'", {
                        n_posterior = 0L, plot = FALSE, solver = "gradient")
 
   expect_true(jax_called)
-  expect_false(omniscape_called)
 })
 
 
@@ -458,12 +431,11 @@ test_that("diffiscape saves diffiscape_result.rds", {
   out_dir   <- withr::local_tempdir()
 
   local_mocked_bindings(
-    ds_init_julia = function(...) invisible(TRUE),
     ds_optimize   = function(...) mock_opt,
     ds_fit_intensity = function(...) mock_fit,
     create_resistance_surface = function(...) mock_conn,
-    run_omniscape = function(...) {
-      list(cum_current = mock_conn, elapsed_seconds = 0.1)
+    ds_jax_connectivity = function(...) {
+      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
     },
     ds_diagnose = function(...) mock_diag,
     .package = "DiffiScape"
@@ -492,13 +464,12 @@ test_that("diffiscape handles PPC error gracefully", {
   mock_conn <- terra::rast(nrows = 2, ncols = 2, vals = 1)
 
   local_mocked_bindings(
-    ds_init_julia = function(...) invisible(TRUE),
     ds_optimize   = function(...) mock_opt,
     ds_fit_intensity = function(...) mock_fit,
     ds_posterior  = function(...) mock_post,
     create_resistance_surface = function(...) mock_conn,
-    run_omniscape = function(...) {
-      list(cum_current = mock_conn, elapsed_seconds = 0.1)
+    ds_jax_connectivity = function(...) {
+      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
     },
     ds_diagnose = function(...) mock_diag,
     ds_ppc      = function(...) stop("PPC computation failed"),
@@ -527,12 +498,11 @@ test_that("diffiscape loads obs_data from CSV file path", {
   mock_conn <- terra::rast(nrows = 2, ncols = 2, vals = 1)
 
   local_mocked_bindings(
-    ds_init_julia = function(...) invisible(TRUE),
     ds_optimize   = function(...) mock_opt,
     ds_fit_intensity = function(...) mock_fit,
     create_resistance_surface = function(...) mock_conn,
-    run_omniscape = function(...) {
-      list(cum_current = mock_conn, elapsed_seconds = 0.1)
+    ds_jax_connectivity = function(...) {
+      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
     },
     ds_diagnose = function(...) mock_diag,
     .package = "DiffiScape"

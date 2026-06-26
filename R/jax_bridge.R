@@ -134,8 +134,8 @@ ds_jax_call <- function(module_name, fn_name, ...) {
 
 #' Compute cumulative current via the JAX backend
 #'
-#' Drop-in replacement for [run_cumulative_current()] that uses JAXScape
-#' instead of the Julia differentiable solver.
+#' Core connectivity solver that uses JAXScape's differentiable circuit
+#' solver via the JAX backend.
 #'
 #' @param resistance A single-layer [terra::SpatRaster] of resistance.
 #' @param radius Integer; moving-window radius (default 13).

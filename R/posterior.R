@@ -16,19 +16,19 @@
 #' the GP surrogate's predicted-mean surface and emits a warning.
 #'
 #' @param opt_result Result from [optimize_resistance()] or
-#'   [optimize_resistance_enzyme()].
+#'   [optimize_resistance_gradient()].
 #' @param basis_stack A [terra::SpatRaster] of basis functions (required
 #'   when `refit = TRUE` or when no surrogate is available).
 #' @param obs_points Data.frame with `x, y` (required when `refit = TRUE`).
 #' @param refit Logical; when `TRUE` (the default) the Hessian is computed
-#'   on the true PPP log-likelihood via the Julia solver, which requires
+#'   on the true PPP log-likelihood via the JAX solver, which requires
 #'   `basis_stack` and `obs_points`.  When both of those are `NULL` and a
 #'   GP surrogate is available, a warning is emitted and the function falls
 #'   back to the surrogate-mean Hessian automatically so that existing
 #'   single-argument calls remain valid.  Set `refit = FALSE` explicitly to
 #'   suppress the warning and force the surrogate path.  Always set to
 #'   `TRUE` automatically when `opt_result` has no `$surrogate` (i.e., from
-#'   [optimize_resistance_enzyme()]).
+#'   [optimize_resistance_gradient()]).
 #' @param step Finite-difference step size for Hessian computation.
 #' @param omniscape_settings Named list of solver overrides: `radius`
 #'   (default `13L`) and `block_size` (default `5L`). Used when `refit = TRUE`.
@@ -67,7 +67,7 @@ laplace_resistance <- function(opt_result,
   best_vec <- .params_to_vector(opt_result$best_params, n_basis)
   p        <- length(best_vec)
 
-  # Auto-refit when no surrogate is available (Enzyme/direct path)
+  # Auto-refit when no surrogate is available (gradient/direct path)
   if (is.null(opt_result$surrogate)) refit <- TRUE
 
   # Graceful fallback: refit requested but full-model inputs missing
@@ -96,11 +96,9 @@ laplace_resistance <- function(opt_result,
     H <- numDeriv::hessian(surrogate_fn, best_vec, method.args = list(eps = step))
 
   } else if (refit && !is.null(basis_stack) && !is.null(obs_points)) {
-    # Direct Hessian via the fast Julia solver
+    # Direct Hessian via the JAX solver
     distribution <- opt_result$distribution %||% "negbin"
     n_basis      <- terra::nlyr(basis_stack)
-    nrow_grid    <- terra::nrow(basis_stack)
-    ncol_grid    <- terra::ncol(basis_stack)
     basis_vals   <- terra::values(basis_stack)
     template     <- basis_stack[[1]]
     omni_def      <- list(radius = 13L, block_size = 5L)
@@ -109,16 +107,17 @@ laplace_resistance <- function(opt_result,
     solver_block  <- omni_cfg$block_size
 
     refit_fn <- function(theta) {
-      R_vec <- quick_resistance(theta, basis_vals, link = link)
-      R_mat <- matrix(R_vec, nrow = nrow_grid, ncol = ncol_grid,
-                      byrow = TRUE)
-      R_mat[is.na(R_mat)] <- 0
+      resistance <- create_resistance_surface(
+        params_vector_to_list(theta, n_basis),
+        basis_stack, link = link
+      )
 
-      cum_mat  <- ds_julia_call("DiffiScape.cumulative_current",
-                                 R_mat, solver_radius, solver_block)
-      cum_vec  <- as.vector(t(cum_mat))
-      cum_rast <- terra::rast(template)
-      terra::values(cum_rast) <- cum_vec
+      jax_result <- ds_jax_connectivity(
+        resistance,
+        radius     = solver_radius,
+        block_size = solver_block
+      )
+      cum_rast <- jax_result$cum_current
 
       conn_obs <- extract_connectivity(cum_rast, obs_points)
       valid    <- !is.na(conn_obs)
