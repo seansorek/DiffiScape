@@ -10,6 +10,7 @@
 .jax_env$initialized <- FALSE
 .jax_env$core_module <- NULL
 .jax_env$window_module <- NULL
+.jax_env$optimize_module <- NULL
 
 
 #' Initialise the JAX backend for DiffiScape
@@ -77,6 +78,7 @@ ds_jax_setup <- function(python = NULL, force = FALSE) {
     .jax_env$initialized <- FALSE
     .jax_env$core_module <- NULL
     .jax_env$window_module <- NULL
+    .jax_env$optimize_module <- NULL
     stop("Failed to initialise JAX backend: ", conditionMessage(e),
          call. = FALSE)
   })
@@ -212,6 +214,57 @@ ds_jax_connectivity <- function(resistance,
     flow_potential  = volt_rast,
     elapsed_seconds = elapsed
   )
+}
+
+
+#' Run gradient-based parametric optimisation via the JAX backend
+#'
+#' Calls `diffiscape_jax.optimize.run_parametric_optimization`, which
+#' minimises the negative log-likelihood of a connectivity-based
+#' point-process model using L-BFGS or Adam with JAX auto-diff gradients.
+#'
+#' The optimize module is imported lazily and cached in `.jax_env$optimize_module`.
+#'
+#' @param basis_np Numpy array of basis values (n_valid_cells x n_basis).
+#' @param obs_np Numpy array of observation counts per valid cell.
+#' @param valid_mask_np Numpy boolean mask of shape (n_rows * n_cols,).
+#' @param n_rows,n_cols Integer grid dimensions.
+#' @param cell_area Numeric cell area in square map units.
+#' @param init_params Numeric vector of initial parameters (intercept +
+#'   basis coefficients).  If `NULL`, defaults to zeros.
+#' @param ... Additional arguments forwarded to the Python function
+#'   (e.g. `method`, `lr`, `n_epochs`, `patience`, `parameterization`,
+#'   `link_fn`, `radius`, `block_size`, `seed`, `verbose`).
+#' @return A list (converted from the Python dict) with `best_params`,
+#'   `best_loglik`, `loss_history`, `n_epochs_run`, `elapsed`, `converged`.
+#' @keywords internal
+ds_jax_optimize <- function(basis_np, obs_np, valid_mask_np,
+                            n_rows, n_cols, cell_area,
+                            init_params = NULL, ...) {
+
+  if (!ds_jax_check()) ds_jax_setup()
+
+  if (is.null(.jax_env$optimize_module)) {
+    module_dir <- system.file("python", package = "DiffiScape")
+    .jax_env$optimize_module <- reticulate::import_from_path(
+      "diffiscape_jax.optimize", path = module_dir)
+  }
+
+  np <- reticulate::import("numpy", convert = FALSE)
+  init_np <- if (!is.null(init_params)) {
+    np$array(as.double(init_params), dtype = np$float64)
+  } else {
+    NULL
+  }
+
+  result <- .jax_env$optimize_module$run_parametric_optimization(
+    basis_np, obs_np, valid_mask_np,
+    as.integer(n_rows), as.integer(n_cols),
+    cell_area  = as.double(cell_area),
+    init_params = init_np,
+    ...
+  )
+  reticulate::py_to_r(result)
 }
 
 

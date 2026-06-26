@@ -144,14 +144,15 @@ ds_init_julia <- function(julia_home = NULL, force = FALSE) {
 #'   `available_points` locations.  Required when `available_points` is
 #'   supplied and the intensity model includes covariates.
 #' @param solver Character; `"surrogate"` (GP + Thompson Sampling or
-#'   Expected Improvement, default), `"enzyme"` (L-BFGS via differentiable
-#'   Julia solver), `"torch"` (PyTorch neural-network resistance), or `"irl"`
+#'   Expected Improvement, default), `"gradient"` (L-BFGS / Adam via JAX
+#'   auto-diff), `"enzyme"` (deprecated, alias for `"gradient"`),
+#'   `"torch"` (PyTorch neural-network resistance), or `"irl"`
 #'   (PyTorch value-shaped resistance: a reward network is turned into a
 #'   resistance surface via soft value iteration, then run through the same
 #'   differentiable circuit solver — a convenience alias for `solver = "torch"`
 #'   with `model_type = "irl"`).
-#' @return Result from [optimize_resistance()], [optimize_resistance_enzyme()],
-#'   or [run_torch_pipeline()].
+#' @return Result from [optimize_resistance()],
+#'   [optimize_resistance_gradient()], or [run_torch_pipeline()].
 #' @export
 ds_optimize <- function(basis_stack,
                         obs_points,
@@ -164,9 +165,32 @@ ds_optimize <- function(basis_stack,
                         residualise          = FALSE,
                         available_points     = NULL,
                         available_covariates = NULL,
-                        solver               = c("surrogate", "enzyme", "torch", "irl")) {
+                        solver               = c("surrogate", "gradient",
+                                                 "enzyme", "torch", "irl")) {
 
   solver <- match.arg(solver)
+
+  # Deprecation aliases
+  if (solver == "enzyme") {
+    message("solver='enzyme' is deprecated. Use solver='gradient' instead.")
+    solver <- "gradient"
+  }
+
+  if (solver == "gradient") {
+    return(optimize_resistance_gradient(
+      basis_stack          = basis_stack,
+      obs_points           = obs_points,
+      bounds               = bounds,
+      config               = config,
+      intensity_config     = intensity_config,
+      output_dir           = output_dir,
+      covariates_obs       = covariates_obs,
+      covariates_rasters   = covariates_rasters,
+      residualise          = residualise,
+      available_points     = available_points,
+      available_covariates = available_covariates
+    ))
+  }
 
   if (solver == "torch" || solver == "irl") {
     if (!is.null(available_points)) {
@@ -225,8 +249,9 @@ ds_optimize <- function(basis_stack,
 #' @param available_covariates Named list of covariate vectors at
 #'   `available_points` locations.  Required when `available_points` is
 #'   supplied and the intensity model includes covariates.
-#' @param solver Character; `"surrogate"` (Omniscape) or
-#'   `"enzyme"` (differentiable solver).
+#' @param solver Character; `"surrogate"` (Omniscape), `"gradient"` (JAX
+#'   differentiable solver), or `"enzyme"` (deprecated, alias for
+#'   `"gradient"`).
 #' @param link A [resistance_link] object (default [link_exp()]).
 #' @param family An [intensity_family] object, or `NULL`.
 #' @return Result from [evaluate_full_model()].
@@ -241,17 +266,22 @@ ds_fit_intensity <- function(opt_result,
                               residualise          = FALSE,
                               available_points     = NULL,
                               available_covariates = NULL,
-                              solver               = c("surrogate", "enzyme"),
+                              solver               = c("surrogate", "gradient", "enzyme"),
                               link                 = link_exp(),
                               family               = NULL) {
 
   solver <- match.arg(solver)
 
   if (solver == "enzyme") {
-    # Use the fast in-memory solver
+    message("solver='enzyme' is deprecated. Use solver='gradient' instead.")
+    solver <- "gradient"
+  }
+
+  if (solver == "gradient") {
+    # Use the JAX differentiable solver
     resistance <- create_resistance_surface(opt_result$best_params, basis_stack,
                                             link = link)
-    omni <- run_cumulative_current(
+    omni <- ds_jax_connectivity(
       resistance,
       radius     = omniscape_settings$radius     %||% 13L,
       block_size = omniscape_settings$block_size  %||% 5L
@@ -498,8 +528,9 @@ ds_diagnose <- function(intensity_fit,
 #'   every connectivity step (final refit, posterior sampling, and
 #'   diagnostics).  Recognised entries: `radius` (default `13L`),
 #'   `block_size` (default `5L`), `cleanup` (default `TRUE`).
-#' @param solver Character; `"surrogate"` (default, GP surrogate optimiser) or
-#'   `"enzyme"` (L-BFGS via differentiable Julia solver).
+#' @param solver Character; `"surrogate"` (default, GP surrogate optimiser),
+#'   `"gradient"` (L-BFGS / Adam via JAX auto-diff), or `"enzyme"` (deprecated,
+#'   alias for `"gradient"`).
 #' @return A list with `obs_points`, `basis_stack`, `opt_result`,
 #'   `intensity_fit`, `posterior`, `diagnostics`.
 #' @export
@@ -521,9 +552,15 @@ diffiscape <- function(obs_data,
                        rescale_basis        = TRUE,
                        pattern              = "*.tif",
                        omniscape_settings   = list(),
-                       solver               = c("surrogate", "enzyme")) {
+                       solver               = c("surrogate", "gradient", "enzyme")) {
 
   solver <- match.arg(solver)
+
+  # Deprecation alias
+  if (solver == "enzyme") {
+    message("solver='enzyme' is deprecated. Use solver='gradient' instead.")
+    solver <- "gradient"
+  }
 
   # Extract link and family from configs
   res_link   <- optimizer_config$resistance_link %||% link_exp()
@@ -618,10 +655,10 @@ diffiscape <- function(obs_data,
                                                    basis_stack, link = res_link)
   omni_def <- list(radius = 13L, block_size = 5L, cleanup = TRUE)
   omni_cfg <- utils::modifyList(omni_def, omniscape_settings)
-  if (solver == "enzyme") {
-    final_omni <- run_cumulative_current(final_resistance,
-                                         radius     = omni_cfg$radius,
-                                         block_size = omni_cfg$block_size)
+  if (solver == "gradient") {
+    final_omni <- ds_jax_connectivity(final_resistance,
+                                       radius     = omni_cfg$radius,
+                                       block_size = omni_cfg$block_size)
   } else {
     final_omni <- run_omniscape(final_resistance,
                                 radius     = omni_cfg$radius,

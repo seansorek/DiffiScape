@@ -125,6 +125,154 @@ default_optimizer_config <- function() {
 }
 
 
+# --------------- JAX gradient optimiser -------------------------------------
+
+#' Optimise resistance via JAX automatic differentiation
+#'
+#' Uses L-BFGS (via jaxopt) or Adam (via optax) optimisation with
+#' `jax.grad` through the JAXScape differentiable circuit solver.
+#' This is the JAX replacement for [optimize_resistance_enzyme()].
+#'
+#' @inheritParams optimize_resistance_enzyme
+#' @param method Character; `"lbfgs"` (default) or `"adam"`.
+#' @param parameterization Character; `"resistance"` (default) or
+#'   `"permeability"`.
+#' @return A list with `best_params`, `best_loglik`, `bounds`,
+#'   `n_evaluations`, `distribution`, `convergence`.
+#' @export
+optimize_resistance_gradient <- function(basis_stack,
+                                         obs_points,
+                                         bounds               = NULL,
+                                         config               = default_optimizer_config(),
+                                         intensity_config     = default_intensity_config(),
+                                         output_dir           = tempdir(),
+                                         covariates_obs       = NULL,
+                                         covariates_rasters   = NULL,
+                                         residualise          = FALSE,
+                                         available_points     = NULL,
+                                         available_covariates = NULL,
+                                         method               = "lbfgs",
+                                         parameterization     = "resistance") {
+
+  method <- match.arg(method, c("lbfgs", "adam"))
+
+  if (!requireNamespace("reticulate", quietly = TRUE)) {
+    stop("Package 'reticulate' is required for the JAX gradient solver. ",
+         "Install with install.packages('reticulate').",
+         call. = FALSE)
+  }
+
+  # --- Data preparation (same pattern as .prepare_torch_inputs) ---------------
+  np <- reticulate::import("numpy", convert = FALSE)
+
+  n_basis   <- terra::nlyr(basis_stack)
+  n_rows    <- terra::nrow(basis_stack)
+  n_cols    <- terra::ncol(basis_stack)
+  cell_area <- prod(terra::res(basis_stack))
+
+  if (is.null(bounds)) bounds <- get_default_bounds(n_basis)
+  if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+  basis_matrix <- as.matrix(basis_stack)
+  valid_mask   <- stats::complete.cases(basis_matrix)
+  basis_values <- basis_matrix[valid_mask, , drop = FALSE]
+
+  # Tabulate observation counts per valid cell
+  cell_indices <- terra::cellFromXY(
+    basis_stack,
+    cbind(obs_points$x, obs_points$y)
+  )
+  valid_obs <- !is.na(cell_indices) & valid_mask[cell_indices]
+  if (any(!valid_obs)) {
+    message(sprintf("  Dropped %d obs outside valid cells", sum(!valid_obs)))
+  }
+  cell_indices <- cell_indices[valid_obs]
+
+  obs_table        <- table(cell_indices)
+  obs_counts_full  <- rep(0L, terra::ncell(basis_stack))
+  obs_counts_full[as.integer(names(obs_table))] <- as.integer(obs_table)
+  obs_counts_valid <- obs_counts_full[valid_mask]
+
+  basis_np <- np$array(basis_values, dtype = np$float64)
+  obs_np   <- np$array(as.double(obs_counts_valid), dtype = np$float64)
+  vmask_np <- np$array(valid_mask, dtype = np$bool_)
+
+  # Initial parameter vector: midpoints of bounds
+  lower_b <- vapply(bounds, `[`, numeric(1), 1)
+  upper_b <- vapply(bounds, `[`, numeric(1), 2)
+  init_params <- (lower_b + upper_b) / 2
+
+  # Solver settings
+  solver_radius <- config$omniscape$radius     %||% 13L
+  solver_block  <- config$omniscape$block_size  %||% 5L
+  seed          <- config$seed                  %||% 42L
+  n_epochs      <- config$n_iter                %||% 300L
+  patience      <- 30L
+
+  # Map resistance_link to a link_fn string for Python
+  res_link <- config$resistance_link %||% link_exp()
+  link_fn  <- if (inherits(res_link, "resistance_link")) {
+    res_link$name
+  } else {
+    "exp"
+  }
+
+  distribution <- config$distribution %||% "negbin"
+
+  message("\n", strrep("=", 60))
+  message(sprintf("JAX gradient optimiser (%s, %s parameterization)",
+                  method, parameterization))
+  message(sprintf("  Grid: %d x %d (%d valid cells)",
+                  n_rows, n_cols, sum(valid_mask)))
+  message(sprintf("  Observations: %d GPS fixes",
+                  sum(obs_counts_valid)))
+  message(strrep("=", 60))
+
+  # --- Call Python optimiser via jax_bridge -----------------------------------
+  result <- ds_jax_optimize(
+    basis_np      = basis_np,
+    obs_np        = obs_np,
+    valid_mask_np = vmask_np,
+    n_rows        = n_rows,
+    n_cols        = n_cols,
+    cell_area     = cell_area,
+    init_params   = init_params,
+    link_fn            = link_fn,
+    radius             = as.integer(solver_radius),
+    block_size         = as.integer(solver_block),
+    parameterization   = parameterization,
+    method             = method,
+    lr                 = 0.01,
+    n_epochs           = as.integer(n_epochs),
+    patience           = as.integer(patience),
+    seed               = as.integer(seed),
+    verbose            = TRUE
+  )
+
+  # --- Reshape result to match optimize_resistance_enzyme return format -------
+  best_params <- params_vector_to_list(as.numeric(result$best_params), n_basis)
+
+  convergence <- if (isTRUE(result$converged)) 0L else 1L
+
+  message(sprintf(
+    "\nOptimisation complete: %d iterations, loglik = %.2f (%.1f s)",
+    result$n_epochs_run, result$best_loglik, result$elapsed
+  ))
+
+  list(
+    best_params   = best_params,
+    best_loglik   = result$best_loglik,
+    X_evaluated   = NULL,
+    y_evaluated   = NULL,
+    surrogate     = NULL,
+    bounds        = bounds,
+    n_evaluations = result$n_epochs_run,
+    distribution  = distribution,
+    convergence   = convergence
+  )
+}
+
+
 # --------------- Enzyme stub ------------------------------------------------
 
 #' Optimise resistance via Enzyme.jl automatic differentiation
