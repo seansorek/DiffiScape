@@ -147,17 +147,17 @@ def run_parametric_optimization(
         schedule = optax.cosine_decay_schedule(init_value=lr, decay_steps=n_epochs)
         optimizer = optax.adam(learning_rate=schedule)
         opt_state = optimizer.init(params)
-        grad_fn = jax.grad(neg_loglik)
+        val_and_grad_fn = jax.value_and_grad(neg_loglik)
 
         best_loss = float("inf")
         best_params = params
         stall = 0
 
         for epoch in range(n_epochs):
-            g = grad_fn(params)
+            loss_val, g = val_and_grad_fn(params)
             updates, opt_state = optimizer.update(g, opt_state)
             params = optax.apply_updates(params, updates)
-            loss = float(neg_loglik(params))
+            loss = float(loss_val)
             loss_history.append(loss)
 
             if loss < best_loss:
@@ -358,16 +358,22 @@ def run_neural_optimization(
     # resistance, embed into the full grid, convert to permeability, solve
     # for resistance distance, then evaluate the PPP objective.
 
+    is_conv = model_type == "conv"
+
     def loss_fn(all_params):
         flax_p, int_p = all_params
         log_r = model.apply(flax_p, basis_jnp)
         resistance = jnp.exp(log_r)
 
-        # Embed valid-cell resistance into the full grid
-        fill_val = jnp.mean(resistance)
-        full_surface = jnp.ones(n_rows * n_cols) * fill_val
-        full_surface = full_surface.at[mask_jnp].set(resistance)
-        surface_2d = full_surface.reshape((n_rows, n_cols))
+        if is_conv:
+            # Conv model outputs all cells (H*W,) from full-grid input
+            surface_2d = resistance.reshape((n_rows, n_cols))
+        else:
+            # Other models output valid cells only; embed into full grid
+            fill_val = jnp.mean(resistance)
+            full_surface = jnp.ones(n_rows * n_cols) * fill_val
+            full_surface = full_surface.at[mask_jnp].set(resistance)
+            surface_2d = full_surface.reshape((n_rows, n_cols))
 
         # Permeability conversion and circuit solve
         perm = prepare_permeability(surface_2d, parameterization)
@@ -385,7 +391,7 @@ def run_neural_optimization(
         return -loglik  # minimize negative log-likelihood
 
     # --- Training loop --------------------------------------------------
-    grad_fn = jax.grad(loss_fn)
+    val_and_grad_fn = jax.value_and_grad(loss_fn)
     best_loss = float("inf")
     best_params = params
     loss_history = []
@@ -393,10 +399,10 @@ def run_neural_optimization(
     t0 = time.time()
 
     for epoch in range(n_epochs):
-        g = grad_fn(params)
+        loss_val, g = val_and_grad_fn(params)
         updates, opt_state = optimizer.update(g, opt_state)
         params = optax.apply_updates(params, updates)
-        loss = float(loss_fn(params))
+        loss = float(loss_val)
         loss_history.append(loss)
 
         if loss < best_loss:

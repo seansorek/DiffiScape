@@ -2,8 +2,8 @@
 
 This module implements cumulative current calculation via moving-window
 circuit theory, accumulating resistances across overlapping windows
-on a spatial grid. The implementation uses JAXScape's GridGraph and
-ResistanceDistance solvers applied to sub-windows.
+on a spatial grid. Uses JAXScape's WindowOperation for proper windowing
+with edge-padded buffers.
 """
 import numpy as np
 import time
@@ -14,10 +14,13 @@ except ImportError:
     jnp = None
 
 try:
-    from jaxscape import GridGraph, ResistanceDistance
+    from jaxscape import GridGraph, ResistanceDistance, WindowOperation
+    from jaxscape.utils import padding as jaxscape_padding
 except ImportError:
     GridGraph = None
     ResistanceDistance = None
+    WindowOperation = None
+    jaxscape_padding = None
 
 from .core import prepare_permeability, _mean_weight
 
@@ -34,10 +37,11 @@ def cumulative_current(
 ):
     """Calculate cumulative current via moving-window circuit theory.
 
-    Uses a sliding window approach: for each position, extracts a sub-grid
-    of size (2*radius + 1) x (2*radius + 1), solves the circuit with a
-    source at the center using ResistanceDistance, and accumulates the
-    results across all windows.
+    Uses JAXScape's WindowOperation to tile the landscape into overlapping
+    windows.  Each window has a core of ``block_size x block_size`` pixels
+    surrounded by a buffer of ``radius`` pixels.  A single source is placed
+    at the window centre, the circuit is solved via ResistanceDistance, and
+    the resulting distance map is accumulated across all windows.
 
     Parameters
     ----------
@@ -48,14 +52,13 @@ def cumulative_current(
     n_cols : int
         Number of columns in the grid.
     radius : int, optional
-        Radius of the moving window (default: 13). Window size is
-        (2*radius + 1) x (2*radius + 1).
+        Buffer radius around each core window (default: 13).
     block_size : int, optional
-        Block size for sub-sampling or processing. Currently reserved for
-        future use (default: 5).
+        Core window size controlling sub-sampling density (default: 5).
+        Smaller values produce denser source placement (block_size=1
+        places a source at every cell).
     source_from_resistance : bool, optional
-        If True, sources are placed at the center of each window. Currently
-        reserved for future use (default: True).
+        Reserved for future use (default: True).
     parameterization : str, optional
         Either "resistance" or "permeability" (default: "resistance").
     output : str, optional
@@ -71,21 +74,12 @@ def cumulative_current(
         - "voltage": np.ndarray of shape (n_rows, n_cols) with accumulated
           voltage, or None if output does not include "voltage".
         - "elapsed": float, time elapsed in seconds.
-
-    Raises
-    ------
-    ImportError
-        If JAX is not installed.
-    ImportError
-        If JAXScape is not installed (will raise on first use, not on
-        import, to allow for graceful skipping in tests).
     """
     if jnp is None:
         raise ImportError("JAX is not installed")
     if GridGraph is None or ResistanceDistance is None:
         raise ImportError("JAXScape is not installed")
 
-    # Input validation
     if resistance_matrix.shape != (n_rows, n_cols):
         raise ValueError(
             f"resistance_matrix.shape {resistance_matrix.shape} must match "
@@ -94,7 +88,6 @@ def cumulative_current(
     if radius < 1:
         raise ValueError(f"radius must be >= 1, got {radius}")
 
-    # Check for unsupported output modes
     if output in ("voltage", "both"):
         raise NotImplementedError(
             f"output='{output}' is not yet implemented. "
@@ -103,61 +96,44 @@ def cumulative_current(
 
     t0 = time.time()
 
-    # Convert to JAX array
     surface = jnp.array(resistance_matrix, dtype=jnp.float64)
-
-    # Convert to permeability space
     permeability = prepare_permeability(surface, parameterization)
 
-    # Initialize accumulators
-    current_acc = np.zeros((n_rows, n_cols), dtype=np.float64)
+    # Pad with edge values so buffer zones reflect real landscape
+    padded = jnp.pad(permeability, radius, mode='edge')
+    # Ensure dimensions satisfy WindowOperation divisibility constraint
+    padded = jaxscape_padding(padded, buffer_size=radius, window_size=block_size)
 
-    # Create ResistanceDistance solver once, reuse for all windows
+    window_op = WindowOperation(
+        shape=padded.shape,
+        window_size=block_size,
+        buffer_size=radius,
+    )
+
     distance_solver = ResistanceDistance()
+    current_acc = jnp.zeros(padded.shape, dtype=jnp.float64)
 
-    # Sliding window loop
-    window_size = 2 * radius + 1
-    half_window = radius
+    for xy, window in window_op.lazy_iterator(padded):
+        grid = GridGraph(grid=window, fun=_mean_weight)
+        center = window.shape[0] // 2
+        source = grid.coord_to_index(
+            jnp.array([center]), jnp.array([center])
+        )
+        dist_values = distance_solver(grid, source)
+        dist_2d = grid.node_values_to_array(dist_values)
+        current_acc = window_op.update_raster_with_window(
+            xy, current_acc, dist_2d, fun=jnp.add,
+        )
 
-    for i in range(n_rows):
-        for j in range(n_cols):
-            # Define window bounds
-            i_min = max(0, i - half_window)
-            i_max = min(n_rows, i + half_window + 1)
-            j_min = max(0, j - half_window)
-            j_max = min(n_cols, j + half_window + 1)
-
-            # Extract sub-grid
-            sub_perm = permeability[i_min:i_max, j_min:j_max]
-
-            # Create GridGraph for this sub-window
-            sub_grid = GridGraph(grid=sub_perm, fun=_mean_weight)
-
-            # Source is at the center of the window (or as close as possible
-            # if window is at edge)
-            source_i = i - i_min
-            source_j = j - j_min
-            source_idx = sub_grid.coord_to_index(
-                jnp.array([source_i]), jnp.array([source_j])
-            )
-
-            # Solve for resistance distances from this source
-            dist_values = distance_solver(sub_grid, source_idx)
-
-            # Convert to 2D array
-            sub_distances = np.array(sub_grid.node_values_to_array(dist_values))
-
-            # Accumulate into the main grid
-            # (only accumulate the part that fits in the original grid)
-            current_acc[i_min:i_max, j_min:j_max] += sub_distances
+    # Strip padding to recover original extent
+    result_current = np.array(
+        current_acc[radius:radius + n_rows, radius:radius + n_cols]
+    )
 
     elapsed = time.time() - t0
 
-    # Prepare output (voltage/both already rejected in input validation)
-    result = {
-        "current": current_acc,
+    return {
+        "current": result_current,
         "voltage": None,
         "elapsed": elapsed,
     }
-
-    return result

@@ -226,6 +226,8 @@ class ResistanceSpline(nn.Module):
     degree: int = 3
     n_covariates: int = 1
     include_interactions: bool = True
+    x_min: float = 0.0
+    x_max: float = 1.0
     r_min: float = DEFAULT_R_MIN
     r_max: float = DEFAULT_R_MAX
     clamp_beta: float = 5.0
@@ -237,7 +239,7 @@ class ResistanceSpline(nn.Module):
         Parameters
         ----------
         x : jnp.ndarray, shape ``(n_cells, n_covariates)``
-            Covariate values.
+            Covariate values (should be normalized to ``[x_min, x_max]``).
 
         Returns
         -------
@@ -246,7 +248,7 @@ class ResistanceSpline(nn.Module):
         """
         components = []
         for k in range(self.n_covariates):
-            basis = self._rbf_basis(x[:, k], self.n_knots)
+            basis = self._rbf_basis(x[:, k], self.n_knots, self.x_min, self.x_max)
             coefs = self.param(
                 f'coef_{k}',
                 nn.initializers.zeros,
@@ -276,7 +278,7 @@ class ResistanceSpline(nn.Module):
         return _softplus_clamp(log_r, self.r_min, self.r_max, self.clamp_beta)
 
     @staticmethod
-    def _rbf_basis(x, n_knots):
+    def _rbf_basis(x, n_knots, x_min=0.0, x_max=1.0):
         """Gaussian RBF basis centred at evenly-spaced interior knots.
 
         Parameters
@@ -285,6 +287,10 @@ class ResistanceSpline(nn.Module):
             Input values for one covariate.
         n_knots : int
             Number of interior knots.
+        x_min : float
+            Lower bound for normalization (compile-time constant, JIT-safe).
+        x_max : float
+            Upper bound for normalization (compile-time constant, JIT-safe).
 
         Returns
         -------
@@ -292,7 +298,7 @@ class ResistanceSpline(nn.Module):
             Basis matrix.
         """
         knots = jnp.linspace(0.0, 1.0, n_knots + 2)[1:-1]
-        x_norm = (x - x.min()) / (x.max() - x.min() + 1e-8)
+        x_norm = (x - x_min) / (x_max - x_min + 1e-8)
         sigma = 1.0 / n_knots
         basis = jnp.stack(
             [jnp.exp(-0.5 * ((x_norm - k) / sigma) ** 2) for k in knots],
@@ -372,16 +378,21 @@ class ResistanceIRL(nn.Module):
         reward = nn.Dense(1)(h).squeeze(-1)
 
         if adjacency is not None:
-            # Soft value iteration with adjacency matrix
-            value = jnp.zeros_like(reward)
-            for _ in range(self.n_value_iter):
-                # Q-values: reward + discounted future value via adjacency
-                neighbor_values = adjacency @ value  # (n_cells,)
-                # Stack stay + move actions for logsumexp
-                q_stay = reward + self.gamma_d * value
-                q_move = reward + self.gamma_d * neighbor_values
+            # Soft value iteration with adjacency matrix via fori_loop
+            # (avoids XLA graph explosion from unrolled Python loop)
+            beta = self.beta
+            gamma_d = self.gamma_d
+
+            def vi_step(_, value):
+                neighbor_values = adjacency @ value
+                q_stay = reward + gamma_d * value
+                q_move = reward + gamma_d * neighbor_values
                 q_stack = jnp.stack([q_stay, q_move], axis=-1)
-                value = jax.nn.logsumexp(self.beta * q_stack, axis=-1) / self.beta
+                return jax.nn.logsumexp(beta * q_stack, axis=-1) / beta
+
+            value = jax.lax.fori_loop(
+                0, self.n_value_iter, vi_step, jnp.zeros_like(reward)
+            )
 
             scale = self.param(
                 'value_scale',
