@@ -14,6 +14,10 @@
 
   .ds_env$torch_initialized <- FALSE
   .ds_env$torch_module      <- NULL
+
+  .ds_env$jax_initialized <- FALSE
+  .ds_env$jax_core        <- NULL
+  .ds_env$jax_window      <- NULL
 }
 
 .onAttach <- function(libname, pkgname) {

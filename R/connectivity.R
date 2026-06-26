@@ -220,6 +220,10 @@ extract_connectivity <- function(connectivity, points, buffer = NULL) {
 #'   - `"current"` returns only cumulative current density.
 #'   - `"voltage"` returns only cumulative voltage (flow potential).
 #'   - `"both"` returns both.
+#' @param backend Character; `"julia"` (default) or `"jax"`. When `"jax"`,
+#'   delegates to [ds_jax_connectivity()] instead of the Julia solver.
+#' @param parameterization Character; `"resistance"` (default) or
+#'   `"permeability"`. Only used when `backend = "jax"`.
 #' @return A list matching the [run_omniscape()] interface:
 #'   \describe{
 #'     \item{cum_current}{[terra::SpatRaster] of cumulative current, or `NULL`
@@ -232,9 +236,22 @@ extract_connectivity <- function(connectivity, points, buffer = NULL) {
 run_cumulative_current <- function(resistance,
                                    radius     = 13L,
                                    block_size = 5L,
-                                   output     = "current") {
+                                   output     = "current",
+                                   backend    = c("julia", "jax"),
+                                   parameterization = "resistance") {
 
-  output <- match.arg(output, c("current", "voltage", "both"))
+  backend <- match.arg(backend)
+  output  <- match.arg(output, c("current", "voltage", "both"))
+
+  if (backend == "jax") {
+    return(ds_jax_connectivity(
+      resistance,
+      radius     = radius,
+      block_size = block_size,
+      parameterization = parameterization,
+      output     = output
+    ))
+  }
 
   if (!ds_julia_check()) {
     stop("Julia not initialised. Call ds_julia_setup() first.",
