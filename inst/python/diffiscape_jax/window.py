@@ -9,10 +9,8 @@ import numpy as np
 import time
 
 try:
-    import jax
     import jax.numpy as jnp
 except ImportError:
-    jax = None
     jnp = None
 
 try:
@@ -88,6 +86,22 @@ def cumulative_current(
     if GridGraph is None or ResistanceDistance is None:
         raise ImportError("JAXScape is not installed")
 
+    # Input validation
+    if resistance_matrix.shape != (n_rows, n_cols):
+        raise ValueError(
+            f"resistance_matrix.shape {resistance_matrix.shape} must match "
+            f"(n_rows, n_cols) = ({n_rows}, {n_cols})"
+        )
+    if radius < 1:
+        raise ValueError(f"radius must be >= 1, got {radius}")
+
+    # Check for unsupported output modes
+    if output in ("voltage", "both"):
+        raise NotImplementedError(
+            f"output='{output}' is not yet implemented. "
+            "Only output='current' is supported."
+        )
+
     t0 = time.time()
 
     # Convert to JAX array
@@ -98,7 +112,9 @@ def cumulative_current(
 
     # Initialize accumulators
     current_acc = np.zeros((n_rows, n_cols), dtype=np.float64)
-    voltage_acc = np.zeros((n_rows, n_cols), dtype=np.float64)
+
+    # Create ResistanceDistance solver once, reuse for all windows
+    distance_solver = ResistanceDistance()
 
     # Sliding window loop
     window_size = 2 * radius + 1
@@ -127,7 +143,6 @@ def cumulative_current(
             )
 
             # Solve for resistance distances from this source
-            distance_solver = ResistanceDistance()
             dist_values = distance_solver(sub_grid, source_idx)
 
             # Convert to 2D array
@@ -137,16 +152,12 @@ def cumulative_current(
             # (only accumulate the part that fits in the original grid)
             current_acc[i_min:i_max, j_min:j_max] += sub_distances
 
-            # For now, voltage is not computed (would need additional info
-            # about sources and sinks). Set to zeros for "voltage" or "both".
-            # voltage_acc is already initialized to zeros.
-
     elapsed = time.time() - t0
 
-    # Prepare output based on requested modes
+    # Prepare output (voltage/both already rejected in input validation)
     result = {
-        "current": current_acc if output in ("current", "both") else None,
-        "voltage": voltage_acc if output in ("voltage", "both") else None,
+        "current": current_acc,
+        "voltage": None,
         "elapsed": elapsed,
     }
 
