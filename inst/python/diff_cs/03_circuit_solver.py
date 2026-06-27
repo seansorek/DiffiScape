@@ -43,28 +43,58 @@ try:
 except ImportError:
     pass
 
+_AMGX_AVAILABLE = False
+_AMGX_INITIALIZED = False
+try:
+    import pyamgx
+    _AMGX_AVAILABLE = True
+except ImportError:
+    pass
+
 # Module-level GPU toggle
 _use_gpu = False
+_gpu_solver = "jacobi"  # "jacobi" (CuPy) or "amgx" (NVIDIA AmgX)
 
 
-def enable_gpu(enable=True):
-    """Enable or disable GPU acceleration for the circuit solver."""
-    global _use_gpu
+def enable_gpu(enable=True, solver="jacobi"):
+    """Enable or disable GPU acceleration for the circuit solver.
+
+    Parameters
+    ----------
+    enable : bool
+    solver : str
+        "jacobi" — CuPy Jacobi-preconditioned CG (default, fast for uniform absorption).
+        "amgx"  — NVIDIA AmgX GPU-native AMG (better for ill-conditioned systems).
+    """
+    global _use_gpu, _gpu_solver
     if enable and not _GPU_AVAILABLE:
         raise RuntimeError(
             "GPU not available. Install cupy matching your CUDA version:\n"
             "  pip install cupy-cuda12x   # CUDA 12.x\n"
             "  pip install cupy-cuda11x   # CUDA 11.x"
         )
+    if enable and solver == "amgx" and not _AMGX_AVAILABLE:
+        raise RuntimeError(
+            "AMGX not available. Install pyamgx:\n"
+            "  1. Build AMGX from source: https://github.com/NVIDIA/AMGX\n"
+            "  2. pip install pyamgx (with AMGX_DIR set)"
+        )
     _use_gpu = enable
+    _gpu_solver = solver
     if enable:
-        print(f"  Circuit solver: GPU enabled (CUDA {cp.cuda.runtime.runtimeGetVersion()})")
+        cuda_ver = cp.cuda.runtime.runtimeGetVersion()
+        print(f"  Circuit solver: GPU enabled (CUDA {cuda_ver}, solver={solver})")
     return _use_gpu
 
 
 def gpu_available():
     """Check if GPU acceleration is available."""
     return _GPU_AVAILABLE
+
+
+def amgx_available():
+    """Check if AMGX GPU solver is available."""
+    return _AMGX_AVAILABLE
 
 
 def _xp():
@@ -97,6 +127,101 @@ _cache = {
     "interior_idx": None,
     "boundary_idx": None,
 }
+
+_amgx_cache = {
+    "resources": None,
+    "config": None,
+    "solver": None,
+    "matrix": None,
+    "rhs": None,
+    "sol": None,
+    "R_hash": None,
+    "n": None,
+}
+
+
+def _amgx_ensure_resources():
+    """Create persistent AMGX resources and config (once per session)."""
+    global _AMGX_INITIALIZED
+    if _amgx_cache["resources"] is not None:
+        return
+    if not _AMGX_INITIALIZED:
+        # CuPy must initialize the CUDA context before AMGX can see the device.
+        if _GPU_AVAILABLE:
+            cp.cuda.Device(0).use()
+            cp.zeros(1)
+        pyamgx.initialize()
+        _AMGX_INITIALIZED = True
+    cfg = pyamgx.Config()
+    cfg.create_from_dict({
+        "config_version": 2,
+        "solver": {
+            "solver": "PCG",
+            "max_iters": 2000,
+            "tolerance": 1e-10,
+            "monitor_residual": 1,
+            "obtain_timings": 0,
+            "print_solve_stats": 0,
+            "preconditioner": {
+                "solver": "AMG",
+                "algorithm": "AGGREGATION",
+                "selector": "SIZE_2",
+                "max_iters": 1,
+                "cycle": "V",
+                "smoother": {
+                    "solver": "MULTICOLOR_GS",
+                    "max_iters": 2,
+                    "relaxation_factor": 1.0,
+                },
+                "coarse_solver": "DENSE_LU_SOLVER",
+            },
+        },
+    })
+    rsc = pyamgx.Resources()
+    rsc.create_simple(cfg)
+    solver = pyamgx.Solver()
+    solver.create(rsc, cfg)
+    mat = pyamgx.Matrix()
+    mat.create(rsc)
+    rhs = pyamgx.Vector()
+    rhs.create(rsc)
+    sol = pyamgx.Vector()
+    sol.create(rsc)
+    _amgx_cache.update({
+        "resources": rsc, "config": cfg, "solver": solver,
+        "matrix": mat, "rhs": rhs, "sol": sol,
+    })
+
+
+def _amgx_solve(L_csr_scipy, b_np, x0=None):
+    """Solve Ax=b using AMGX GPU-native AMG. Caches hierarchy across calls."""
+    _amgx_ensure_resources()
+    n = L_csr_scipy.shape[0]
+    R_hash = _hash_array(L_csr_scipy.data)
+
+    mat = _amgx_cache["matrix"]
+    solver = _amgx_cache["solver"]
+    rhs = _amgx_cache["rhs"]
+    sol = _amgx_cache["sol"]
+
+    if _amgx_cache["R_hash"] != R_hash or _amgx_cache["n"] != n:
+        L_csr_scipy.sort_indices()
+        mat.upload_CSR(L_csr_scipy)
+        solver.setup(mat)
+        _amgx_cache["R_hash"] = R_hash
+        _amgx_cache["n"] = n
+
+    rhs.upload(b_np.astype(np.float64))
+    if x0 is not None:
+        sol.upload(x0.astype(np.float64))
+    else:
+        sol.upload(np.zeros(n, dtype=np.float64))
+
+    solver.solve(rhs, sol)
+
+    result = np.zeros(n, dtype=np.float64)
+    sol.download(result)
+    return result
 
 # Smooth absolute value parameter
 _EPS = 1e-8
@@ -214,7 +339,7 @@ def build_laplacian(edge_src, edge_dst, edge_w, n_nodes):
         )
         # Diagonal entries: sum of weights per node
         diag_vals = cp.zeros(n_nodes, dtype=cp.float64)
-        cp.add.at(diag_vals, edge_src, edge_w)  # cupyx scatter add
+        cp.add.at(diag_vals, edge_src, edge_w)
         L_diag = cp_sparse.diags(diag_vals, format="csr")
         L = (L_off + L_diag).tocsr()
     else:
@@ -249,10 +374,10 @@ def get_boundary_mask(n_rows, n_cols):
     mask[:n_cols] = True
     mask[-n_cols:] = True
 
-    # First and last column
-    for r in range(n_rows):
-        mask[r * n_cols] = True
-        mask[r * n_cols + n_cols - 1] = True
+    # First and last column (vectorized)
+    rows = xp.arange(n_rows)
+    mask[rows * n_cols] = True
+    mask[rows * n_cols + n_cols - 1] = True
 
     return mask
 
@@ -287,10 +412,10 @@ def get_source_lattice_mask(n_rows, n_cols, spacing, interior_mask):
     mask = xp.zeros(n_nodes, dtype=bool)
     offset = spacing // 2
 
-    for r in range(offset, n_rows, spacing):
-        for c in range(offset, n_cols, spacing):
-            k = r * n_cols + c
-            mask[k] = True
+    r_idx = xp.arange(offset, n_rows, spacing)
+    c_idx = xp.arange(offset, n_cols, spacing)
+    rr, cc = xp.meshgrid(r_idx, c_idx, indexing='ij')
+    mask[(rr * n_cols + cc).ravel()] = True
 
     # Intersect with interior — boundary pixels must never inject
     mask &= interior_mask
@@ -383,7 +508,31 @@ def solve_circuit_absorption(R_matrix, absorption=0.01, source_spacing=1,
         b = b / R_src
 
     # Solve
-    if _use_gpu:
+    if _use_gpu and _gpu_solver == "amgx":
+        # AMGX path: GPU-native AMG-preconditioned solve
+        # AMGX operates on scipy CSR (host), uploads to GPU internally
+        L_csr_gpu = L_abs.tocsr()
+        L_scipy = sparse.csr_matrix(
+            (cp.asnumpy(L_csr_gpu.data),
+             cp.asnumpy(L_csr_gpu.indices),
+             cp.asnumpy(L_csr_gpu.indptr)),
+            shape=L_abs.shape,
+        )
+        b_np = _to_host(b)
+        t0 = time.time()
+        v_np = _amgx_solve(L_scipy, b_np)
+        solve_time = time.time() - t0
+        v = _to_device(v_np)
+
+        _cache["amg"] = None
+        _cache["R_hash"] = _hash_array(R_flat)
+        _cache["L_interior"] = L_scipy  # keep scipy CSR for adjoint reuse
+        _cache["interior_idx"] = xp.arange(n_nodes)
+        _cache["boundary_idx"] = xp.array([], dtype=int)
+        _cache["v_interior_gpu"] = v
+
+    elif _use_gpu:
+        # CuPy Jacobi path
         t0 = time.time()
         L_csr = L_abs.tocsr()
 
@@ -564,7 +713,29 @@ def solve_circuit(R_matrix, rebuild_amg=None, source_spacing=1,
         b = b / R_interior
 
     # Solve
-    if _use_gpu:
+    if _use_gpu and _gpu_solver == "amgx":
+        # AMGX path: convert to scipy CSR, solve on GPU via AmgX
+        L_int_csr = L_interior.tocsr()
+        L_scipy = sparse.csr_matrix(
+            (cp.asnumpy(L_int_csr.data),
+             cp.asnumpy(L_int_csr.indices),
+             cp.asnumpy(L_int_csr.indptr)),
+            shape=L_interior.shape,
+        )
+        b_np = _to_host(b)
+        t0 = time.time()
+        v_int_np = _amgx_solve(L_scipy, b_np)
+        solve_time = time.time() - t0
+        v_interior = _to_device(v_int_np)
+
+        _cache["amg"] = None
+        _cache["R_hash"] = _hash_array(R_flat)
+        _cache["L_interior"] = L_scipy
+        _cache["interior_idx"] = interior_idx
+        _cache["boundary_idx"] = boundary_idx
+        _cache["v_interior_gpu"] = v_interior
+
+    elif _use_gpu:
         # GPU path: Jacobi-preconditioned CG via cupy (warm-started)
         t0 = time.time()
         L_int_csr = L_interior.tocsr()
@@ -686,12 +857,6 @@ def _compute_current_density(v, edge_src, edge_dst, edge_w, n_nodes):
     else:
         np.add.at(current_density, edge_src, contributions)
 
-    # Each undirected edge is stored twice, and each directed edge contributes
-    # to the source node. So node k gets one term per neighbor — correct.
-    # However, we need to halve because edge (i,j) with src=i contributes to
-    # c_i, AND edge (j,i) with src=j contributes to c_j.
-    # Actually each directed edge (src→dst) contributes exactly once to c_src.
-    # With both directions, c_k = Σ over all j~k exactly once. No halving.
     return current_density
 
 
@@ -723,7 +888,12 @@ def adjoint_solve(dl_dv_interior, use_cache=True):
 
     xp = _xp()
 
-    if _use_gpu:
+    if _use_gpu and _gpu_solver == "amgx":
+        # AMGX path: reuses cached AMG hierarchy for adjoint solve
+        dl_dv_np = _to_host(dl_dv_interior)
+        lam_np = _amgx_solve(L_interior, dl_dv_np)
+        lam_interior = _to_device(lam_np)
+    elif _use_gpu:
         # GPU path: Jacobi-preconditioned CG
         diag_inv = _cache.get("diag_inv")
         if diag_inv is None:
@@ -738,6 +908,8 @@ def adjoint_solve(dl_dv_interior, use_cache=True):
         lam_interior, info = cp_splinalg.cg(
             L_interior, _to_device(dl_dv_interior), M=M, rtol=CG_RTOL, maxiter=2000
         )
+        if info != 0:
+            raise RuntimeError(f"Adjoint CG did not converge (info={info})")
     else:
         # CPU path: AMG-preconditioned CG
         amg = _cache["amg"]
@@ -745,9 +917,8 @@ def adjoint_solve(dl_dv_interior, use_cache=True):
             raise ValueError("No cached AMG hierarchy. Run solve_circuit() first.")
         M = amg.aspreconditioner()
         lam_interior, info = cg(L_interior, dl_dv_interior, M=M, rtol=CG_RTOL, maxiter=1000)
-
-    if info != 0:
-        raise RuntimeError(f"Adjoint CG did not converge (info={info})")
+        if info != 0:
+            raise RuntimeError(f"Adjoint CG did not converge (info={info})")
 
     n_nodes = len(interior_idx) + len(_cache["boundary_idx"])
     lambda_full = xp.zeros(n_nodes, dtype=xp.float64)
@@ -797,10 +968,6 @@ def compute_adjoint_rhs(v, dl_dc, edge_src, edge_dst, edge_w, n_nodes, interior_
 
     xp = _xp()
     dl_dv = xp.zeros(n_nodes, dtype=xp.float64)
-
-    # For each directed edge (src, dst):
-    # dl_dv[src] += dl_dc[src] * w * smooth_sign(v_src - v_dst)
-    # dl_dv[dst] += dl_dc[src] * (-w) * smooth_sign(v_src - v_dst)
     contrib = dl_dc[edge_src] * edge_w * s_dv
     if _use_gpu:
         cp.add.at(dl_dv, edge_src, contrib)
@@ -917,18 +1084,18 @@ def gradient_wrt_resistance(v, adjoint_lambda, dl_dc,
     # For directed edge (s, d): dw/dR_s = -2 / (R_s + R_d)^2
     #                           dw/dR_d = -2 / (R_s + R_d)^2
     denom_sq = (R_flat[edge_src] + R_flat[edge_dst]) ** 2
-    dw_dR_src = -2.0 / denom_sq  # dw/dR_src
-    dw_dR_dst = -2.0 / denom_sq  # dw/dR_dst
+    dw_dR = -2.0 / denom_sq  # symmetric: dw/dR_src == dw/dR_dst
 
     # Accumulate dl/dR_i = Σ_{edges involving i} dl/dw * dw/dR_i
     xp = _xp()
     dl_dR = xp.zeros(n_nodes, dtype=xp.float64)
+    dl_dw_dR = dl_dw * dw_dR
     if _use_gpu:
-        cp.add.at(dl_dR, edge_src, dl_dw * dw_dR_src)
-        cp.add.at(dl_dR, edge_dst, dl_dw * dw_dR_dst)
+        cp.add.at(dl_dR, edge_src, dl_dw_dR)
+        cp.add.at(dl_dR, edge_dst, dl_dw_dR)
     else:
-        np.add.at(dl_dR, edge_src, dl_dw * dw_dR_src)
-        np.add.at(dl_dR, edge_dst, dl_dw * dw_dR_dst)
+        np.add.at(dl_dR, edge_src, dl_dw_dR)
+        np.add.at(dl_dR, edge_dst, dl_dw_dR)
 
     # Step 2b: ∂b/∂R correction for source_from_resistance mode.
     # When b_k = source_mask_k / R_k, the Lagrangian picks up an extra term:
@@ -1006,14 +1173,9 @@ def gradient_wrt_resistance(v, adjoint_lambda, dl_dc,
     # dl/dtheta[0] = Σ_i dl/deta_i * 1           (intercept)
     # dl/dtheta[k] = Σ_i dl/deta_i * phi_k_i     (covariate k)
     p = basis_values.shape[1] + 1  # +1 for intercept
-    dl_dtheta = np.zeros(p, dtype=np.float64)
-
-    # Intercept gradient
+    dl_dtheta = np.empty(p, dtype=np.float64)
     dl_dtheta[0] = np.sum(dl_deta)
-
-    # Covariate gradients
-    for k in range(basis_values.shape[1]):
-        dl_dtheta[k + 1] = np.sum(dl_deta * basis_values[:, k])
+    dl_dtheta[1:] = basis_values.T @ dl_deta
 
     return dl_dtheta
 

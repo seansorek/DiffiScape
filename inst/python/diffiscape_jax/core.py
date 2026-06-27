@@ -12,9 +12,19 @@ except ImportError:
 
 try:
     from jaxscape import GridGraph, ResistanceDistance
+    from jaxscape.solvers import AMJaxCGSolver, BCOOLinearOperator, linear_solve
+    from jaxscape.solvers.amjaxcgsolver import build_amjax_solver, amjax_preconditioner_operator
+    from jaxscape.utils import graph_laplacian
+    import lineax as lx
+    from jax.experimental.sparse import BCOO
 except ImportError:
     GridGraph = None
     ResistanceDistance = None
+    AMJaxCGSolver = None
+    BCOOLinearOperator = None
+    graph_laplacian = None
+    lx = None
+    BCOO = None
 
 
 DEFAULT_R_MIN = 1.0
@@ -124,6 +134,212 @@ def _mean_weight(x, y):
     return (x + y) / 2
 
 
+_EPS = 1e-8
+
+
+def _boundary_mask(n_rows, n_cols):
+    """Boolean mask (n_nodes,) that is True for boundary pixels."""
+    n = n_rows * n_cols
+    mask = jnp.zeros(n, dtype=bool)
+    # first/last row
+    mask = mask.at[:n_cols].set(True)
+    mask = mask.at[-n_cols:].set(True)
+    # first/last column
+    rows = jnp.arange(n_rows)
+    mask = mask.at[rows * n_cols].set(True)
+    mask = mask.at[rows * n_cols + n_cols - 1].set(True)
+    return mask
+
+
+def circuit_solve_init(permeability, n_rows, n_cols, absorption=0.01):
+    """Build AMJax-preconditioned solver state for boundary absorption.
+
+    Adds absorption only to boundary nodes: (L + alpha * I_boundary) v = 1_interior.
+    Call once per grid geometry, then pass the returned state to
+    :func:`circuit_solve` for each permeability update.
+
+    Returns
+    -------
+    dict with keys 'operator', 'solver', 'state', 'A', 'boundary', 'interior'
+    """
+    grid = GridGraph(grid=permeability, fun=_mean_weight)
+    A = grid.get_adjacency_matrix()
+    L = graph_laplacian(A)
+
+    boundary = _boundary_mask(n_rows, n_cols)
+
+    boundary_idx = jnp.where(boundary)[0].astype(L.indices.dtype)
+    abs_indices = jnp.stack([boundary_idx, boundary_idx], axis=-1)
+    abs_data = jnp.full(boundary_idx.shape, absorption, dtype=L.data.dtype)
+    absorption_diag = BCOO((abs_data, abs_indices), shape=L.shape)
+    L_grounded = L + absorption_diag
+
+    solver = AMJaxCGSolver(rtol=1e-6, atol=1e-6)
+    operator = BCOOLinearOperator(L_grounded)
+    state = solver.init(operator, {})
+
+    return {
+        "operator": operator,
+        "solver": solver,
+        "state": state,
+        "A": A,
+        "boundary": boundary,
+        "interior": ~boundary,
+        "n": n_rows * n_cols,
+    }
+
+
+def circuit_solve_absorption_init(permeability, n_rows, n_cols, absorption=0.01):
+    """Build AMJax-preconditioned solver state for uniform absorption.
+
+    Adds absorption to ALL nodes: (L + alpha * I) v = 1.
+    Call once per grid geometry, then pass the returned state to
+    :func:`circuit_solve_absorption` for each permeability update.
+
+    Returns
+    -------
+    dict with keys 'operator', 'solver', 'state', 'A', 'n'
+    """
+    grid = GridGraph(grid=permeability, fun=_mean_weight)
+    A = grid.get_adjacency_matrix()
+    L = graph_laplacian(A)
+
+    n = n_rows * n_cols
+    idx = jnp.arange(n, dtype=L.indices.dtype)
+    abs_indices = jnp.stack([idx, idx], axis=-1)
+    abs_data = jnp.full(n, absorption, dtype=L.data.dtype)
+    absorption_diag = BCOO((abs_data, abs_indices), shape=L.shape)
+    L_abs = L + absorption_diag
+
+    solver = AMJaxCGSolver(rtol=1e-6, atol=1e-6)
+    operator = BCOOLinearOperator(L_abs)
+    state = solver.init(operator, {})
+
+    return {
+        "operator": operator,
+        "solver": solver,
+        "state": state,
+        "A": A,
+        "n": n,
+    }
+
+
+def circuit_solve(
+    permeability,
+    n_rows,
+    n_cols,
+    source_from_resistance=False,
+    absorption=0.01,
+    solver_state=None,
+):
+    """Single-solve circuit current density using AMJax-preconditioned CG.
+
+    Mirrors the Torch pipeline's boundary-grounded Laplacian solve but runs
+    entirely in JAX (JIT-compilable, differentiable, GPU-capable).
+
+    Parameters
+    ----------
+    permeability : jax.Array, shape (n_rows, n_cols)
+        Permeability surface (already converted from resistance).
+    n_rows, n_cols : int
+        Grid dimensions.
+    source_from_resistance : bool
+        If True, source strength is proportional to permeability.
+    absorption : float
+        Diagonal absorption added to boundary nodes for grounding.
+    solver_state : dict, optional
+        Pre-computed solver state from :func:`circuit_solve_init`.  When
+        provided, skips AMG hierarchy construction (much faster).
+
+    Returns
+    -------
+    current_density : jax.Array, shape (n_rows * n_cols,)
+        Current density at each node.
+    voltage : jax.Array, shape (n_rows * n_cols,)
+        Voltage at each node.
+    """
+    if solver_state is None:
+        solver_state = circuit_solve_init(
+            permeability, n_rows, n_cols, absorption
+        )
+
+    operator = solver_state["operator"]
+    solver = solver_state["solver"]
+    state = solver_state["state"]
+    A = solver_state["A"]
+    interior = solver_state["interior"]
+    n = solver_state["n"]
+
+    b = jnp.where(interior, 1.0, 0.0)
+    if source_from_resistance:
+        b = b * permeability.ravel()
+
+    v = lx.linear_solve(operator, b, solver=solver, state=state).value
+
+    rows = A.indices[:, 0]
+    cols = A.indices[:, 1]
+    edge_currents = A.data * jnp.sqrt((v[rows] - v[cols]) ** 2 + _EPS)
+    current_density = jnp.zeros(n).at[rows].add(edge_currents) * 0.5
+
+    return current_density, v
+
+
+def circuit_solve_absorption(
+    permeability,
+    n_rows,
+    n_cols,
+    source_from_resistance=False,
+    absorption=0.01,
+    solver_state=None,
+):
+    """Uniform absorption solve: (L + alpha * I) v = 1.
+
+    All nodes get equal absorption (well-conditioned system).
+    Mirrors the Torch pipeline's ``solve_circuit_absorption``.
+
+    Parameters
+    ----------
+    permeability : jax.Array, shape (n_rows, n_cols)
+        Permeability surface.
+    n_rows, n_cols : int
+        Grid dimensions.
+    source_from_resistance : bool
+        If True, source strength is proportional to permeability.
+    absorption : float
+        Diagonal absorption added uniformly to all nodes.
+    solver_state : dict, optional
+        Pre-computed solver state from :func:`circuit_solve_absorption_init`.
+
+    Returns
+    -------
+    current_density : jax.Array, shape (n_rows * n_cols,)
+    voltage : jax.Array, shape (n_rows * n_cols,)
+    """
+    if solver_state is None:
+        solver_state = circuit_solve_absorption_init(
+            permeability, n_rows, n_cols, absorption
+        )
+
+    operator = solver_state["operator"]
+    solver = solver_state["solver"]
+    state = solver_state["state"]
+    A = solver_state["A"]
+    n = solver_state["n"]
+
+    b = jnp.ones(n, dtype=jnp.float64)
+    if source_from_resistance:
+        b = b * permeability.ravel()
+
+    v = lx.linear_solve(operator, b, solver=solver, state=state).value
+
+    rows = A.indices[:, 0]
+    cols = A.indices[:, 1]
+    edge_currents = A.data * jnp.sqrt((v[rows] - v[cols]) ** 2 + _EPS)
+    current_density = jnp.zeros(n).at[rows].add(edge_currents) * 0.5
+
+    return current_density, v
+
+
 def forward_solve(
     resistance_matrix,
     n_rows,
@@ -167,23 +383,21 @@ def forward_solve(
     # Convert to permeability space
     permeability = prepare_permeability(surface, parameterization)
 
-    # Create GridGraph with mean edge weight function
     grid = GridGraph(grid=permeability, fun=_mean_weight)
 
-    # Set default sources to (0, 0) if not provided
     if sources is None:
         sources = grid.coord_to_index(jnp.array([0]), jnp.array([0]))
 
-    # Create resistance distance solver
-    distance = ResistanceDistance()
+    distance = ResistanceDistance(solver=AMJaxCGSolver())
+    state = distance.init(grid)
 
-    # Run the solve
     t0 = time.time()
-    dist_values = distance(grid, sources)
+    dist_values = distance(grid, nodes=sources, state=state)
     elapsed = time.time() - t0
 
-    # Convert back to 2D array
-    connectivity = np.array(grid.node_values_to_array(dist_values))
+    connectivity = np.array(grid.node_values_to_array(
+        dist_values.squeeze() if dist_values.ndim > 1 else dist_values
+    ))
 
     return {
         "connectivity": connectivity,
@@ -286,7 +500,7 @@ def _connectivity_objective(params, basis_values, valid_mask, n_rows, n_cols,
 
     permeability = prepare_permeability(surface_2d, parameterization)
     grid = GridGraph(grid=permeability, fun=_mean_weight)
-    distance = ResistanceDistance()
+    distance = ResistanceDistance(solver=AMJaxCGSolver())
     source = grid.coord_to_index(jnp.array([0]), jnp.array([0]))
     connectivity = distance(grid, source)
 

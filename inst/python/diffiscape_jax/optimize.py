@@ -304,6 +304,7 @@ def run_neural_optimization(
     from .core import prepare_permeability, _mean_weight, ppp_loglik
 
     from jaxscape import GridGraph, ResistanceDistance
+    from jaxscape.solvers import AMJaxCGSolver
 
     rng = jax.random.PRNGKey(seed)
 
@@ -378,7 +379,7 @@ def run_neural_optimization(
         # Permeability conversion and circuit solve
         perm = prepare_permeability(surface_2d, parameterization)
         grid = GridGraph(grid=perm, fun=_mean_weight)
-        dist_solver = ResistanceDistance()
+        dist_solver = ResistanceDistance(solver=AMJaxCGSolver())
         source = grid.coord_to_index(jnp.array([0]), jnp.array([0]))
         connectivity = dist_solver(grid, source)
 
