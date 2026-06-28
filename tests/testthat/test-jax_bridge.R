@@ -118,3 +118,14 @@ test_that("JAX backend functions are exported and callable", {
     )
   }
 })
+
+
+test_that("JAX backend runs in 64-bit (x64) precision", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+  skip_if_not(reticulate::py_module_available("jax"), "jax not installed")
+  ds_jax_setup(force = TRUE)
+  jax <- reticulate::import("jax")
+  x <- jax$numpy$array(1.0, dtype = jax$numpy$float64)
+  expect_equal(as.character(x$dtype$name), "float64")
+})
