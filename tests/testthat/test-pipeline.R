@@ -267,6 +267,24 @@ test_that("diffiscape errors when obs_data lacks x/y columns", {
 })
 
 
+test_that("diffiscape deprecates solver = 'enzyme' to gradient", {
+  # The deprecation alias fires near the top of diffiscape(), before any
+  # connectivity compute, so we catch the (expected) downstream error after
+  # confirming the deprecation message was emitted. No Python/JAX required.
+  expect_message(
+    tryCatch(
+      diffiscape(obs_data = data.frame(a = 1, b = 2),  # lacks x/y -> errors
+                 rasters  = "dummy",
+                 output_dir = withr::local_tempdir(),
+                 solver = "enzyme",
+                 plot = FALSE),
+      error = function(e) invisible(NULL)
+    ),
+    "deprecated"
+  )
+})
+
+
 test_that("diffiscape returns expected result structure", {
   skip_on_cran()
   skip_if_not_installed("terra")

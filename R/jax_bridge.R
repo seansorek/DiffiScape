@@ -368,8 +368,8 @@ ds_install_jax_deps <- function(method  = "auto",
 #'
 #' Converts a SpatRaster basis stack and observation coordinates into numpy
 #' arrays suitable for the bundled `diffiscape_jax` Python modules.  Mirrors
-#' [.prepare_torch_inputs()] so any downstream R code can treat both backends
-#' symmetrically.
+#' the internal `.prepare_torch_inputs()` helper so any downstream R code can
+#' treat both backends symmetrically.
 #'
 #' @param basis_stack A [terra::SpatRaster] with K covariate layers.
 #' @param obs_points Data.frame with `x, y` columns (projected coords).

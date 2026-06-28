@@ -38,6 +38,6 @@ A list matching the \code{\link[=run_cumulative_current]{run_cumulative_current(
 }
 }
 \description{
-Drop-in replacement for \code{\link[=run_cumulative_current]{run_cumulative_current()}} that uses JAXScape
-instead of the Julia differentiable solver.
+Core connectivity solver that uses JAXScape's differentiable circuit
+solver via the JAX backend.
 }

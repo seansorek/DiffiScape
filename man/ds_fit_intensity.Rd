@@ -15,7 +15,7 @@ ds_fit_intensity(
   residualise = FALSE,
   available_points = NULL,
   available_covariates = NULL,
-  solver = c("surrogate", "enzyme"),
+  solver = c("surrogate", "gradient", "enzyme"),
   link = link_exp(),
   family = NULL
 )
@@ -47,8 +47,9 @@ integration.}
 \code{available_points} locations.  Required when \code{available_points} is
 supplied and the intensity model includes covariates.}
 
-\item{solver}{Character; \code{"surrogate"} (Omniscape) or
-\code{"enzyme"} (differentiable solver).}
+\item{solver}{Character; \code{"surrogate"} (JAX connectivity via
+\code{\link[=ds_jax_connectivity]{ds_jax_connectivity()}}), \code{"gradient"} (JAX differentiable solver),
+or \code{"enzyme"} (deprecated, alias for \code{"gradient"}).}
 
 \item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}
 

@@ -7,7 +7,6 @@
 diffiscape(
   obs_data,
   rasters,
-  julia_home = NULL,
   optimizer_config = default_optimizer_config(),
   intensity_config = default_intensity_config(),
   bounds = NULL,
@@ -23,7 +22,7 @@ diffiscape(
   rescale_basis = TRUE,
   pattern = "*.tif",
   omniscape_settings = list(),
-  solver = c("surrogate", "enzyme")
+  solver = c("surrogate", "gradient", "enzyme")
 )
 }
 \arguments{
@@ -32,8 +31,6 @@ with \verb{x, y} columns.}
 
 \item{rasters}{Either a directory, file paths, or a named list of
 \link[terra:SpatRaster]{terra::SpatRaster} objects.}
-
-\item{julia_home}{Path to the Julia binary (or \code{NULL} for PATH).}
 
 \item{optimizer_config}{Config list (see \code{\link[=default_optimizer_config]{default_optimizer_config()}}).}
 
@@ -74,8 +71,9 @@ every connectivity step (final refit, posterior sampling, and
 diagnostics).  Recognised entries: \code{radius} (default \code{13L}),
 \code{block_size} (default \code{5L}), \code{cleanup} (default \code{TRUE}).}
 
-\item{solver}{Character; \code{"surrogate"} (default, GP surrogate optimiser) or
-\code{"enzyme"} (L-BFGS via differentiable Julia solver).}
+\item{solver}{Character; \code{"surrogate"} (default, GP surrogate optimiser),
+\code{"gradient"} (L-BFGS / Adam via JAX auto-diff), or \code{"enzyme"} (deprecated,
+alias for \code{"gradient"}).}
 }
 \value{
 A list with \code{obs_points}, \code{basis_stack}, \code{opt_result},
@@ -83,6 +81,6 @@ A list with \code{obs_points}, \code{basis_stack}, \code{opt_result},
 }
 \description{
 A single high-level function that chains every step of the pipeline:
-data loading, basis creation, Julia start-up, optimisation, intensity
-fitting, posterior inference, and diagnostics.
+data loading, basis creation, optimisation, intensity fitting,
+posterior inference, and diagnostics.
 }

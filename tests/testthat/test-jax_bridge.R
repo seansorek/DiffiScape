@@ -97,14 +97,24 @@ test_that("ds_jax_connectivity handles NA values in resistance", {
 })
 
 
-test_that("ds_jax_connectivity validates output argument", {
-  skip_on_cran()
-  skip_if_not_installed("reticulate")
-  skip_if_not(reticulate::py_module_available("jaxscape"),
-              "jaxscape not installed in active Python env")
-
-  ds_jax_setup()
-
+test_that("ds_jax_connectivity validates output argument before backend init", {
+  # match.arg() on `output` runs before ds_jax_setup() inside
+  # ds_jax_connectivity(), so an invalid value is rejected without needing a
+  # working JAX backend. This keeps the validation under test in CI, where
+  # jaxscape is not installed.
   r <- terra::rast(nrows = 5, ncols = 5, vals = runif(25, 1, 100))
   expect_error(ds_jax_connectivity(r, output = "invalid"))
+})
+
+
+test_that("JAX backend functions are exported and callable", {
+  exported <- c("ds_jax_setup", "ds_jax_check", "ds_jax_call",
+                "ds_jax_connectivity", "ds_jax_sample_nuts",
+                "ds_jax_sample_advi", "ds_install_jax_deps")
+  for (fn in exported) {
+    expect_true(
+      is.function(getExportedValue("DiffiScape", fn)),
+      info = sprintf("%s should be an exported function", fn)
+    )
+  }
 })

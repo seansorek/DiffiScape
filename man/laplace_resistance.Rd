@@ -23,7 +23,7 @@ laplace_resistance(
 }
 \arguments{
 \item{opt_result}{Result from \code{\link[=optimize_resistance]{optimize_resistance()}} or
-\code{\link[=optimize_resistance_enzyme]{optimize_resistance_enzyme()}}.}
+\code{\link[=optimize_resistance_gradient]{optimize_resistance_gradient()}}.}
 
 \item{basis_stack}{A \link[terra:SpatRaster]{terra::SpatRaster} of basis functions (required
 when \code{refit = TRUE} or when no surrogate is available).}
@@ -31,14 +31,14 @@ when \code{refit = TRUE} or when no surrogate is available).}
 \item{obs_points}{Data.frame with \verb{x, y} (required when \code{refit = TRUE}).}
 
 \item{refit}{Logical; when \code{TRUE} (the default) the Hessian is computed
-on the true PPP log-likelihood via the Julia solver, which requires
+on the true PPP log-likelihood via the JAX solver, which requires
 \code{basis_stack} and \code{obs_points}.  When both of those are \code{NULL} and a
 GP surrogate is available, a warning is emitted and the function falls
 back to the surrogate-mean Hessian automatically so that existing
 single-argument calls remain valid.  Set \code{refit = FALSE} explicitly to
 suppress the warning and force the surrogate path.  Always set to
 \code{TRUE} automatically when \code{opt_result} has no \verb{$surrogate} (i.e., from
-\code{\link[=optimize_resistance_enzyme]{optimize_resistance_enzyme()}}).}
+\code{\link[=optimize_resistance_gradient]{optimize_resistance_gradient()}}).}
 
 \item{step}{Finite-difference step size for Hessian computation.}
 

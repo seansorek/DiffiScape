@@ -2,14 +2,15 @@
 % Please edit documentation in R/connectivity.R
 \name{run_cumulative_current}
 \alias{run_cumulative_current}
-\title{Compute cumulative current (and optionally voltage) using the differentiable
-Julia solver}
+\title{Compute cumulative current (and optionally voltage) using the JAX
+differentiable solver}
 \usage{
 run_cumulative_current(
   resistance,
   radius = 13L,
   block_size = 5L,
-  output = "current"
+  output = "current",
+  parameterization = "resistance"
 )
 }
 \arguments{
@@ -26,9 +27,12 @@ One of \code{"current"} (default), \code{"voltage"}, or \code{"both"}.
 \item \code{"voltage"} returns only cumulative voltage (flow potential).
 \item \code{"both"} returns both.
 }}
+
+\item{parameterization}{Character; \code{"resistance"} (default) or
+\code{"permeability"}.}
 }
 \value{
-A list matching the \code{\link[=run_omniscape]{run_omniscape()}} interface:
+A list with:
 \describe{
 \item{cum_current}{\link[terra:SpatRaster]{terra::SpatRaster} of cumulative current, or \code{NULL}
 when \code{output = "voltage"}.}
@@ -38,7 +42,7 @@ when \code{output = "voltage"}.}
 }
 }
 \description{
-Replaces \code{\link[=run_omniscape]{run_omniscape()}} with a pure-Julia, in-memory solver that
-requires no file I/O.  The solver uses conjugate gradient on a
-matrix-free grid Laplacian with threaded window parallelism.
+In-memory solver that requires no file I/O.  Delegates to
+\code{\link[=ds_jax_connectivity]{ds_jax_connectivity()}} which uses JAXScape's conjugate-gradient
+circuit solver.
 }
