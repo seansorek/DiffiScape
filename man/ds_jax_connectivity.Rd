@@ -25,15 +25,17 @@ ds_jax_connectivity(
 \item{parameterization}{Character; \code{"resistance"} (default) or
 \code{"permeability"}.}
 
-\item{output}{Character; \code{"current"}, \code{"voltage"}, or \code{"both"}.}
+\item{output}{Character; \code{"current"}, \code{"voltage"}, or \code{"both"}.
+Only \code{"current"} is currently supported; \code{"voltage"} and \code{"both"}
+will raise an error until the backend implements them.}
 }
 \value{
 A list matching the \code{\link[=run_cumulative_current]{run_cumulative_current()}} interface:
 \describe{
 \item{cum_current}{A \link[terra:SpatRaster]{terra::SpatRaster} of cumulative current, or
 \code{NULL} if \code{output = "voltage"}.}
-\item{flow_potential}{A \link[terra:SpatRaster]{terra::SpatRaster} of flow potential, or
-\code{NULL} if \code{output = "current"}.}
+\item{flow_potential}{Always \code{NULL} for now (reserved for a future
+voltage mode).}
 \item{elapsed_seconds}{Numeric; wall-clock seconds.}
 }
 }

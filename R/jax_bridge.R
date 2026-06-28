@@ -144,12 +144,14 @@ ds_jax_call <- function(module_name, fn_name, ...) {
 #' @param parameterization Character; `"resistance"` (default) or
 #'   `"permeability"`.
 #' @param output Character; `"current"`, `"voltage"`, or `"both"`.
+#'   Only `"current"` is currently supported; `"voltage"` and `"both"`
+#'   will raise an error until the backend implements them.
 #' @return A list matching the [run_cumulative_current()] interface:
 #'   \describe{
 #'     \item{cum_current}{A [terra::SpatRaster] of cumulative current, or
 #'       `NULL` if `output = "voltage"`.}
-#'     \item{flow_potential}{A [terra::SpatRaster] of flow potential, or
-#'       `NULL` if `output = "current"`.}
+#'     \item{flow_potential}{Always `NULL` for now (reserved for a future
+#'       voltage mode).}
 #'     \item{elapsed_seconds}{Numeric; wall-clock seconds.}
 #'   }
 #' @export
@@ -162,6 +164,11 @@ ds_jax_connectivity <- function(resistance,
 
   output <- match.arg(output, c("current", "voltage", "both"))
 
+  if (output %in% c("voltage", "both")) {
+    stop("output = '", output, "' is not yet implemented; ",
+         "only output = 'current' is supported.", call. = FALSE)
+  }
+
   if (!ds_jax_check()) ds_jax_setup()
 
   np <- reticulate::import("numpy", convert = FALSE)
@@ -171,7 +178,15 @@ ds_jax_connectivity <- function(resistance,
   # terra values -> R matrix (row-major -> column-major)
   R_vec <- as.numeric(terra::values(resistance))
   R_mat <- matrix(R_vec, nrow = nrow_grid, ncol = ncol_grid, byrow = TRUE)
-  R_mat[is.na(R_mat)] <- 0  # nodata -> zero resistance -> zero conductance
+  # nodata -> barrier (minimum conductance).  For resistance mode a very high
+  # value is clamped to the 5000 ceiling by Python; for permeability mode 0 is
+  # clamped up to p_min = 1/5000.  Fully excluding nodata cells from the graph
+  # would require graph surgery (left as future work).
+  if (parameterization == "permeability") {
+    R_mat[is.na(R_mat)] <- 0
+  } else {
+    R_mat[is.na(R_mat)] <- 1e9
+  }
 
   R_np <- np$array(R_mat, dtype = np$float64)
 

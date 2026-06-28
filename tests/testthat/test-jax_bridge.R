@@ -120,6 +120,13 @@ test_that("JAX backend functions are exported and callable", {
 })
 
 
+test_that("ds_jax_connectivity rejects unimplemented output modes without a backend", {
+  r <- terra::rast(nrows = 5, ncols = 5, vals = runif(25, 1, 100))
+  expect_error(ds_jax_connectivity(r, output = "voltage"), "not yet implemented")
+  expect_error(ds_jax_connectivity(r, output = "both"),    "not yet implemented")
+})
+
+
 test_that("JAX backend runs in 64-bit (x64) precision", {
   skip_on_cran()
   skip_if_not_installed("reticulate")
