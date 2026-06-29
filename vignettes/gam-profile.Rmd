@@ -113,7 +113,7 @@ intensity_fit <- ds_fit_intensity(
   opt_result         = opt,
   basis_stack        = basis_stack,
   obs_points         = obs_points,
-  connectivity_settings = list(radius = 13L, block_size = 5L),
+  omniscape_settings = list(radius = 13L, block_size = 5L),
   intensity_config   = icfg_final,
   solver             = "gradient"
 )

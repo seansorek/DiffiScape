@@ -107,7 +107,7 @@ opt <- ds_optimize(basis, pts, config = cfg, solver = "surrogate")  # or "gradie
 fit <- ds_fit_intensity(opt, basis, pts)
 
 # Predict intensity surface
-connectivity  <- run_omniscape(create_resistance_surface(opt$best_params, basis))$cum_current
+connectivity  <- run_cumulative_current(create_resistance_surface(opt$best_params, basis))$cum_current
 intensity_map <- ds_predict(fit, connectivity)
 
 # Posterior inference
@@ -135,8 +135,8 @@ diag <- ds_diagnose(fit, pts, connectivity)
 
 | Function | Description |
 |----------|-------------|
-| `run_jax_connectivity()` | Compute cumulative current flow via JAX (primary) |
-| `run_torch_connectivity()` | Compute cumulative current flow via PyTorch (optional, for torch backend) |
+| `run_cumulative_current()` | Compute cumulative current flow (primary interface) |
+| `ds_jax_connectivity()` | Low-level JAX connectivity via differentiable circuit solver |
 | `extract_connectivity()` | Extract connectivity values at point locations |
 | `standardise_connectivity()` | Log-scale z-scoring of connectivity values |
 | `residualise_connectivity()` | Regress local covariates out of connectivity, isolating network-structure variation |

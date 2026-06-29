@@ -115,7 +115,7 @@ intensity_fit <- ds_fit_intensity(
   opt_result       = opt,
   basis_stack      = basis_stack,
   obs_points       = obs_points,
-  connectivity_settings = list(radius = 25L, block_size = 5L),
+  omniscape_settings = list(radius = 25L, block_size = 5L),
   intensity_config = icfg
 )
 
@@ -146,7 +146,7 @@ post <- ds_posterior(
   basis_stack      = basis_stack,
   obs_points       = obs_points,
   n_draws          = 5000L,
-  connectivity_settings = list(radius = 25L, block_size = 5L),
+  omniscape_settings = list(radius = 25L, block_size = 5L),
   intensity_config      = icfg
 )
 
