@@ -5,3 +5,10 @@
 ^ARCHITECTURE\.md$
 ^CONTRIBUTING\.md$
 ^\.github$
+^benchmarks$
+^docs$
+^bench_.*\.py$
+^benchmark_.*\.py$
+__pycache__
+\.pytest_cache$
+^\.superpowers$

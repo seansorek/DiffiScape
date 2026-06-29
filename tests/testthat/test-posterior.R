@@ -105,7 +105,7 @@ test_that("posterior_summary excludes loglik column from parameters", {
 
 
 # ---------------------------------------------------------------------------
-# laplace_resistance (surrogate path — no Julia required)
+# laplace_resistance (surrogate path)
 # ---------------------------------------------------------------------------
 
 .make_surrogate_opt_result <- function(seed = 1) {

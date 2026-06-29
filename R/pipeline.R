@@ -2,9 +2,9 @@
 # High-level pipeline API
 #
 # One-call wrapper `diffiscape()` + modular step functions:
-#   ds_load_data  ->  ds_create_basis  ->  ds_init_julia  ->
-#   ds_optimize   ->  ds_fit_intensity ->  ds_predict     ->
-#   ds_posterior   ->  ds_diagnose
+#   ds_load_data  ->  ds_create_basis  ->  ds_optimize  ->
+#   ds_fit_intensity  ->  ds_predict   ->  ds_posterior  ->
+#   ds_diagnose
 # ============================================================================
 
 # TODO Refactor these functions to use S3 methods, especially for predict and summary functions.
@@ -93,36 +93,13 @@ ds_create_basis <- function(rasters,
 }
 
 
-#' Initialise the Julia backend
-#'
-#' Wrapper around [ds_julia_setup()] with user-friendly error messages.
-#'
-#' @param julia_home Path to the Julia binary. If `NULL`, uses PATH.
-#' @param force Re-initialise even if already set up.
-#' @return Invisible `TRUE` on success.
-#' @export
-ds_init_julia <- function(julia_home = NULL, force = FALSE) {
-  tryCatch(
-    ds_julia_setup(julia_home = julia_home, force = force),
-    error = function(e) {
-      stop(
-        "Julia initialisation failed.\n",
-        "Make sure Julia >= 1.9 is installed and JuliaConnectoR is available.\n",
-        "Original error: ", conditionMessage(e),
-        call. = FALSE
-      )
-    }
-  )
-  invisible(TRUE)
-}
-
-
 #' Optimise resistance parameters
 #'
 #' Wrapper that dispatches to [optimize_resistance()] (GP surrogate),
-#' [optimize_resistance_enzyme()] (L-BFGS via differentiable Julia
-#' solver), or [run_torch_pipeline()] (PyTorch neural-network resistance)
-#' depending on `solver`.
+#' [optimize_resistance_gradient()] (L-BFGS / Adam via JAX auto-diff,
+#' or Flax neural-network resistance when `model_type` is set), or
+#' [run_torch_pipeline()] (PyTorch neural-network resistance), depending
+#' on `solver`.
 #'
 #' @param basis_stack Basis function stack.
 #' @param obs_points Data.frame with `x, y`.
@@ -130,6 +107,8 @@ ds_init_julia <- function(julia_home = NULL, force = FALSE) {
 #' @param config Optimiser config (see [default_optimizer_config()]).
 #'   For `solver = "torch"`, may contain a `torch` sublist whose entries
 #'   are forwarded to [run_torch_pipeline()].
+#'   For `solver = "gradient"` with a neural `model_type`, may contain
+#'   `model_config` and `optim_config` sublists.
 #' @param intensity_config Intensity config (see [default_intensity_config()]).
 #' @param output_dir Directory for logs.
 #' @param covariates_obs Named list of covariate vectors.
@@ -144,14 +123,19 @@ ds_init_julia <- function(julia_home = NULL, force = FALSE) {
 #'   `available_points` locations.  Required when `available_points` is
 #'   supplied and the intensity model includes covariates.
 #' @param solver Character; `"surrogate"` (GP + Thompson Sampling or
-#'   Expected Improvement, default), `"enzyme"` (L-BFGS via differentiable
-#'   Julia solver), `"torch"` (PyTorch neural-network resistance), or `"irl"`
+#'   Expected Improvement, default), `"gradient"` (L-BFGS / Adam via JAX
+#'   auto-diff), `"enzyme"` (deprecated, alias for `"gradient"`),
+#'   `"torch"` (PyTorch neural-network resistance), or `"irl"`
 #'   (PyTorch value-shaped resistance: a reward network is turned into a
 #'   resistance surface via soft value iteration, then run through the same
-#'   differentiable circuit solver — a convenience alias for `solver = "torch"`
+#'   differentiable circuit solver -- a convenience alias for `solver = "torch"`
 #'   with `model_type = "irl"`).
-#' @return Result from [optimize_resistance()], [optimize_resistance_enzyme()],
-#'   or [run_torch_pipeline()].
+#' @param model_type Character; `"parametric"` (default), `"mlp"`,
+#'   `"conv"`, `"spline_gam"`, or `"irl"`.  When not `"parametric"`,
+#'   the gradient solver dispatches to the Flax neural-network
+#'   optimizer instead of the parametric L-BFGS/Adam path.
+#' @return Result from [optimize_resistance()],
+#'   [optimize_resistance_gradient()], or [run_torch_pipeline()].
 #' @export
 ds_optimize <- function(basis_stack,
                         obs_points,
@@ -164,9 +148,36 @@ ds_optimize <- function(basis_stack,
                         residualise          = FALSE,
                         available_points     = NULL,
                         available_covariates = NULL,
-                        solver               = c("surrogate", "enzyme", "torch", "irl")) {
+                        solver               = c("surrogate", "gradient",
+                                                 "enzyme", "torch", "irl"),
+                        model_type           = "parametric") {
 
   solver <- match.arg(solver)
+
+  # Deprecation aliases
+  if (solver == "enzyme") {
+    message("solver='enzyme' is deprecated. Use solver='gradient' instead.")
+    solver <- "gradient"
+  }
+
+  if (solver == "gradient") {
+    return(optimize_resistance_gradient(
+      basis_stack          = basis_stack,
+      obs_points           = obs_points,
+      bounds               = bounds,
+      config               = config,
+      intensity_config     = intensity_config,
+      output_dir           = output_dir,
+      covariates_obs       = covariates_obs,
+      covariates_rasters   = covariates_rasters,
+      residualise          = residualise,
+      available_points     = available_points,
+      available_covariates = available_covariates,
+      model_type           = model_type,
+      model_config         = config$model_config %||% list(),
+      optim_config         = config$optim_config %||% list()
+    ))
+  }
 
   if (solver == "torch" || solver == "irl") {
     if (!is.null(available_points)) {
@@ -185,10 +196,7 @@ ds_optimize <- function(basis_stack,
     return(do.call(run_torch_pipeline, torch_args))
   }
 
-  opt_fn <- if (solver == "enzyme") optimize_resistance_enzyme
-            else optimize_resistance
-
-  opt_fn(
+  optimize_resistance(
     basis_stack          = basis_stack,
     obs_points           = obs_points,
     bounds               = bounds,
@@ -225,8 +233,9 @@ ds_optimize <- function(basis_stack,
 #' @param available_covariates Named list of covariate vectors at
 #'   `available_points` locations.  Required when `available_points` is
 #'   supplied and the intensity model includes covariates.
-#' @param solver Character; `"surrogate"` (Omniscape) or
-#'   `"enzyme"` (differentiable solver).
+#' @param solver Character; `"surrogate"` (JAX connectivity via
+#'   [ds_jax_connectivity()]), `"gradient"` (JAX differentiable solver),
+#'   or `"enzyme"` (deprecated, alias for `"gradient"`).
 #' @param link A [resistance_link] object (default [link_exp()]).
 #' @param family An [intensity_family] object, or `NULL`.
 #' @return Result from [evaluate_full_model()].
@@ -241,17 +250,22 @@ ds_fit_intensity <- function(opt_result,
                               residualise          = FALSE,
                               available_points     = NULL,
                               available_covariates = NULL,
-                              solver               = c("surrogate", "enzyme"),
+                              solver               = c("surrogate", "gradient", "enzyme"),
                               link                 = link_exp(),
                               family               = NULL) {
 
   solver <- match.arg(solver)
 
   if (solver == "enzyme") {
-    # Use the fast in-memory solver
+    message("solver='enzyme' is deprecated. Use solver='gradient' instead.")
+    solver <- "gradient"
+  }
+
+  if (solver == "gradient") {
+    # Use the JAX differentiable solver
     resistance <- create_resistance_surface(opt_result$best_params, basis_stack,
                                             link = link)
-    omni <- run_cumulative_current(
+    omni <- ds_jax_connectivity(
       resistance,
       radius     = omniscape_settings$radius     %||% 13L,
       block_size = omniscape_settings$block_size  %||% 5L
@@ -466,14 +480,13 @@ ds_diagnose <- function(intensity_fit,
 #' Run the full DiffiScape pipeline
 #'
 #' A single high-level function that chains every step of the pipeline:
-#' data loading, basis creation, Julia start-up, optimisation, intensity
-#' fitting, posterior inference, and diagnostics.
+#' data loading, basis creation, optimisation, intensity fitting,
+#' posterior inference, and diagnostics.
 #'
 #' @param obs_data Either a file path (CSV / shapefile) or a data.frame
 #'   with `x, y` columns.
 #' @param rasters Either a directory, file paths, or a named list of
 #'   [terra::SpatRaster] objects.
-#' @param julia_home Path to the Julia binary (or `NULL` for PATH).
 #' @param optimizer_config Config list (see [default_optimizer_config()]).
 #' @param intensity_config Config list (see [default_intensity_config()]).
 #' @param bounds Parameter bounds (or `NULL` for defaults).
@@ -498,14 +511,14 @@ ds_diagnose <- function(intensity_fit,
 #'   every connectivity step (final refit, posterior sampling, and
 #'   diagnostics).  Recognised entries: `radius` (default `13L`),
 #'   `block_size` (default `5L`), `cleanup` (default `TRUE`).
-#' @param solver Character; `"surrogate"` (default, GP surrogate optimiser) or
-#'   `"enzyme"` (L-BFGS via differentiable Julia solver).
+#' @param solver Character; `"surrogate"` (default, GP surrogate optimiser),
+#'   `"gradient"` (L-BFGS / Adam via JAX auto-diff), or `"enzyme"` (deprecated,
+#'   alias for `"gradient"`).
 #' @return A list with `obs_points`, `basis_stack`, `opt_result`,
 #'   `intensity_fit`, `posterior`, `diagnostics`.
 #' @export
 diffiscape <- function(obs_data,
                        rasters,
-                       julia_home           = NULL,
                        optimizer_config     = default_optimizer_config(),
                        intensity_config     = default_intensity_config(),
                        bounds               = NULL,
@@ -521,9 +534,15 @@ diffiscape <- function(obs_data,
                        rescale_basis        = TRUE,
                        pattern              = "*.tif",
                        omniscape_settings   = list(),
-                       solver               = c("surrogate", "enzyme")) {
+                       solver               = c("surrogate", "gradient", "enzyme")) {
 
   solver <- match.arg(solver)
+
+  # Deprecation alias
+  if (solver == "enzyme") {
+    message("solver='enzyme' is deprecated. Use solver='gradient' instead.")
+    solver <- "gradient"
+  }
 
   # Extract link and family from configs
   res_link   <- optimizer_config$resistance_link %||% link_exp()
@@ -550,12 +569,8 @@ diffiscape <- function(obs_data,
                                  rescale = rescale_basis)
   message(sprintf("  %d basis functions", terra::nlyr(basis_stack)))
 
-  # --- Step 3: Julia ---
-  message("\n[3/7] Initialising Julia backend...")
-  ds_init_julia(julia_home = julia_home)
-
-  # --- Step 4: Optimise ---
-  message("\n[4/7] Optimising resistance parameters...")
+  # --- Step 3: Optimise ---
+  message("\n[3/6] Optimising resistance parameters...")
   opt_result <- ds_optimize(
     basis_stack          = basis_stack,
     obs_points           = obs_points,
@@ -571,8 +586,8 @@ diffiscape <- function(obs_data,
     solver               = solver
   )
 
-  # --- Step 5: Final intensity fit ---
-  message("\n[5/7] Fitting final intensity model...")
+  # --- Step 4: Final intensity fit ---
+  message("\n[4/6] Fitting final intensity model...")
   intensity_fit <- ds_fit_intensity(
     opt_result           = opt_result,
     basis_stack          = basis_stack,
@@ -589,10 +604,10 @@ diffiscape <- function(obs_data,
     family               = int_family
   )
 
-  # --- Step 6: Posterior ---
+  # --- Step 5: Posterior ---
   posterior <- NULL
   if (n_posterior > 0) {
-    message("\n[6/7] Posterior inference...")
+    message("\n[5/6] Posterior inference...")
     posterior <- ds_posterior(
       opt_result           = opt_result,
       basis_stack          = basis_stack,
@@ -609,25 +624,18 @@ diffiscape <- function(obs_data,
       family               = int_family
     )
   } else {
-    message("\n[6/7] Posterior inference... SKIPPED")
+    message("\n[5/6] Posterior inference... SKIPPED")
   }
 
-  # --- Step 7: Diagnostics ---
-  message("\n[7/7] Diagnostics...")
+  # --- Step 6: Diagnostics ---
+  message("\n[6/6] Diagnostics...")
   final_resistance  <- create_resistance_surface(opt_result$best_params,
                                                    basis_stack, link = res_link)
-  omni_def <- list(radius = 13L, block_size = 5L, cleanup = TRUE)
+  omni_def <- list(radius = 13L, block_size = 5L)
   omni_cfg <- utils::modifyList(omni_def, omniscape_settings)
-  if (solver == "enzyme") {
-    final_omni <- run_cumulative_current(final_resistance,
-                                         radius     = omni_cfg$radius,
-                                         block_size = omni_cfg$block_size)
-  } else {
-    final_omni <- run_omniscape(final_resistance,
-                                radius     = omni_cfg$radius,
-                                block_size = omni_cfg$block_size,
-                                cleanup    = omni_cfg$cleanup)
-  }
+  final_omni <- ds_jax_connectivity(final_resistance,
+                                     radius     = omni_cfg$radius,
+                                     block_size = omni_cfg$block_size)
   final_connectivity <- final_omni$cum_current
 
   diagnostics <- ds_diagnose(

@@ -1,21 +1,20 @@
 # Contributing to DiffiScape
 
 Thanks for your interest in DiffiScape. This is a multi-language package: an R
-front end with optional **Julia** (Enzyme) and **Python** (PyTorch) compute
-backends. Read [ARCHITECTURE.md](ARCHITECTURE.md) first — it explains which code
-runs for which `solver`.
+front end with **Python** compute backends (**JAX** for surrogate and gradient solvers,
+**PyTorch** for neural networks). Read [ARCHITECTURE.md](ARCHITECTURE.md) first — it explains
+which code runs for which `solver`.
 
 ## Prerequisites
 
 | Backend | Needed for | Install |
 |---------|-----------|---------|
 | **R ≥ 4.1** | everything | the package itself + `Imports` in `DESCRIPTION` |
-| **Julia ≥ 1.9** | `solver = "surrogate"` and `"enzyme"` | [julialang.org/downloads](https://julialang.org/downloads/); Circuitscape/Omniscape/Enzyme install on first use |
-| **Python ≥ 3.10** | `solver = "torch"` / `"irl"` | `pip install -r inst/python/diff_cs/requirements.txt` |
+| **Python ≥ 3.10** | all solvers (JAX surrogate/gradient and PyTorch) | `pip install -r inst/python/diffiscape_jax/requirements.txt` and optionally `pip install -r inst/python/diff_cs/requirements.txt` |
 
-The Julia and Python stacks are **optional** (`Suggests`): the R package installs
-and its R tests run without them. You only need a backend to work on or test that
-backend.
+Python is **required** (`Suggests` in `DESCRIPTION`): the R package installs without
+it, but you need Python to use any solver. If working on JAX, you need JAX deps; if
+working on PyTorch, you need torch deps.
 
 ## Local setup
 
@@ -27,43 +26,44 @@ devtools::load_all()
 ```
 
 ```bash
-# Python backend (CPU)
+# JAX backend (required for surrogate and gradient solvers)
+pip install -r inst/python/diffiscape_jax/requirements.txt
+# This installs: jax, jaxscape, flax, numpyro, numpy, scipy
+```
+
+```bash
+# PyTorch backend (optional, for torch and irl solvers)
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r inst/python/diff_cs/requirements.txt
 # GPU (optional): also `pip install cupy-cuda12x` — auto-detected at runtime.
 ```
 
-```julia
-# Julia backend
-import Pkg; Pkg.add("Enzyme")   # Circuitscape/Omniscape resolve via the bundled project
-```
-
-From R, initialize a backend once per session before using it:
-`ds_julia_setup()` / `ds_torch_setup()` (or `ds_install_torch_deps()`).
+From R, initialize the JAX backend once per session before using surrogate/gradient:
+`ds_install_jax_deps()` (or let `diffiscape()` do it automatically on first use).
 
 ## Running the tests
 
 | Suite | Command | Location |
 |-------|---------|----------|
 | R | `devtools::test()` or `R CMD check` | `tests/testthat/` |
-| Python | `cd inst/python && pytest tests/` | `inst/python/tests/` |
-| Julia | `julia inst/julia/DiffiScape/test/runtests.jl` | `inst/julia/DiffiScape/test/` |
+| Python JAX | `cd inst/python && pytest diffiscape_jax/tests/` | `inst/python/diffiscape_jax/tests/` |
+| Python PyTorch | `cd inst/python && pytest tests/` | `inst/python/tests/` |
 
-CI runs all three on every PR (`.github/workflows/{r,python,julia,test-coverage}.yml`)
-and uploads coverage to Codecov under the `r` / `python` / `julia` flags
+CI runs all three on every PR (`.github/workflows/{r,python,test-coverage}.yml`)
+and uploads coverage to Codecov under the `r` / `jax` / `torch` flags
 (configured in [codecov.yml](codecov.yml)). Please add or update tests for the
-backend you touch — the Python torch pipeline and Bayesian samplers are the most
-under-covered area, so new tests there are especially welcome.
+backend you touch — the JAX optimize and sample modules, and the PyTorch Bayesian samplers,
+are areas where new tests are especially welcome.
 
 ### Gradient changes
 
 If you modify a differentiable solver or a resistance net, run the matching
 finite-difference check so you don't ship a wrong gradient:
 
-- Python: `verify_circuit_gradient` / `verify_conv_gradient` /
-  `verify_softrl_gradient` / `verify_spline_gradient` in `05_torch_pipeline.py`
+- JAX: `verify_*` helpers in `inst/python/diffiscape_jax/tests/` (test modules).
+- PyTorch: `verify_circuit_gradient` / `verify_conv_gradient` /
+  `verify_spline_gradient` / `verify_irl_gradient` in `05_torch_pipeline.py`
   (exposed in R as `verify_*_gradient`).
-- Julia: `verify_*` helpers in `inst/julia/DiffiScape/test/`.
 
 ## Conventions
 
@@ -71,10 +71,10 @@ finite-difference check so you don't ship a wrong gradient:
   `devtools::document()` and commit the `man/*.Rd` + `NAMESPACE` changes. Internal
   helpers are prefixed `.` (e.g. `.outer_objective`). Follow the existing British
   spelling in user-facing strings (`standardise`, `residualise`).
-- **Python**: keep new numeric defaults in the `DEFAULT_*` constants block at the
+- **JAX**: use `jax.vmap` and `jax.grad` for clean functional code. Avoid mutable state.
+  Keep numeric defaults in module-level constants near the top of files.
+- **PyTorch**: keep new numeric defaults in the `DEFAULT_*` constants block at the
   top of `05_torch_pipeline.py` rather than as scattered literals.
-- **Julia**: keep the differentiable solver Enzyme-compatible (no allocations that
-  break reverse-mode AD).
 
 ## Pull requests
 
@@ -87,6 +87,6 @@ finite-difference check so you don't ship a wrong gradient:
 
 ## Known tech debt
 
-A prioritized backlog of structural cleanups (module split, S3 dispatch, the
-hardcoded-`exp`-link gap, sampler test coverage) is tracked separately. If you hit
-one of these while working, reference it rather than expanding your PR's scope.
+A prioritized backlog of structural cleanups (JAX-PyTorch code consolidation, improved
+test coverage for JAX samplers, S3 dispatch for resistance models) is tracked separately.
+If you hit one of these while working, reference it rather than expanding your PR's scope.

@@ -1,0 +1,140 @@
+{
+  "100x100": {
+    "uniform": {
+      "Torch CPU (pyamg)": {
+        "mean_ms": 10.7,
+        "std_ms": 0.3
+      },
+      "Torch GPU (Jacobi)": {
+        "mean_ms": 4.0,
+        "std_ms": 0.2
+      },
+      "Torch GPU (AMGX)": {
+        "mean_ms": 51.6,
+        "std_ms": 1.1
+      },
+      "JAX CPU (AMJax)": {
+        "mean_ms": 14.6,
+        "std_ms": 0.5
+      },
+      "JAX GPU (AMJax)": {
+        "mean_ms": 74.0,
+        "std_ms": 1.6
+      }
+    },
+    "boundary": {
+      "Torch CPU (pyamg)": {
+        "mean_ms": 24.7,
+        "std_ms": 0.3
+      },
+      "Torch GPU (Jacobi)": {
+        "mean_ms": 136.4,
+        "std_ms": 0.7
+      },
+      "Torch GPU (AMGX)": {
+        "mean_ms": 2412.7,
+        "std_ms": 5.8
+      },
+      "JAX CPU (AMJax)": {
+        "mean_ms": 19.5,
+        "std_ms": 0.2
+      },
+      "JAX GPU (AMJax)": {
+        "mean_ms": 62.9,
+        "std_ms": 33.5
+      }
+    }
+  },
+  "500x500": {
+    "uniform": {
+      "Torch CPU (pyamg)": {
+        "mean_ms": 345.7,
+        "std_ms": 9.3
+      },
+      "Torch GPU (Jacobi)": {
+        "mean_ms": 22.5,
+        "std_ms": 0.4
+      },
+      "Torch GPU (AMGX)": {
+        "mean_ms": 171.4,
+        "std_ms": 3.3
+      },
+      "JAX CPU (AMJax)": {
+        "mean_ms": 341.8,
+        "std_ms": 8.2
+      },
+      "JAX GPU (AMJax)": {
+        "mean_ms": 33.3,
+        "std_ms": 0.5
+      }
+    },
+    "boundary": {
+      "Torch CPU (pyamg)": {
+        "mean_ms": 1043.4,
+        "std_ms": 45.1
+      },
+      "Torch GPU (Jacobi)": {
+        "mean_ms": 621.3,
+        "std_ms": 2.4
+      },
+      "Torch GPU (AMGX)": {
+        "mean_ms": 7218.7,
+        "std_ms": 3.1
+      },
+      "JAX CPU (AMJax)": {
+        "mean_ms": 545.4,
+        "std_ms": 3.4
+      },
+      "JAX GPU (AMJax)": {
+        "mean_ms": 51.1,
+        "std_ms": 1.5
+      }
+    }
+  },
+  "1000x1000": {
+    "uniform": {
+      "Torch CPU (pyamg)": {
+        "mean_ms": 1597.1,
+        "std_ms": 34.2
+      },
+      "Torch GPU (Jacobi)": {
+        "mean_ms": 29.2,
+        "std_ms": 0.5
+      },
+      "Torch GPU (AMGX)": {
+        "mean_ms": 553.2,
+        "std_ms": 6.1
+      },
+      "JAX CPU (AMJax)": {
+        "mean_ms": 1629.6,
+        "std_ms": 35.4
+      },
+      "JAX GPU (AMJax)": {
+        "mean_ms": 130.5,
+        "std_ms": 0.4
+      }
+    },
+    "boundary": {
+      "Torch CPU (pyamg)": {
+        "mean_ms": 3907.6,
+        "std_ms": 62.4
+      },
+      "Torch GPU (Jacobi)": {
+        "mean_ms": 1026.1,
+        "std_ms": 3.3
+      },
+      "Torch GPU (AMGX)": {
+        "mean_ms": 13961.3,
+        "std_ms": 15.2
+      },
+      "JAX CPU (AMJax)": {
+        "mean_ms": 2673.0,
+        "std_ms": 17.0
+      },
+      "JAX GPU (AMJax)": {
+        "mean_ms": 222.0,
+        "std_ms": 0.8
+      }
+    }
+  }
+}
