@@ -10,6 +10,7 @@ __pycache__/
 coverage.xml
 .pytest_cache/
 .superpowers/
+docs/superpowers/
 # DiffiScape pipeline output written by tests/examples
 diffiscape_output/
 tests/testthat/diffiscape_output/
