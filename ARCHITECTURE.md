@@ -96,7 +96,7 @@ contains:
 
 1. **Load** GPS + rasters → `ds_load_data`, `ds_create_basis`.
 2. **Optimize** resistance params → `ds_optimize(solver=...)` → backend computes
-   connectivity (and gradients for enzyme/torch).
+   connectivity (and gradients for JAX/torch).
 3. **Fit intensity** at the MAP params → `ds_fit_intensity` (`resolve_family`).
 4. **Predict / diagnose / posterior** → `ds_predict`, `ds_diagnose`, `ds_posterior`.
 
