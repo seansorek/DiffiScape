@@ -4,9 +4,8 @@
 # Outer loop: LHS + GP surrogate + Thompson Sampling over resistance params
 # Inner loop: MLE for intensity params (via fit_intensity_nb / fit_intensity_gam)
 #
-# Enzyme.jl pathway: stubbed -- will replace the surrogate loop with
-# direct gradient-based optimisation once differentiable connectivity is
-# available.
+# The JAX gradient pathway (optimize_resistance_gradient) provides direct
+# gradient-based optimisation via the JAXScape differentiable solver.
 # ============================================================================
 
 # --------------- Surrogate configuration ------------------------------------
@@ -125,15 +124,18 @@ default_optimizer_config <- function() {
 }
 
 
-# --------------- Enzyme stub ------------------------------------------------
+# --------------- JAX gradient optimiser -------------------------------------
 
-#' Optimise resistance via Enzyme.jl automatic differentiation
-#' Optimise resistance via the differentiable Julia solver
+#' Optimise resistance via JAX automatic differentiation
 #'
-#' Uses L-BFGS-B optimisation with the in-memory circuit solver
-#' ([run_cumulative_current()]) instead of the GP surrogate.  A small
-#' Latin Hypercube warmstart finds a good starting point, then L-BFGS-B
-#' refines using finite-difference gradients through the fast solver.
+#' Uses L-BFGS (via jaxopt) or Adam (via optax) optimisation with
+#' `jax.grad` through the JAXScape differentiable circuit solver.
+#' This replaces the former Julia/Enzyme.jl optimizer.
+#'
+#' When `model_type` is not `"parametric"`, dispatches to the Flax
+#' neural-network optimizer ([ds_jax_neural_optimize()]) instead of
+#' the parametric optimizer.  Recognised neural model types are
+#' `"mlp"`, `"conv"`, `"spline_gam"`, and `"irl"`.
 #'
 #' @param basis_stack A [terra::SpatRaster] of basis functions.
 #' @param obs_points Data.frame with `x, y` columns.
@@ -146,209 +148,287 @@ default_optimizer_config <- function() {
 #' @param covariates_rasters Named list of [terra::SpatRaster] covariates.
 #' @param residualise Logical; residualise connectivity.
 #' @param available_points Optional data.frame with `x, y` columns of
-#'   available/background locations for selection function families.  When
-#'   supplied, bypasses raster quadrature and uses these locations with unit
-#'   weights instead.  `NULL` (default) uses standard area-weighted raster
-#'   integration.
+#'   available/background locations for selection function families.
 #' @param available_covariates Named list of covariate vectors at
-#'   `available_points` locations.  Required when `available_points` is
-#'   supplied and the intensity model includes covariates.
+#'   `available_points` locations.
+#' @param method Character; `"lbfgs"` (default) or `"adam"`.
+#'   Ignored when `model_type` is not `"parametric"`.
+#' @param parameterization Character; `"resistance"` (default) or
+#'   `"permeability"`.
+#' @param model_type Character; `"parametric"` (default, existing
+#'   L-BFGS / Adam path), `"mlp"`, `"conv"`, `"spline_gam"`, or
+#'   `"irl"` (Flax neural-network resistance models).
+#' @param model_config Named list of model-specific parameters
+#'   forwarded to the Flax module constructor (ignored for
+#'   `model_type = "parametric"`).
+#' @param optim_config Named list with `lr`, `n_epochs`, `patience`
+#'   for the neural optimizer (ignored for `model_type = "parametric"`).
 #' @return A list with `best_params`, `best_loglik`, `bounds`,
 #'   `n_evaluations`, `distribution`, `convergence`.
 #' @export
-optimize_resistance_enzyme <- function(basis_stack,
-                                       obs_points,
-                                       bounds               = NULL,
-                                       config               = default_optimizer_config(),
-                                       intensity_config     = default_intensity_config(),
-                                       output_dir           = tempdir(),
-                                       covariates_obs       = NULL,
-                                       covariates_rasters   = NULL,
-                                       residualise          = FALSE,
-                                       available_points     = NULL,
-                                       available_covariates = NULL) {
+optimize_resistance_gradient <- function(basis_stack,
+                                         obs_points,
+                                         bounds               = NULL,
+                                         config               = default_optimizer_config(),
+                                         intensity_config     = default_intensity_config(),
+                                         output_dir           = tempdir(),
+                                         covariates_obs       = NULL,
+                                         covariates_rasters   = NULL,
+                                         residualise          = FALSE,
+                                         available_points     = NULL,
+                                         available_covariates = NULL,
+                                         method               = "lbfgs",
+                                         parameterization     = "resistance",
+                                         model_type           = "parametric",
+                                         model_config         = list(),
+                                         optim_config         = list()) {
 
-  set.seed(config$seed)
+  model_type <- match.arg(model_type,
+    c("parametric", "mlp", "conv", "spline_gam", "irl"))
 
-  n_basis <- terra::nlyr(basis_stack)
-  if (is.null(bounds)) bounds <- get_default_bounds(n_basis)
-
-  if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
-  log_file <- file.path(output_dir, "optimization_log.csv")
-  if (file.exists(log_file)) unlink(log_file)
-
-  distribution <- config$distribution %||% "negbin"
-  res_link     <- config$resistance_link %||% link_exp()
-  int_family   <- config$family  # may be NULL (uses default for distribution)
-  nrow_grid    <- terra::nrow(basis_stack)
-  ncol_grid    <- terra::ncol(basis_stack)
-  basis_values <- terra::values(basis_stack)
-  template     <- basis_stack[[1]]
-
-  solver_radius <- config$omniscape$radius     %||% 13L
-  solver_block  <- config$omniscape$block_size  %||% 5L
-
-  eval_counter      <- new.env(parent = emptyenv())
-  eval_counter$n    <- 0L
-  eval_counter$best <- Inf
-
-  # ---- objective: theta -> negative profiled log-likelihood ----------------
-  obj_fn <- function(theta) {
-
-    eval_counter$n <- eval_counter$n + 1L
-
-    tryCatch({
-      # Resistance
-      R_vec <- quick_resistance(theta, basis_values, link = res_link)
-      R_mat <- matrix(R_vec, nrow = nrow_grid, ncol = ncol_grid,
-                      byrow = TRUE)
-      R_mat[is.na(R_mat)] <- 0
-
-      # Julia solver
-      cum_mat <- ds_julia_call("DiffiScape.cumulative_current",
-                                R_mat,
-                                as.integer(solver_radius),
-                                as.integer(solver_block))
-
-      # Back to SpatRaster
-      cum_vec <- as.vector(t(cum_mat))
-      cum_rast <- terra::rast(template)
-      terra::values(cum_rast) <- cum_vec
-      names(cum_rast) <- "cum_current"
-
-      # Extract at obs
-      conn_obs <- extract_connectivity(cum_rast, obs_points)
-      valid    <- !is.na(conn_obs)
-      if (sum(valid) < 3) {
-        message(sprintf("  Eval %d: too few valid obs", eval_counter$n))
-        return(1e10)
-      }
-
-      obs_pts_v  <- obs_points[valid, , drop = FALSE]
-      conn_obs_v <- conn_obs[valid]
-      cov_obs_v  <- if (!is.null(covariates_obs))
-        lapply(covariates_obs, function(v) v[valid]) else NULL
-
-      # Step 3b: extract connectivity at available locations (selection mode)
-      avail_conn_v <- NULL
-      avail_cov_v  <- available_covariates
-      if (!is.null(available_points)) {
-        avail_conn_raw <- extract_connectivity(cum_rast, available_points)
-        avail_valid    <- !is.na(avail_conn_raw)
-        avail_conn_v   <- avail_conn_raw[avail_valid]
-        if (!is.null(available_covariates)) {
-          avail_cov_v <- lapply(available_covariates, function(v) v[avail_valid])
-        }
-      }
-
-      # Inner-loop intensity fit
-      fit_fn <- switch(distribution,
-        negbin = fit_intensity_nb,
-        gam    = fit_intensity_gam,
-        stop("Unknown distribution: ", distribution, call. = FALSE)
-      )
-
-      int_args <- list(
-        connectivity_at_obs  = conn_obs_v,
-        connectivity_raster  = cum_rast,
-        obs_coords           = obs_pts_v,
-        covariates_obs       = cov_obs_v,
-        covariates_rasters   = covariates_rasters,
-        residualise          = residualise,
-        config               = intensity_config
-      )
-      if (distribution != "gam" && !is.null(int_family))
-        int_args$family <- int_family
-      if (!is.null(avail_conn_v)) {
-        int_args$available_connectivity <- avail_conn_v
-        int_args$available_covariates   <- avail_cov_v
-      }
-      int_fit <- do.call(fit_fn, int_args)
-
-      neg_ll <- -int_fit$loglik
-      if (!is.finite(neg_ll)) neg_ll <- 1e10
-
-      if (neg_ll < eval_counter$best) eval_counter$best <- neg_ll
-
-      # Log
-      entry <- data.frame(eval = eval_counter$n, r_0 = theta[1])
-      for (k in seq_len(n_basis)) entry[[paste0("z_", k)]] <- theta[k + 1]
-      entry$alpha     <- int_fit$estimates["alpha"] %||% NA_real_
-      entry$gamma     <- int_fit$estimates["gamma"] %||% NA_real_
-      entry$loglik    <- int_fit$loglik
-      entry$converged <- int_fit$convergence == 0
-
-      exists_ <- file.exists(log_file)
-      utils::write.table(entry, log_file, append = exists_,
-                         row.names = FALSE, col.names = !exists_, sep = ",")
-
-      message(sprintf("  Eval %d: loglik = %.2f  (best = %.2f)",
-                      eval_counter$n, int_fit$loglik, -eval_counter$best))
-      neg_ll
-
-    }, error = function(e) {
-      message(sprintf("  Eval %d ERROR: %s", eval_counter$n,
-                       conditionMessage(e)))
-      1e10
-    })
+  # --- Neural path: dispatch to Flax optimizer ----------------------------
+  if (model_type != "parametric") {
+    return(.optimize_neural(
+      basis_stack      = basis_stack,
+      obs_points       = obs_points,
+      config           = config,
+      output_dir       = output_dir,
+      parameterization = parameterization,
+      model_type       = model_type,
+      model_config     = model_config,
+      optim_config     = optim_config
+    ))
   }
 
-  # ---- bounds --------------------------------------------------------------
-  pnames  <- names(bounds)
+  method <- match.arg(method, c("lbfgs", "adam"))
+
+  if (!requireNamespace("reticulate", quietly = TRUE)) {
+    stop("Package 'reticulate' is required for the JAX gradient solver. ",
+         "Install with install.packages('reticulate').",
+         call. = FALSE)
+  }
+
+  # --- Data preparation (same pattern as .prepare_torch_inputs) ---------------
+  np <- reticulate::import("numpy", convert = FALSE)
+
+  n_basis   <- terra::nlyr(basis_stack)
+  n_rows    <- terra::nrow(basis_stack)
+  n_cols    <- terra::ncol(basis_stack)
+  cell_area <- prod(terra::res(basis_stack))
+
+  if (is.null(bounds)) bounds <- get_default_bounds(n_basis)
+  if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+  basis_matrix <- as.matrix(basis_stack)
+  valid_mask   <- stats::complete.cases(basis_matrix)
+  basis_values <- basis_matrix[valid_mask, , drop = FALSE]
+
+  # Tabulate observation counts per valid cell
+  cell_indices <- terra::cellFromXY(
+    basis_stack,
+    cbind(obs_points$x, obs_points$y)
+  )
+  valid_obs <- !is.na(cell_indices) & valid_mask[cell_indices]
+  if (any(!valid_obs)) {
+    message(sprintf("  Dropped %d obs outside valid cells", sum(!valid_obs)))
+  }
+  cell_indices <- cell_indices[valid_obs]
+
+  obs_table        <- table(cell_indices)
+  obs_counts_full  <- rep(0L, terra::ncell(basis_stack))
+  obs_counts_full[as.integer(names(obs_table))] <- as.integer(obs_table)
+  obs_counts_valid <- obs_counts_full[valid_mask]
+
+  basis_np <- np$array(basis_values, dtype = np$float64)
+  obs_np   <- np$array(as.double(obs_counts_valid), dtype = np$float64)
+  vmask_np <- np$array(valid_mask, dtype = np$bool_)
+
+  # Initial parameter vector: midpoints of bounds
   lower_b <- vapply(bounds, `[`, numeric(1), 1)
   upper_b <- vapply(bounds, `[`, numeric(1), 2)
+  init_params <- (lower_b + upper_b) / 2
 
-  # ---- Phase 1: LHS warmstart ---------------------------------------------
-  n_warmstart <- min(config$n_init %||% 10L, 10L)
-  message("\n", strrep("=", 60))
-  message(sprintf("PHASE 1: Warmstart (%d LHS evaluations)", n_warmstart))
-  message(strrep("=", 60))
+  # Solver settings
+  solver_radius <- config$omniscape$radius     %||% 13L
+  solver_block  <- config$omniscape$block_size  %||% 5L
+  seed          <- config$seed                  %||% 42L
+  n_epochs      <- config$n_iter                %||% 300L
+  patience      <- 30L
 
-  warmstart <- .create_lhs_design(n_warmstart, bounds)
-  best_y     <- Inf
-  best_theta <- (lower_b + upper_b) / 2
-
-  for (i in seq_len(n_warmstart)) {
-    theta <- as.numeric(warmstart[i, ])
-    y     <- obj_fn(theta)
-    if (y < best_y) {
-      best_y     <- y
-      best_theta <- theta
-    }
+  # Map resistance_link to a link_fn string for Python
+  res_link <- config$resistance_link %||% link_exp()
+  link_fn  <- if (inherits(res_link, "resistance_link")) {
+    res_link$name
+  } else {
+    "exp"
   }
 
-  # ---- Phase 2: L-BFGS-B --------------------------------------------------
-  n_lbfgs <- config$n_iter %||% 50L
+  distribution <- config$distribution %||% "negbin"
+
   message("\n", strrep("=", 60))
-  message(sprintf("PHASE 2: L-BFGS-B (max %d iterations)", n_lbfgs))
+  message(sprintf("JAX gradient optimiser (%s, %s parameterization)",
+                  method, parameterization))
+  message(sprintf("  Grid: %d x %d (%d valid cells)",
+                  n_rows, n_cols, sum(valid_mask)))
+  message(sprintf("  Observations: %d GPS fixes",
+                  sum(obs_counts_valid)))
   message(strrep("=", 60))
 
-  opt <- stats::optim(
-    par     = best_theta,
-    fn      = obj_fn,
-    method  = "L-BFGS-B",
-    lower   = lower_b,
-    upper   = upper_b,
-    control = list(maxit = n_lbfgs, trace = 0)
+  # --- Call Python optimiser via jax_bridge -----------------------------------
+  result <- ds_jax_optimize(
+    basis_np      = basis_np,
+    obs_np        = obs_np,
+    valid_mask_np = vmask_np,
+    n_rows        = n_rows,
+    n_cols        = n_cols,
+    cell_area     = cell_area,
+    init_params   = init_params,
+    link_fn            = link_fn,
+    radius             = as.integer(solver_radius),
+    block_size         = as.integer(solver_block),
+    parameterization   = parameterization,
+    method             = method,
+    lr                 = 0.01,
+    n_epochs           = as.integer(n_epochs),
+    patience           = as.integer(patience),
+    seed               = as.integer(seed),
+    verbose            = TRUE
   )
 
-  best_params <- params_vector_to_list(opt$par, n_basis)
+  # --- Reshape result to standard optimizer return format --------------------
+  best_params <- params_vector_to_list(as.numeric(result$best_params), n_basis)
 
-  message(sprintf("\nOptimisation complete: %d evaluations, loglik = %.2f",
-                  eval_counter$n, -opt$value))
+  convergence <- if (isTRUE(result$converged)) 0L else 1L
+
+  message(sprintf(
+    "\nOptimisation complete: %d iterations, loglik = %.2f (%.1f s)",
+    result$n_epochs_run, result$best_loglik, result$elapsed
+  ))
 
   list(
     best_params   = best_params,
-    best_loglik   = -opt$value,
+    best_loglik   = result$best_loglik,
     X_evaluated   = NULL,
     y_evaluated   = NULL,
     surrogate     = NULL,
     bounds        = bounds,
-    n_evaluations = eval_counter$n,
+    n_evaluations = result$n_epochs_run,
     distribution  = distribution,
-    convergence   = opt$convergence
+    convergence   = convergence
   )
 }
+
+
+# --------------- Neural optimizer helper ------------------------------------
+
+#' Internal dispatch to Flax neural-network resistance optimization
+#'
+#' Prepares inputs and calls [ds_jax_neural_optimize()], then reshapes
+#' the result to match the return format of [optimize_resistance_gradient()].
+#'
+#' @keywords internal
+.optimize_neural <- function(basis_stack,
+                              obs_points,
+                              config           = default_optimizer_config(),
+                              output_dir       = tempdir(),
+                              parameterization = "resistance",
+                              model_type       = "mlp",
+                              model_config     = list(),
+                              optim_config     = list()) {
+
+  if (!requireNamespace("reticulate", quietly = TRUE)) {
+    stop("Package 'reticulate' is required for neural optimization. ",
+         "Install with install.packages('reticulate').",
+         call. = FALSE)
+  }
+
+  np <- reticulate::import("numpy", convert = FALSE)
+
+  n_basis   <- terra::nlyr(basis_stack)
+  n_rows    <- terra::nrow(basis_stack)
+  n_cols    <- terra::ncol(basis_stack)
+  cell_area <- prod(terra::res(basis_stack))
+
+  if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
+
+  basis_matrix <- as.matrix(basis_stack)
+  valid_mask   <- stats::complete.cases(basis_matrix)
+  basis_values <- basis_matrix[valid_mask, , drop = FALSE]
+
+  # Tabulate observation counts per valid cell
+  cell_indices <- terra::cellFromXY(
+    basis_stack,
+    cbind(obs_points$x, obs_points$y)
+  )
+  valid_obs <- !is.na(cell_indices) & valid_mask[cell_indices]
+  if (any(!valid_obs)) {
+    message(sprintf("  Dropped %d obs outside valid cells", sum(!valid_obs)))
+  }
+  cell_indices <- cell_indices[valid_obs]
+
+  obs_table        <- table(cell_indices)
+  obs_counts_full  <- rep(0L, terra::ncell(basis_stack))
+  obs_counts_full[as.integer(names(obs_table))] <- as.integer(obs_table)
+  obs_counts_valid <- obs_counts_full[valid_mask]
+
+  basis_np <- np$array(basis_values, dtype = np$float64)
+  obs_np   <- np$array(as.double(obs_counts_valid), dtype = np$float64)
+  vmask_np <- np$array(valid_mask, dtype = np$bool_)
+
+  seed <- config$seed %||% 42L
+
+  # Fill optim_config defaults from config if not already set
+  if (is.null(optim_config$n_epochs)) {
+    optim_config$n_epochs <- as.integer(config$n_iter %||% 300L)
+  }
+
+  distribution <- config$distribution %||% "negbin"
+
+  message("\n", strrep("=", 60))
+  message(sprintf("JAX neural optimizer (%s, %s parameterization)",
+                  model_type, parameterization))
+  message(sprintf("  Grid: %d x %d (%d valid cells)",
+                  n_rows, n_cols, sum(valid_mask)))
+  message(sprintf("  Observations: %d GPS fixes", sum(obs_counts_valid)))
+  message(strrep("=", 60))
+
+  result <- ds_jax_neural_optimize(
+    basis_np      = basis_np,
+    obs_np        = obs_np,
+    valid_mask_np = vmask_np,
+    n_rows        = n_rows,
+    n_cols        = n_cols,
+    cell_area     = cell_area,
+    model_type    = model_type,
+    model_config  = model_config,
+    optim_config  = optim_config,
+    parameterization = parameterization,
+    seed             = as.integer(seed),
+    verbose          = TRUE
+  )
+
+  message(sprintf(
+    "\nNeural optimisation complete: %d epochs, loglik = %.2f (%.1f s)",
+    result$n_epochs_run, result$best_loglik, result$elapsed
+  ))
+
+  list(
+    best_params   = NULL,
+    best_loglik   = result$best_loglik,
+    resistance    = result$resistance,
+    X_evaluated   = NULL,
+    y_evaluated   = NULL,
+    surrogate     = NULL,
+    bounds        = NULL,
+    n_evaluations = result$n_epochs_run,
+    distribution  = distribution,
+    convergence   = 0L,
+    loss_history  = result$loss_history,
+    model_type    = result$model_type
+  )
+}
+
+
 
 
 # --------------- Full-model evaluation function -----------------------------
@@ -405,15 +485,14 @@ evaluate_full_model <- function(resistance_params,
                                           link = link)
 
   # Step 2: connectivity
-  if (verbose) message("  Running Omniscape...")
-  omni_def <- list(radius = 13L, block_size = 5L, cleanup = TRUE)
+  if (verbose) message("  Running connectivity solver...")
+  omni_def <- list(radius = 13L, block_size = 5L)
   omni_set <- utils::modifyList(omni_def, omniscape_settings)
 
-  omni <- run_omniscape(
+  omni <- ds_jax_connectivity(
     resistance,
     radius     = omni_set$radius,
-    block_size = omni_set$block_size,
-    cleanup    = omni_set$cleanup
+    block_size = omni_set$block_size
   )
   connectivity <- omni$cum_current
 

@@ -9,3 +9,11 @@ __pycache__/
 .coverage.*
 coverage.xml
 .pytest_cache/
+.superpowers/
+docs/superpowers/
+# DiffiScape pipeline output written by tests/examples
+diffiscape_output/
+tests/testthat/diffiscape_output/
+# R CMD check output
+check_out/
+*.Rcheck/

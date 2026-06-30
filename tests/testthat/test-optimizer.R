@@ -11,13 +11,6 @@ test_that("default_optimizer_config has required fields", {
 })
 
 
-test_that("optimize_resistance_enzyme errors on NULL inputs", {
-  expect_error(
-    optimize_resistance_enzyme(NULL, NULL)
-  )
-})
-
-
 test_that(".create_lhs_design generates correct dimensions", {
   bounds <- list(r_0 = c(-2, 2), z_1 = c(-3, 3))
   design <- .create_lhs_design(10, bounds)

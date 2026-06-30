@@ -45,10 +45,10 @@ obs_points  <- readRDS(obs_data_path)
 basis_stack <- ds_create_basis(nlcd_dir, pattern = "*.tif", rescale = TRUE)
 ```
 
-## Initialise Julia
+## Initialise JAX
 
-```{r init-julia}
-ds_init_julia()
+```{r init-jax}
+ds_jax_setup()
 ```
 
 ## Configure
@@ -63,7 +63,7 @@ The key intensity config settings for the profile-likelihood approach:
 ```{r config}
 cfg <- default_optimizer_config()
 cfg$distribution  <- "gam"
-cfg$omniscape     <- list(radius = 13L, block_size = 5L, cleanup = TRUE)
+cfg$connectivity  <- list(radius = 13L, block_size = 5L)
 
 icfg <- default_intensity_config()
 icfg$covariate_type      <- "smooth"
@@ -80,7 +80,7 @@ opt <- ds_optimize(
   config           = cfg,
   intensity_config = icfg,
   output_dir       = output_dir,
-  solver           = "enzyme"   # gradient-based via Enzyme.jl
+  solver           = "gradient"   # gradient-based via JAX
 )
 
 cat("Best profile log-likelihood:", opt$best_loglik, "\n")
@@ -91,9 +91,9 @@ print(opt$best_params)
 ## Final connectivity
 
 ```{r connectivity}
-resistance  <- create_resistance_surface(opt$best_params, basis_stack)
-omni        <- run_omniscape(resistance, radius = 13L, block_size = 5L, cleanup = TRUE)
-connectivity <- omni$cum_current
+resistance   <- create_resistance_surface(opt$best_params, basis_stack)
+jax_result   <- ds_jax_connectivity(resistance, radius = 13L, block_size = 5L)
+connectivity <- jax_result$cum_current
 
 terra::writeRaster(resistance,   file.path(output_dir, "optimized_resistance.tif"),  overwrite = TRUE)
 terra::writeRaster(connectivity, file.path(output_dir, "optimized_connectivity.tif"), overwrite = TRUE)
@@ -115,7 +115,7 @@ intensity_fit <- ds_fit_intensity(
   obs_points         = obs_points,
   omniscape_settings = list(radius = 13L, block_size = 5L),
   intensity_config   = icfg_final,
-  solver             = "enzyme"
+  solver             = "gradient"
 )
 
 cat("Final GAM log-likelihood:", intensity_fit$loglik, "\n")

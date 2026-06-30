@@ -2,7 +2,7 @@
 # PyTorch bridge via reticulate
 #
 # Loads the bundled diff_cs/05_torch_pipeline.py module and exposes a thin
-# call interface analogous to the JuliaConnectoR bridge in julia_bridge.R.
+# call interface via reticulate.
 # ============================================================================
 
 #' Initialise the PyTorch backend for DiffiScape

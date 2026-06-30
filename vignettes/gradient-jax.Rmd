@@ -1,8 +1,8 @@
 ---
-title: "Gradient-Based Optimization via Enzyme.jl"
+title: "Gradient-Based Optimization via JAX"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Gradient-Based Optimization via Enzyme.jl}
+  %\VignetteIndexEntry{Gradient-Based Optimization via JAX}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -12,9 +12,9 @@ knitr::opts_chunk$set(echo = TRUE, eval = FALSE, message = FALSE, warning = FALS
 ```
 
 This vignette demonstrates the gradient-based pipeline: L-BFGS optimization of
-resistance parameters using exact gradients computed via Enzyme.jl (Julia
-automatic differentiation) through a differentiable circuit solver. Compared to
-the surrogate approach in vignette 06, this pipeline converges in minutes rather
+resistance parameters using exact gradients computed via JAX (JAX automatic
+differentiation) through a differentiable circuit solver. Compared to the
+surrogate approach in vignette 06, this pipeline converges in minutes rather
 than hours, but is sensitive to initialisation and local optima.
 
 Internally DiffiScape uses a logit reparameterization of the bounded resistance
@@ -39,22 +39,22 @@ obs_points  <- readRDS(obs_data_path)
 basis_stack <- ds_create_basis(nlcd_dir, pattern = "*.tif", rescale = TRUE)
 ```
 
-## Initialise Julia
+## Initialise JAX
 
-```{r init-julia}
-ds_init_julia()
+```{r init-jax}
+ds_jax_setup()
 ```
 
 ## Configure
 
 The negative binomial intensity model is more robust than Poisson when counts
-are overdispersed. Connectivity is computed by the differentiable local circuit
-solver (same solver as Omniscape but with Enzyme.jl gradients).
+are overdispersed. Connectivity is computed by the JAXScape circuit-theory
+solver with JAX automatic differentiation gradients.
 
 ```{r config}
 cfg <- default_optimizer_config()
 cfg$distribution  <- "negbin"
-cfg$omniscape     <- list(radius = 15L, block_size = 5L, cleanup = TRUE)
+cfg$connectivity  <- list(radius = 15L, block_size = 5L)
 
 icfg <- default_intensity_config()
 ```
@@ -71,7 +71,7 @@ theta_init <- surrogate_summary$resistance_params   # named numeric vector
 
 ## Optimise
 
-`solver = "enzyme"` selects the Enzyme.jl gradient backend. The optimiser
+`solver = "gradient"` selects the JAX gradient backend. The optimiser
 applies L-BFGS with logit reparameterization and restarts if connectivity
 standardization constants shift during the run.
 
@@ -82,7 +82,7 @@ opt <- ds_optimize(
   config           = cfg,
   intensity_config = icfg,
   output_dir       = output_dir,
-  solver           = "enzyme"
+  solver           = "gradient"
 )
 
 cat("Best log-likelihood:", opt$best_loglik, "\n")
@@ -93,9 +93,9 @@ print(opt$best_params)
 ## Final connectivity and intensity
 
 ```{r connectivity}
-resistance  <- create_resistance_surface(opt$best_params, basis_stack)
-omni        <- run_omniscape(resistance, radius = 15L, block_size = 5L, cleanup = TRUE)
-connectivity <- omni$cum_current
+resistance   <- create_resistance_surface(opt$best_params, basis_stack)
+jax_result   <- ds_jax_connectivity(resistance, radius = 15L, block_size = 5L)
+connectivity <- jax_result$cum_current
 
 terra::writeRaster(resistance,   file.path(output_dir, "optimized_resistance.tif"),  overwrite = TRUE)
 terra::writeRaster(connectivity, file.path(output_dir, "optimized_connectivity.tif"), overwrite = TRUE)
@@ -107,8 +107,8 @@ intensity_fit <- ds_fit_intensity(
   basis_stack        = basis_stack,
   obs_points         = obs_points,
   omniscape_settings = list(radius = 15L, block_size = 5L),
-  intensity_config   = icfg,
-  solver             = "enzyme"
+  intensity_config      = icfg,
+  solver                = "gradient"
 )
 
 cat("Intensity log-likelihood:", intensity_fit$loglik, "\n")

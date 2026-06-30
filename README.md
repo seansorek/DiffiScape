@@ -2,13 +2,13 @@
 
 **Landscape Connectivity Optimization — a modular R framework for resistance and intensity model experimentation**
 
-DiffiScape is an R package designed as a flexible glue layer for fitting landscape resistance surfaces against animal movement data. It bridges circuit-theory connectivity computation ([Omniscape.jl](https://github.com/circuitscape/Omniscape.jl) / [Circuitscape.jl](https://github.com/circuitscape/Circuitscape.jl)) with a suite of swappable likelihood models, making it easy to experiment with different resistance and intensity model combinations. Both point process likelihoods (for occurrence/count data) and selection function likelihoods (RSF, RSP, and conditional logistic for iSSA/SSA) are supported, with the architecture designed to accommodate additional movement data likelihoods in the future.
+DiffiScape is an R package designed as a flexible glue layer for fitting landscape resistance surfaces against animal movement data. It bridges circuit-theory connectivity computation via JAX (primary) or PyTorch with a suite of swappable likelihood models, making it easy to experiment with different resistance and intensity model combinations. Both point process likelihoods (for occurrence/count data) and selection function likelihoods (RSF, RSP, and conditional logistic for iSSA/SSA) are supported, with the architecture designed to accommodate additional movement data likelihoods in the future.
 
-Users supply environmental rasters and GPS locations (or paired used-available locations for selection models); DiffiScape estimates resistance parameters that best explain the observed spatial distribution of animal occurrences or movement choices. The package ships two optimization back-ends and a full neural-network resistance pipeline:
+Users supply environmental rasters and GPS locations (or paired used-available locations for selection models); DiffiScape estimates resistance parameters that best explain the observed spatial distribution of animal occurrences or movement choices. The package ships three optimization modes:
 
-- **Surrogate BO** — Latin Hypercube Sampling → GP emulator → Thompson Sampling or Expected Improvement (selectable)
-- **Enzyme.jl L-BFGS** — gradient-based optimization via automatic differentiation in Julia
-- **PyTorch pipeline** — MLP / convolutional / spline-GAM / IRL value-shaped resistance networks trained with a differentiable circuit solver, plus MAP optimization and full Bayesian posterior sampling (Langevin/MALA, NUTS, ADVI)
+- **Surrogate BO** — Latin Hypercube Sampling → GP emulator → Thompson Sampling or Expected Improvement (selectable) via JAX connectivity
+- **Gradient descent** — parametric or neural network resistance via automatic differentiation in JAX
+- **PyTorch neural networks** — MLP / convolutional / spline-GAM / IRL value-shaped resistance networks trained with a differentiable circuit solver, plus MAP optimization and full Bayesian posterior sampling (Langevin/MALA, NUTS, ADVI)
 
 ---
 
@@ -21,15 +21,19 @@ Users supply environmental rasters and GPS locations (or paired used-available l
 remotes::install_github("seansorek/DiffiScape")
 ```
 
-### Julia Requirements
+### Python Requirements
 
-DiffiScape calls Julia internally via [`JuliaConnectoR`](https://cran.r-project.org/package=JuliaConnectoR). Before using the package you need:
+DiffiScape now requires Python for all solver modes (surrogate, gradient, torch/irl). Before using the package you need:
 
-- **Julia ≥ 1.9** — [Download Julia](https://julialang.org/downloads/)
-- **Circuitscape.jl ≥ 5.0** and **Omniscape.jl ≥ 0.6** — installed automatically on first use via the bundled Julia project
+- **Python ≥ 3.10** — [Download Python](https://www.python.org/downloads/) or use a conda distribution
+- **JAX, JAXScape, Flax, NumPyro** — installed automatically on first use, or install manually via `pip install jax jaxscape flax numpyro`
+- **PyTorch** (optional) — required only for `solver = "torch"` or `solver = "irl"` modes
 
 ```r
-install.packages("JuliaConnectoR")
+# R will use reticulate to manage your Python environment
+# Install minimal deps on first use, or manually:
+ds_install_jax_deps()      # JAX+JAXScape (recommended)
+ds_install_torch_deps()    # Optional: PyTorch for neural network backend
 ```
 
 ---
@@ -39,8 +43,8 @@ install.packages("JuliaConnectoR")
 ```r
 library(DiffiScape)
 
-# Run the full pipeline in one call
-# Diffiscape does not handle raster preprocessing. Make sure everything is aligned!
+# Run the full pipeline in one call (uses JAX surrogate solver by default)
+# DiffiScape does not handle raster preprocessing. Make sure everything is aligned!
 result <- diffiscape(
   obs_data  = "gps_locations.csv",   # CSV with x, y columns (or shapefile)
   rasters   = "env_rasters/",        # Directory of .tif environmental layers
@@ -51,6 +55,10 @@ result <- diffiscape(
 result$opt_result$best_loglik     # Best log-likelihood
 result$opt_result$best_params     # Optimal resistance parameters
 result$posterior$summary          # Posterior summary table
+
+# Use different solvers:
+result_gradient <- diffiscape(obs_data, rasters, output_dir, solver = "gradient")
+result_torch <- diffiscape(obs_data, rasters, output_dir, solver = "torch")
 ```
 
 ---
@@ -61,9 +69,9 @@ DiffiScape is built around easy **experimentation** with different resistance an
 
 - **Swap resistance models** — supply any parameterised or data-driven function that maps environmental covariates to a resistance raster. Built-in helpers make it easy to get started with linear or log-linear formulations, and the architecture is open to ML-based or expert-driven alternatives.
 - **Swap intensity models** — choose between parametric (negative binomial, Poisson) and nonparametric (GAM) count models for the inner-loop likelihood, or plug in your own.
-- **Swap connectivity engines** — use Omniscape cumulative current flow, Circuitscape pairwise resistances, or any other raster-valued connectivity surface.
+- **Swap solvers** — use the JAX surrogate optimizer (robust, derivative-free, slow), JAX gradient descent (exact autodiff gradients, fast), or PyTorch neural networks (flexible, full Bayesian posteriors).
 
-The surrogate optimizer (Latin Hypercube Sampling → GP + Thompson Sampling or Expected Improvement) coordinates the outer search over resistance parameters while calling whichever intensity model you choose at each evaluation. A gradient-based pathway via Enzyme.jl allows arbitrarily complex, differentiable resistance models. The PyTorch back-end adds neural-network resistance surfaces with full Bayesian posterior sampling.
+The surrogate optimizer (Latin Hypercube Sampling → GP + Thompson Sampling or Expected Improvement, powered by JAX) coordinates the outer search over resistance parameters while calling whichever intensity model you choose at each evaluation. The gradient descent pathway via JAX allows arbitrarily complex, differentiable resistance models with automatic differentiation. The PyTorch back-end adds neural-network resistance surfaces with full Bayesian posterior sampling.
 
 ---
 
@@ -75,12 +83,11 @@ The `diffiscape()` wrapper chains these modular step functions, which can also b
 |------|----------|-------------|
 | 1 | `ds_load_data()` | Read GPS points from CSV, shapefile, or GeoPackage |
 | 2 | `ds_create_basis()` | Build a multi-layer basis function stack from rasters |
-| 3 | `ds_init_julia()` | Start the Julia session and load the DiffiScape Julia module |
-| 4 | `ds_optimize()` | Outer surrogate loop for resistance parameters |
-| 5 | `ds_fit_intensity()` | Fit the final intensity model at optimized parameters |
-| 6 | `ds_predict()` | Generate a predicted intensity raster |
-| 7 | `ds_posterior()` | Laplace approximation + Monte Carlo composition for uncertainty |
-| 8 | `ds_diagnose()` | Deviance residuals, Moran's I, and diagnostic plots |
+| 3 | `ds_optimize()` | Outer solver loop (surrogate, gradient, or torch) for resistance parameters |
+| 4 | `ds_fit_intensity()` | Fit the final intensity model at optimized parameters |
+| 5 | `ds_predict()` | Generate a predicted intensity raster |
+| 6 | `ds_posterior()` | Laplace approximation + Monte Carlo composition for uncertainty |
+| 7 | `ds_diagnose()` | Deviance residuals, Moran's I, and diagnostic plots |
 
 ### Example: Step-by-step
 
@@ -91,19 +98,16 @@ library(DiffiScape)
 pts   <- ds_load_data("gps_locations.csv")
 basis <- ds_create_basis("env_rasters/")
 
-# Start Julia
-ds_init_julia()
-
 # Optimize resistance parameters (swap intensity model via config)
 cfg <- default_optimizer_config()
 cfg$distribution <- "negbin"   # or "gam" / "poisson"
-opt <- ds_optimize(basis, pts, config = cfg)
+opt <- ds_optimize(basis, pts, config = cfg, solver = "surrogate")  # or "gradient" / "torch"
 
 # Fit final model at optimized parameters
 fit <- ds_fit_intensity(opt, basis, pts)
 
 # Predict intensity surface
-connectivity  <- run_omniscape(create_resistance_surface(opt$best_params, basis))$cum_current
+connectivity  <- run_cumulative_current(create_resistance_surface(opt$best_params, basis))$cum_current
 intensity_map <- ds_predict(fit, connectivity)
 
 # Posterior inference
@@ -131,9 +135,8 @@ diag <- ds_diagnose(fit, pts, connectivity)
 
 | Function | Description |
 |----------|-------------|
-| `run_omniscape()` | Compute cumulative current flow via Omniscape.jl |
-| `run_circuitscape()` | Pairwise or one-to-all current flow via Circuitscape.jl |
-| `run_cumulative_current()` | Differentiable cumulative current via the Julia solver (used by the Enzyme back-end) |
+| `run_cumulative_current()` | Compute cumulative current flow (primary interface) |
+| `ds_jax_connectivity()` | Low-level JAX connectivity via differentiable circuit solver |
 | `extract_connectivity()` | Extract connectivity values at point locations |
 | `standardise_connectivity()` | Log-scale z-scoring of connectivity values |
 | `residualise_connectivity()` | Regress local covariates out of connectivity, isolating network-structure variation |
@@ -285,7 +288,7 @@ cfg$family <- my_family
 
 ## Resistance Link Functions
 
-The link function maps the linear predictor η(x) = r₀ + Σₖ zₖ φₖ(x) to the resistance surface R(x). Swapping links changes the shape of the resistance surface without touching the optimizer or Julia solver.
+The link function maps the linear predictor η(x) = r₀ + Σₖ zₖ φₖ(x) to the resistance surface R(x). Swapping links changes the shape of the resistance surface without touching the optimizer or circuit solver.
 
 | Link | Formula | Notes |
 |------|---------|-------|
@@ -321,11 +324,45 @@ my_link <- resistance_link(
 
 ---
 
-## PyTorch Pipeline
+## Solver Modes
+
+DiffiScape provides three distinct solver modes, each with different trade-offs.
+
+### Surrogate Optimizer (JAX) — Default
+
+The primary solver mode using Bayesian Optimization with Gaussian Process emulation. Fast, robust, and derivative-free for moderate-dimensional problems.
+
+```r
+# Default behavior
+opt <- ds_optimize(basis, pts, config = cfg)
+
+# Explicit specification
+opt <- ds_optimize(basis, pts, config = cfg, solver = "surrogate")
+
+# Custom configuration
+cfg <- default_optimizer_config()
+cfg$acquisition <- "EI"  # Expected Improvement (default: "TS" Thompson Sampling)
+opt <- ds_optimize(basis, pts, config = cfg, solver = "surrogate")
+```
+
+### Gradient Descent (JAX)
+
+For parametric or shallow neural-network resistance models with automatic differentiation via JAX.
+
+```r
+opt <- ds_optimize(basis, pts, solver = "gradient",
+                   config = list(jax = list(
+                     n_epochs = 100L,
+                     learning_rate = 0.01,
+                     optimizer = "adam"  # or "lbfgs", "sgd"
+                   )))
+```
+
+### PyTorch Neural Networks
 
 DiffiScape ships a fully self-contained neural-network resistance back-end. The Python code is vendored inside the package (`inst/python/diff_cs/`) — no external files or research-repository clone is needed.
 
-### Setup
+#### Setup
 
 ```r
 # Install Python dependencies into the active reticulate environment:
@@ -337,7 +374,7 @@ ds_torch_setup()
 ds_torch_check()  # TRUE when ready
 ```
 
-### MAP Optimization (Adam)
+#### MAP Optimization (Adam)
 
 ```r
 result <- run_torch_pipeline(
@@ -354,7 +391,7 @@ result$intensity_raster    # SpatRaster — predicted intensity surface
 result$best_loglik         # scalar — best log-likelihood achieved
 ```
 
-### Bayesian Posterior Sampling
+#### Bayesian Posterior Sampling
 
 ```r
 # Langevin / MALA sampler:
@@ -373,7 +410,7 @@ nuts <- run_bayesian_sampling_hmc(
 vi <- run_advi(basis_stack = basis, obs_points = pts, n_iter = 2000L)
 ```
 
-### Gradient Checks
+#### Gradient Checks
 
 ```r
 verify_torch_gradient(basis, pts)    # MLP gradient check
@@ -381,7 +418,7 @@ verify_conv_gradient(basis, pts)     # convolutional resistance gradient
 verify_spline_gradient(basis, pts)   # spline-GAM gradient
 ```
 
-### Using the Torch Back-end via `ds_optimize()`
+#### Using the PyTorch Back-end via `ds_optimize()`
 
 ```r
 opt <- ds_optimize(basis, pts, solver = "torch",
@@ -390,7 +427,7 @@ opt <- ds_optimize(basis, pts, solver = "torch",
                    )))
 ```
 
-### Inverse Reinforcement Learning (value-shaped) resistance
+#### Inverse Reinforcement Learning (value-shaped) resistance
 
 The `"irl"` resistance model treats the landscape as a Markov decision process
 (states = cells, actions = moves to neighbours) and learns the **reward**
@@ -445,8 +482,8 @@ browseVignettes("DiffiScape")
 
 | Vignette | Topic |
 |----------|-------|
-| `surrogate-omniscape` | Surrogate BO with Omniscape cumulative current |
-| `gradient-enzyme` | Gradient-based optimization via Enzyme.jl |
+| `surrogate-jax` | Surrogate BO with JAX cumulative current |
+| `gradient-jax` | Gradient-based optimization via JAX autodiff |
 | `gam-profile` | GAM intensity profile workflow |
 | `torch-mlp` | PyTorch MLP resistance network |
 | `spline-gam` | Spline-GAM resistance network |
@@ -457,11 +494,11 @@ browseVignettes("DiffiScape")
 
 **R Imports:** `terra`, `mgcv`, `numDeriv`, `DiceKriging`, `lhs`, `Matrix`
 
-**R Suggests:** `JuliaConnectoR` (required for Julia/connectivity back-end), `reticulate` (required for PyTorch back-end), `ggplot2`, `spdep`, `testthat`
+**R Suggests:** `reticulate` (required for all backends), `ggplot2`, `spdep`, `testthat`
 
-**Julia:** Circuitscape.jl ≥ 5.0, Omniscape.jl ≥ 0.6 (Julia ≥ 1.9)
+**Python (required):** Python ≥ 3.10 with `jax`, `jaxscape`, `flax`, `numpyro` — installed via `ds_install_jax_deps()`
 
-**Python (optional, for PyTorch back-end):** Python ≥ 3.9, `torch`, `numpy`, `scipy`, `pyamg` — installed via `ds_install_torch_deps()`
+**Python (optional, for PyTorch back-end):** `torch`, `numpy`, `scipy`, `pyamg` — installed via `ds_install_torch_deps()`
 
 ---
 

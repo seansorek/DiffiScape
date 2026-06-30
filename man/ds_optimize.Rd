@@ -16,7 +16,8 @@ ds_optimize(
   residualise = FALSE,
   available_points = NULL,
   available_covariates = NULL,
-  solver = c("surrogate", "enzyme", "torch", "irl")
+  solver = c("surrogate", "gradient", "enzyme", "torch", "irl"),
+  model_type = "parametric"
 )
 }
 \arguments{
@@ -28,7 +29,9 @@ ds_optimize(
 
 \item{config}{Optimiser config (see \code{\link[=default_optimizer_config]{default_optimizer_config()}}).
 For \code{solver = "torch"}, may contain a \code{torch} sublist whose entries
-are forwarded to \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.}
+are forwarded to \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.
+For \code{solver = "gradient"} with a neural \code{model_type}, may contain
+\code{model_config} and \code{optim_config} sublists.}
 
 \item{intensity_config}{Intensity config (see \code{\link[=default_intensity_config]{default_intensity_config()}}).}
 
@@ -51,20 +54,27 @@ integration.}
 supplied and the intensity model includes covariates.}
 
 \item{solver}{Character; \code{"surrogate"} (GP + Thompson Sampling or
-Expected Improvement, default), \code{"enzyme"} (L-BFGS via differentiable
-Julia solver), \code{"torch"} (PyTorch neural-network resistance), or \code{"irl"}
+Expected Improvement, default), \code{"gradient"} (L-BFGS / Adam via JAX
+auto-diff), \code{"enzyme"} (deprecated, alias for \code{"gradient"}),
+\code{"torch"} (PyTorch neural-network resistance), or \code{"irl"}
 (PyTorch value-shaped resistance: a reward network is turned into a
 resistance surface via soft value iteration, then run through the same
-differentiable circuit solver — a convenience alias for \code{solver = "torch"}
+differentiable circuit solver -- a convenience alias for \code{solver = "torch"}
 with \code{model_type = "irl"}).}
+
+\item{model_type}{Character; \code{"parametric"} (default), \code{"mlp"},
+\code{"conv"}, \code{"spline_gam"}, or \code{"irl"}.  When not \code{"parametric"},
+the gradient solver dispatches to the Flax neural-network
+optimizer instead of the parametric L-BFGS/Adam path.}
 }
 \value{
-Result from \code{\link[=optimize_resistance]{optimize_resistance()}}, \code{\link[=optimize_resistance_enzyme]{optimize_resistance_enzyme()}},
-or \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.
+Result from \code{\link[=optimize_resistance]{optimize_resistance()}},
+\code{\link[=optimize_resistance_gradient]{optimize_resistance_gradient()}}, or \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.
 }
 \description{
 Wrapper that dispatches to \code{\link[=optimize_resistance]{optimize_resistance()}} (GP surrogate),
-\code{\link[=optimize_resistance_enzyme]{optimize_resistance_enzyme()}} (L-BFGS via differentiable Julia
-solver), or \code{\link[=run_torch_pipeline]{run_torch_pipeline()}} (PyTorch neural-network resistance)
-depending on \code{solver}.
+\code{\link[=optimize_resistance_gradient]{optimize_resistance_gradient()}} (L-BFGS / Adam via JAX auto-diff,
+or Flax neural-network resistance when \code{model_type} is set), or
+\code{\link[=run_torch_pipeline]{run_torch_pipeline()}} (PyTorch neural-network resistance), depending
+on \code{solver}.
 }

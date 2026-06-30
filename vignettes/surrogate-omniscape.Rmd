@@ -1,8 +1,8 @@
 ---
-title: "Bayesian Surrogate Optimization with Omniscape"
+title: "Bayesian Surrogate Optimization with JAXScape"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Bayesian Surrogate Optimization with Omniscape}
+  %\VignetteIndexEntry{Bayesian Surrogate Optimization with JAXScape}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -13,7 +13,7 @@ knitr::opts_chunk$set(echo = TRUE, eval = FALSE, message = FALSE, warning = FALS
 
 This vignette walks through the reference DiffiScape pipeline: Bayesian surrogate
 (Gaussian Process) optimization of resistance parameters, with connectivity computed
-by Omniscape.jl. The intensity surface is modelled with a spatial GAM (`mgcv::bam`),
+by JAXScape. The intensity surface is modelled with a spatial GAM (`mgcv::bam`),
 and resistance uncertainty is quantified via a Laplace-hybrid posterior.
 
 This is the most compute-intensive pipeline (~hours), but it requires no automatic
@@ -49,10 +49,10 @@ basis_stack <- ds_create_basis(nlcd_dir, pattern = "*.tif", rescale = TRUE)
 cat("Basis layers:", names(basis_stack), "\n")
 ```
 
-## Initialise Julia / Omniscape
+## Initialise JAX / JAXScape
 
-```{r init-julia}
-ds_init_julia()   # one-time setup per session
+```{r init-jax}
+ds_jax_setup()   # one-time setup per session
 ```
 
 ## Configure the optimiser
@@ -66,7 +66,7 @@ cfg$n_init        <- 30L          # Latin Hypercube seed designs
 cfg$n_iter        <- 70L          # GP surrogate iterations
 cfg$seed          <- 42L
 cfg$distribution  <- "gam"        # "negbin", "poisson", or "gam"
-cfg$omniscape     <- list(radius = 25L, block_size = 5L, cleanup = TRUE)
+cfg$connectivity  <- list(radius = 25L, block_size = 5L)
 
 icfg <- default_intensity_config()
 icfg$covariate_type      <- "smooth"   # spatial GAM smooth terms
@@ -97,9 +97,9 @@ print(opt$best_params)
 ## Compute final connectivity
 
 ```{r connectivity}
-resistance  <- create_resistance_surface(opt$best_params, basis_stack)
-omni        <- run_omniscape(resistance, radius = 25L, block_size = 5L, cleanup = TRUE)
-connectivity <- omni$cum_current
+resistance   <- create_resistance_surface(opt$best_params, basis_stack)
+jax_result   <- ds_jax_connectivity(resistance, radius = 25L, block_size = 5L)
+connectivity <- jax_result$cum_current
 
 terra::writeRaster(resistance,   file.path(output_dir, "optimized_resistance.tif"),  overwrite = TRUE)
 terra::writeRaster(connectivity, file.path(output_dir, "optimized_connectivity.tif"), overwrite = TRUE)
@@ -147,7 +147,7 @@ post <- ds_posterior(
   obs_points       = obs_points,
   n_draws          = 5000L,
   omniscape_settings = list(radius = 25L, block_size = 5L),
-  intensity_config = icfg
+  intensity_config      = icfg
 )
 
 print(post$summary)
