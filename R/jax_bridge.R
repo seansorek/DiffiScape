@@ -362,7 +362,7 @@ ds_install_jax_deps <- function(method  = "auto",
          call. = FALSE)
   }
 
-  pkgs <- c("jax", "jaxlib", "jaxscape", "numpy", "scipy",
+  pkgs <- c("jax", "jaxlib", "jaxscape", "amjax", "lineax", "numpy",
              "jaxopt", "optax", "flax", "numpyro")
   if (isTRUE(gpu)) {
     message("Note: for GPU support, install JAX with CUDA following ",

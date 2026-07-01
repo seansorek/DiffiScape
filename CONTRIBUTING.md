@@ -28,7 +28,8 @@ devtools::load_all()
 ```bash
 # JAX backend (required for surrogate and gradient solvers)
 pip install -r inst/python/diffiscape_jax/requirements.txt
-# This installs: jax, jaxscape, flax, numpyro, numpy, scipy
+# This installs: jax, jaxlib, numpy, jaxscape (with amjax), amjax, lineax,
+# equinox, flax, numpyro, jaxopt, optax
 ```
 
 ```bash

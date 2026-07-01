@@ -1,0 +1,37 @@
+# JAX backend (surrogate and gradient solvers): circuit-theory connectivity
+# via JAXScape, neural resistance models via Flax, Bayesian sampling via
+# NumPyro, and parametric optimization via jaxopt/optax.
+#
+# CPU-only by default. For GPU support, install matching your CUDA version:
+#   pip install "jax[cuda12]"   # for CUDA 12.x
+# then re-install this file; jax is otherwise installed CPU-only.
+jax>=0.9.0
+jaxlib>=0.9.0
+numpy>=2.4.0
+
+# jaxscape[amjax] pulls in the AMJax algebraic-multigrid CG solver
+# (jaxscape.solvers.AMJaxCGSolver) used throughout core.py/sample.py.
+jaxscape[amjax]>=0.0.9
+# amjax>=0.0.2 is required: 0.0.2 is the version that renamed AMJAXSolver to
+# MultilevelSolver, which inst/python/diffiscape_jax/__init__.py patches
+# around for compatibility with jaxscape's still-old import name.
+amjax>=0.0.2
+lineax>=0.1.0
+equinox>=0.13.2
+
+# Neural resistance-surface models (resistance.py) and Bayesian posterior
+# sampling (sample.py).
+flax>=0.8.0
+numpyro>=0.13.0
+
+# Parametric optimization (optimize.py): L-BFGS via jaxopt, Adam via optax.
+# jaxopt is deprecated upstream (no longer developed; its L-BFGS has been
+# ported into optax, and Google recommends migrating to optax). It's still
+# installable and still required here — migrating
+# run_parametric_optimization's L-BFGS call onto optax is a known future
+# follow-up, not done in this change.
+jaxopt>=0.8.3
+optax>=0.2.2
+
+pytest>=7.0
+pytest-cov
