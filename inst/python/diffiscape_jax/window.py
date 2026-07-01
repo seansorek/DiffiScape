@@ -113,10 +113,7 @@ def cumulative_current(
         buffer_size=radius,
     )
 
-    distance_solver = ResistanceDistance(
-        solver=AMJaxCGSolver(),
-        method=SpielmanApproximation(epsilon=0.1),
-    )
+    distance_solver = ResistanceDistance()
     current_acc = jnp.zeros(padded.shape, dtype=jnp.float64)
 
     for xy, window in window_op.lazy_iterator(padded):

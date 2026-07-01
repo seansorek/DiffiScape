@@ -388,12 +388,15 @@ def forward_solve(
     if sources is None:
         sources = grid.coord_to_index(jnp.array([0]), jnp.array([0]))
 
-    distance = ResistanceDistance(solver=AMJaxCGSolver())
+    distance = ResistanceDistance()
 
     t0 = time.time()
     dist_values = distance(grid, sources)
     elapsed = time.time() - t0
 
+    # Multi-source: average distance over all sources before reshaping
+    if dist_values.ndim > 1:
+        dist_values = jnp.mean(dist_values, axis=0)
     connectivity = np.array(grid.node_values_to_array(dist_values))
 
     return {

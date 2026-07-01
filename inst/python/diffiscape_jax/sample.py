@@ -255,11 +255,15 @@ def run_nuts_sampling(
 
     rng = jax.random.PRNGKey(seed)
     t0 = time.time()
-    mcmc.run(rng, init_params={
-        "params": flat_init,
-        "alpha": jnp.array(0.0),
-        "gamma": jnp.array(1.0),
-    })
+    # GridGraph/ResistanceDistance use Python-level control flow incompatible
+    # with jax.lax.cond branch-type checks inside NUTS; disable JIT so they
+    # run eagerly.
+    with jax.disable_jit():
+        mcmc.run(rng, init_params={
+            "params": flat_init,
+            "alpha": jnp.array(0.0),
+            "gamma": jnp.array(1.0),
+        })
     elapsed = time.time() - t0
 
     samples = mcmc.get_samples()
