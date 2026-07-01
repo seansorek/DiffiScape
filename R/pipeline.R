@@ -7,8 +7,6 @@
 #   ds_diagnose
 # ============================================================================
 
-# TODO Refactor these functions to use S3 methods, especially for predict and summary functions.
-
 # --------------- Modular step functions -------------------------------------
 
 #' Load observation data
@@ -136,6 +134,21 @@ ds_create_basis <- function(rasters,
 #'   optimizer instead of the parametric L-BFGS/Adam path.
 #' @return Result from [optimize_resistance()],
 #'   [optimize_resistance_gradient()], or [run_torch_pipeline()].
+#' @section Config conventions:
+#' The three backend families are deliberately *not* unified onto a common
+#' config shape -- each keeps its pre-existing convention, and dispatch
+#' (via an internal `solver_spec()` S3 mechanism) is the one place that
+#' knows how to extract the right sublist for its solver:
+#' \describe{
+#'   \item{`solver = "surrogate"`}{Plain top-level `config` entries (see
+#'     [default_optimizer_config()]). No sublist.}
+#'   \item{`solver = "gradient"` / `"enzyme"`}{Top-level `config` entries
+#'     for the parametric L-BFGS/Adam path, plus optional
+#'     `config$model_config` / `config$optim_config` sublists when
+#'     `model_type` selects a neural resistance model.}
+#'   \item{`solver = "torch"` / `"irl"`}{A `config$torch` sublist forwarded
+#'     as named arguments to [run_torch_pipeline()].}
+#' }
 #' @export
 ds_optimize <- function(basis_stack,
                         obs_points,
@@ -153,49 +166,111 @@ ds_optimize <- function(basis_stack,
                         model_type           = "parametric") {
 
   solver <- match.arg(solver)
+  spec <- solver_spec(solver)
 
-  # Deprecation aliases
-  if (solver == "enzyme") {
-    message("solver='enzyme' is deprecated. Use solver='gradient' instead.")
-    solver <- "gradient"
+  .ds_optimize_dispatch(
+    spec,
+    basis_stack          = basis_stack,
+    obs_points           = obs_points,
+    bounds               = bounds,
+    config               = config,
+    intensity_config     = intensity_config,
+    output_dir           = output_dir,
+    covariates_obs       = covariates_obs,
+    covariates_rasters   = covariates_rasters,
+    residualise          = residualise,
+    available_points     = available_points,
+    available_covariates = available_covariates,
+    model_type           = model_type
+  )
+}
+
+
+#' @keywords internal
+.ds_optimize_dispatch.ds_solver_gradient <- function(spec,
+                                                       basis_stack,
+                                                       obs_points,
+                                                       bounds,
+                                                       config,
+                                                       intensity_config,
+                                                       output_dir,
+                                                       covariates_obs,
+                                                       covariates_rasters,
+                                                       residualise,
+                                                       available_points,
+                                                       available_covariates,
+                                                       model_type,
+                                                       ...) {
+  optimize_resistance_gradient(
+    basis_stack          = basis_stack,
+    obs_points           = obs_points,
+    bounds               = bounds,
+    config               = config,
+    intensity_config     = intensity_config,
+    output_dir           = output_dir,
+    covariates_obs       = covariates_obs,
+    covariates_rasters   = covariates_rasters,
+    residualise          = residualise,
+    available_points     = available_points,
+    available_covariates = available_covariates,
+    model_type           = model_type,
+    model_config         = config$model_config %||% list(),
+    optim_config         = config$optim_config %||% list()
+  )
+}
+
+
+#' @keywords internal
+.ds_optimize_dispatch.ds_solver_torch <- function(spec,
+                                                    basis_stack,
+                                                    obs_points,
+                                                    bounds,
+                                                    config,
+                                                    intensity_config,
+                                                    output_dir,
+                                                    covariates_obs,
+                                                    covariates_rasters,
+                                                    residualise,
+                                                    available_points,
+                                                    available_covariates,
+                                                    model_type,
+                                                    ...) {
+  if (!is.null(available_points)) {
+    stop("available_points is not supported with solver = '", spec$solver, "'.",
+         call. = FALSE)
   }
-
-  if (solver == "gradient") {
-    return(optimize_resistance_gradient(
-      basis_stack          = basis_stack,
-      obs_points           = obs_points,
-      bounds               = bounds,
-      config               = config,
-      intensity_config     = intensity_config,
-      output_dir           = output_dir,
-      covariates_obs       = covariates_obs,
-      covariates_rasters   = covariates_rasters,
-      residualise          = residualise,
-      available_points     = available_points,
-      available_covariates = available_covariates,
-      model_type           = model_type,
-      model_config         = config$model_config %||% list(),
-      optim_config         = config$optim_config %||% list()
-    ))
+  torch_args <- config$torch %||% list()
+  torch_args$basis_stack <- basis_stack
+  torch_args$obs_points  <- obs_points
+  if (is.null(torch_args$output_dir)) torch_args$output_dir <- output_dir
+  if (is.null(torch_args$seed) && !is.null(config$seed)) {
+    torch_args$seed <- config$seed
   }
+  # "irl" is "torch" with the value-shaped resistance model.
+  if (spec$solver == "irl") torch_args$model_type <- "irl"
+  do.call(run_torch_pipeline, torch_args)
+}
 
-  if (solver == "torch" || solver == "irl") {
-    if (!is.null(available_points)) {
-      stop("available_points is not supported with solver = '", solver, "'.",
-           call. = FALSE)
-    }
-    torch_args <- config$torch %||% list()
-    torch_args$basis_stack <- basis_stack
-    torch_args$obs_points  <- obs_points
-    if (is.null(torch_args$output_dir)) torch_args$output_dir <- output_dir
-    if (is.null(torch_args$seed) && !is.null(config$seed)) {
-      torch_args$seed <- config$seed
-    }
-    # "irl" is "torch" with the value-shaped resistance model.
-    if (solver == "irl") torch_args$model_type <- "irl"
-    return(do.call(run_torch_pipeline, torch_args))
-  }
 
+#' @keywords internal
+.ds_optimize_dispatch.ds_solver_irl <- .ds_optimize_dispatch.ds_solver_torch
+
+
+#' @keywords internal
+.ds_optimize_dispatch.ds_solver_surrogate <- function(spec,
+                                                        basis_stack,
+                                                        obs_points,
+                                                        bounds,
+                                                        config,
+                                                        intensity_config,
+                                                        output_dir,
+                                                        covariates_obs,
+                                                        covariates_rasters,
+                                                        residualise,
+                                                        available_points,
+                                                        available_covariates,
+                                                        model_type,
+                                                        ...) {
   optimize_resistance(
     basis_stack          = basis_stack,
     obs_points           = obs_points,
@@ -233,9 +308,21 @@ ds_optimize <- function(basis_stack,
 #' @param available_covariates Named list of covariate vectors at
 #'   `available_points` locations.  Required when `available_points` is
 #'   supplied and the intensity model includes covariates.
-#' @param solver Character; `"surrogate"` (JAX connectivity via
-#'   [ds_jax_connectivity()]), `"gradient"` (JAX differentiable solver),
-#'   or `"enzyme"` (deprecated, alias for `"gradient"`).
+#' @param solver Character; `"surrogate"`, `"gradient"`, or `"enzyme"`
+#'   (deprecated, alias for `"gradient"`).  Retained for compatibility with
+#'   [ds_optimize()]'s solver dispatch and to preserve the `"enzyme"`
+#'   deprecation message, but no longer affects this function's internal
+#'   connectivity-computation logic: both `"surrogate"` and `"gradient"`
+#'   route through the same [evaluate_full_model()] call (JAX connectivity
+#'   via [ds_jax_connectivity()]).  `"torch"` and `"irl"` are accepted as
+#'   *values* (so a caller forwarding [ds_optimize()]'s solver gets a
+#'   clear, actionable error instead of a generic `match.arg()` failure)
+#'   but are **not supported** by this function: those backends fit
+#'   resistance and intensity jointly inside a single [ds_optimize()] /
+#'   [run_torch_pipeline()] call, so there is nothing left for
+#'   `ds_fit_intensity()` to do for them -- calling this function with
+#'   `solver = "torch"` or `"irl"` raises an error directing you to the
+#'   already-complete result from [run_torch_pipeline()].
 #' @param link A [resistance_link] object (default [link_exp()]).
 #' @param family An [intensity_family] object, or `NULL`.
 #' @return Result from [evaluate_full_model()].
@@ -250,71 +337,47 @@ ds_fit_intensity <- function(opt_result,
                               residualise          = FALSE,
                               available_points     = NULL,
                               available_covariates = NULL,
-                              solver               = c("surrogate", "gradient", "enzyme"),
+                              solver               = c("surrogate", "gradient",
+                                                       "enzyme", "torch", "irl"),
                               link                 = link_exp(),
                               family               = NULL) {
 
   solver <- match.arg(solver)
+  spec <- solver_spec(solver)
 
-  if (solver == "enzyme") {
-    message("solver='enzyme' is deprecated. Use solver='gradient' instead.")
-    solver <- "gradient"
-  }
+  .ds_fit_intensity_dispatch(
+    spec,
+    opt_result           = opt_result,
+    basis_stack          = basis_stack,
+    obs_points           = obs_points,
+    omniscape_settings   = omniscape_settings,
+    intensity_config     = intensity_config,
+    covariates_obs       = covariates_obs,
+    covariates_rasters   = covariates_rasters,
+    residualise          = residualise,
+    available_points     = available_points,
+    available_covariates = available_covariates,
+    link                 = link,
+    family               = family
+  )
+}
 
-  if (solver == "gradient") {
-    # Use the JAX differentiable solver
-    resistance <- create_resistance_surface(opt_result$best_params, basis_stack,
-                                            link = link)
-    omni <- ds_jax_connectivity(
-      resistance,
-      radius     = omniscape_settings$radius     %||% 13L,
-      block_size = omniscape_settings$block_size  %||% 5L
-    )
-    connectivity <- omni$cum_current
-    conn_obs <- extract_connectivity(connectivity, obs_points)
 
-    valid <- !is.na(conn_obs)
-    distribution <- opt_result$distribution %||% "negbin"
-    fit_fn <- switch(distribution,
-      negbin = fit_intensity_nb, gam = fit_intensity_gam)
-
-    int_args <- list(
-      connectivity_at_obs = conn_obs[valid],
-      connectivity_raster = connectivity,
-      obs_coords          = obs_points[valid, , drop = FALSE],
-      covariates_obs      = if (!is.null(covariates_obs))
-        lapply(covariates_obs, function(v) v[valid]) else NULL,
-      covariates_rasters  = covariates_rasters,
-      residualise         = residualise,
-      config              = intensity_config
-    )
-    if (distribution != "gam" && !is.null(family))
-      int_args$family <- family
-
-    if (!is.null(available_points)) {
-      avail_conn_raw <- extract_connectivity(connectivity, available_points)
-      avail_valid    <- !is.na(avail_conn_raw)
-      avail_conn     <- avail_conn_raw[avail_valid]
-      avail_cov      <- if (!is.null(available_covariates))
-        lapply(available_covariates, function(v) v[avail_valid]) else NULL
-      int_args$available_connectivity <- avail_conn
-      int_args$available_covariates   <- avail_cov
-    }
-
-    int_fit <- do.call(fit_fn, int_args)
-
-    return(list(
-      loglik           = int_fit$loglik,
-      intensity_params = int_fit$estimates,
-      intensity_fit_obj = int_fit,
-      intensity_se     = int_fit$se,
-      hessian          = int_fit$hessian,
-      convergence      = int_fit$convergence,
-      distribution     = distribution,
-      total_time       = omni$elapsed_seconds
-    ))
-  }
-
+#' @keywords internal
+.ds_fit_intensity_dispatch.ds_solver_surrogate <- function(spec,
+                                                             opt_result,
+                                                             basis_stack,
+                                                             obs_points,
+                                                             omniscape_settings,
+                                                             intensity_config,
+                                                             covariates_obs,
+                                                             covariates_rasters,
+                                                             residualise,
+                                                             available_points,
+                                                             available_covariates,
+                                                             link,
+                                                             family,
+                                                             ...) {
   evaluate_full_model(
     resistance_params    = opt_result$best_params,
     basis_stack          = basis_stack,
@@ -331,6 +394,28 @@ ds_fit_intensity <- function(opt_result,
     available_covariates = available_covariates
   )
 }
+
+
+#' @keywords internal
+.ds_fit_intensity_dispatch.ds_solver_gradient <-
+  .ds_fit_intensity_dispatch.ds_solver_surrogate
+
+
+#' @keywords internal
+.ds_fit_intensity_dispatch.ds_solver_torch <- function(spec, ...) {
+  stop(
+    "ds_fit_intensity() does not support solver = '", spec$solver, "' -- ",
+    "these backends fit resistance and intensity jointly in a single ",
+    "ds_optimize() call; the result already contains intensity_params, ",
+    "intensity_se, etc. See ?run_torch_pipeline.",
+    call. = FALSE
+  )
+}
+
+
+#' @keywords internal
+.ds_fit_intensity_dispatch.ds_solver_irl <-
+  .ds_fit_intensity_dispatch.ds_solver_torch
 
 
 #' Predict intensity surface
@@ -512,8 +597,15 @@ ds_diagnose <- function(intensity_fit,
 #'   diagnostics).  Recognised entries: `radius` (default `13L`),
 #'   `block_size` (default `5L`), `cleanup` (default `TRUE`).
 #' @param solver Character; `"surrogate"` (default, GP surrogate optimiser),
-#'   `"gradient"` (L-BFGS / Adam via JAX auto-diff), or `"enzyme"` (deprecated,
-#'   alias for `"gradient"`).
+#'   `"gradient"` (L-BFGS / Adam via JAX auto-diff), `"enzyme"` (deprecated,
+#'   alias for `"gradient"`), `"torch"` (PyTorch neural-network resistance),
+#'   or `"irl"` (PyTorch value-shaped resistance).  For `"torch"` / `"irl"`,
+#'   [run_torch_pipeline()] fits resistance and intensity jointly in a
+#'   single call, so the separate intensity-fitting step is skipped and
+#'   `posterior`/`diagnostics`/`ppc` are `NULL` (those require either a
+#'   parametric `bounds`-based Laplace approximation or a
+#'   `fit_intensity_nb()`/`fit_intensity_gam()`-shaped fit object that the
+#'   torch backend does not produce).
 #' @return A list with `obs_points`, `basis_stack`, `opt_result`,
 #'   `intensity_fit`, `posterior`, `diagnostics`.
 #' @export
@@ -534,15 +626,12 @@ diffiscape <- function(obs_data,
                        rescale_basis        = TRUE,
                        pattern              = "*.tif",
                        omniscape_settings   = list(),
-                       solver               = c("surrogate", "gradient", "enzyme")) {
+                       solver               = c("surrogate", "gradient",
+                                                "enzyme", "torch", "irl")) {
 
   solver <- match.arg(solver)
-
-  # Deprecation alias
-  if (solver == "enzyme") {
-    message("solver='enzyme' is deprecated. Use solver='gradient' instead.")
-    solver <- "gradient"
-  }
+  spec <- solver_spec(solver)
+  solver <- spec$solver
 
   # Extract link and family from configs
   res_link   <- optimizer_config$resistance_link %||% link_exp()
@@ -586,33 +675,59 @@ diffiscape <- function(obs_data,
     solver               = solver
   )
 
-  # --- Step 4: Final intensity fit ---
-  message("\n[4/6] Fitting final intensity model...")
-  intensity_fit <- ds_fit_intensity(
-    opt_result           = opt_result,
-    basis_stack          = basis_stack,
-    obs_points           = obs_points,
-    omniscape_settings   = omniscape_settings,
-    intensity_config     = intensity_config,
-    covariates_obs       = covariates_obs,
-    covariates_rasters   = covariates_rasters,
-    residualise          = residualise,
-    available_points     = available_points,
-    available_covariates = available_covariates,
-    solver               = solver,
-    link                 = res_link,
-    family               = int_family
-  )
+  if (solver %in% c("torch", "irl")) {
+    # --- torch/irl: resistance + intensity are fit jointly inside
+    # ds_optimize() -> run_torch_pipeline(), so there is no separate
+    # intensity-fitting step. Build the normal intensity_fit shape directly
+    # from fields already present on opt_result (see run_torch_pipeline()'s
+    # return value in R/torch_pipeline.R).
+    message("\n[4/6] Fitting final intensity model... SKIPPED ",
+            "(solver = '", solver, "' fits resistance + intensity jointly)")
+    intensity_fit <- list(
+      loglik             = opt_result$best_loglik,
+      intensity_params   = opt_result$intensity_params,
+      # No fit_intensity_nb()/fit_intensity_gam()-shaped object exists for
+      # the torch/irl path (predict_intensity() / diagnose_model() require
+      # $estimates, $c_scale, $log_conn_mean, $log_conn_sd, none of which
+      # the neural-network intensity head produces) -- NULL rather than a
+      # fabricated stand-in.
+      intensity_fit_obj  = NULL,
+      intensity_se       = opt_result$intensity_se,
+      # No Hessian is computed by the Adam/MAP torch optimiser.
+      hessian            = NULL,
+      convergence        = opt_result$convergence,
+      distribution       = opt_result$distribution,
+      total_time         = opt_result$total_time,
+      # The torch pipeline fuses the connectivity solve into the training
+      # loop rather than timing it as a separate post-hoc step.
+      omniscape_time     = NULL
+    )
 
-  # --- Step 5: Posterior ---
-  posterior <- NULL
-  if (n_posterior > 0) {
-    message("\n[5/6] Posterior inference...")
-    posterior <- ds_posterior(
+    # --- Posterior / diagnostics / PPC: not available for torch/irl -------
+    # ds_posterior() (Laplace approx + MC composition) requires
+    # opt_result$bounds, a parametric r_0/z_1..z_K bounds list that the
+    # torch/IRL neural-network parameterisation does not produce. Likewise
+    # ds_diagnose()/ds_ppc() call predict_intensity() on a
+    # fit_intensity_nb()/fit_intensity_gam()-shaped object that doesn't
+    # exist here (see intensity_fit_obj note above). Rather than fabricate
+    # these or silently change the result's field set, they are explicitly
+    # NULL for this solver.
+    message("\n[5/6] Posterior inference... SKIPPED (not available for solver = '",
+            solver, "')")
+    posterior <- NULL
+
+    message("\n[6/6] Diagnostics... SKIPPED (not available for solver = '",
+            solver, "')")
+    diagnostics <- NULL
+    ppc <- NULL
+
+  } else {
+    # --- Step 4: Final intensity fit ---
+    message("\n[4/6] Fitting final intensity model...")
+    intensity_fit <- ds_fit_intensity(
       opt_result           = opt_result,
       basis_stack          = basis_stack,
       obs_points           = obs_points,
-      n_draws              = n_posterior,
       omniscape_settings   = omniscape_settings,
       intensity_config     = intensity_config,
       covariates_obs       = covariates_obs,
@@ -620,53 +735,75 @@ diffiscape <- function(obs_data,
       residualise          = residualise,
       available_points     = available_points,
       available_covariates = available_covariates,
+      solver               = solver,
       link                 = res_link,
       family               = int_family
     )
-  } else {
-    message("\n[5/6] Posterior inference... SKIPPED")
-  }
 
-  # --- Step 6: Diagnostics ---
-  message("\n[6/6] Diagnostics...")
-  final_resistance  <- create_resistance_surface(opt_result$best_params,
-                                                   basis_stack, link = res_link)
-  omni_def <- list(radius = 13L, block_size = 5L)
-  omni_cfg <- utils::modifyList(omni_def, omniscape_settings)
-  final_omni <- ds_jax_connectivity(final_resistance,
-                                     radius     = omni_cfg$radius,
-                                     block_size = omni_cfg$block_size)
-  final_connectivity <- final_omni$cum_current
+    # --- Step 5: Posterior ---
+    posterior <- NULL
+    if (n_posterior > 0) {
+      message("\n[5/6] Posterior inference...")
+      posterior <- ds_posterior(
+        opt_result           = opt_result,
+        basis_stack          = basis_stack,
+        obs_points           = obs_points,
+        n_draws              = n_posterior,
+        omniscape_settings   = omniscape_settings,
+        intensity_config     = intensity_config,
+        covariates_obs       = covariates_obs,
+        covariates_rasters   = covariates_rasters,
+        residualise          = residualise,
+        available_points     = available_points,
+        available_covariates = available_covariates,
+        link                 = res_link,
+        family               = int_family
+      )
+    } else {
+      message("\n[5/6] Posterior inference... SKIPPED")
+    }
 
-  diagnostics <- ds_diagnose(
-    intensity_fit      = intensity_fit,
-    obs_points         = obs_points,
-    connectivity       = final_connectivity,
-    intensity_config   = intensity_config,
-    covariates_rasters = covariates_rasters,
-    family             = int_family,
-    plot               = plot
-  )
+    # --- Step 6: Diagnostics ---
+    message("\n[6/6] Diagnostics...")
+    final_resistance  <- create_resistance_surface(opt_result$best_params,
+                                                     basis_stack, link = res_link)
+    omni_def <- list(radius = 13L, block_size = 5L)
+    omni_cfg <- utils::modifyList(omni_def, omniscape_settings)
+    final_omni <- ds_jax_connectivity(final_resistance,
+                                       radius     = omni_cfg$radius,
+                                       block_size = omni_cfg$block_size)
+    final_connectivity <- final_omni$cum_current
 
-  ppc <- NULL
-  if (!is.null(posterior) && nrow(posterior$samples) > 0) {
-    message("\n  Posterior predictive checks...")
-    ppc <- tryCatch(
-      ds_ppc(
-        posterior_samples  = posterior$samples,
-        intensity_fit      = intensity_fit,
-        obs_points         = obs_points,
-        connectivity       = final_connectivity,
-        intensity_config   = intensity_config,
-        covariates_rasters = covariates_rasters,
-        family             = int_family,
-        plot               = plot
-      ),
-      error = function(e) {
-        message("  PPC skipped: ", conditionMessage(e))
-        NULL
-      }
+    diagnostics <- ds_diagnose(
+      intensity_fit      = intensity_fit,
+      obs_points         = obs_points,
+      connectivity       = final_connectivity,
+      intensity_config   = intensity_config,
+      covariates_rasters = covariates_rasters,
+      family             = int_family,
+      plot               = plot
     )
+
+    ppc <- NULL
+    if (!is.null(posterior) && nrow(posterior$samples) > 0) {
+      message("\n  Posterior predictive checks...")
+      ppc <- tryCatch(
+        ds_ppc(
+          posterior_samples  = posterior$samples,
+          intensity_fit      = intensity_fit,
+          obs_points         = obs_points,
+          connectivity       = final_connectivity,
+          intensity_config   = intensity_config,
+          covariates_rasters = covariates_rasters,
+          family             = int_family,
+          plot               = plot
+        ),
+        error = function(e) {
+          message("  PPC skipped: ", conditionMessage(e))
+          NULL
+        }
+      )
+    }
   }
 
   elapsed <- as.numeric(difftime(Sys.time(), t0, units = "mins"))
