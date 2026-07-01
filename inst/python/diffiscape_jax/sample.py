@@ -33,11 +33,9 @@ from .core import prepare_permeability, _mean_weight, ppp_loglik
 
 try:
     from jaxscape import GridGraph, ResistanceDistance
-    from jaxscape.solvers import AMJaxCGSolver
 except ImportError:
     GridGraph = None
     ResistanceDistance = None
-    AMJaxCGSolver = None
 
 
 def _check_deps():
@@ -112,7 +110,7 @@ def _build_numpyro_model(flax_model, basis_jnp, obs_jnp, valid_mask,
         # Permeability conversion and circuit solve
         perm = prepare_permeability(surface_2d, parameterization)
         grid = GridGraph(grid=perm, fun=_mean_weight)
-        dist_solver = ResistanceDistance(solver=AMJaxCGSolver())
+        dist_solver = ResistanceDistance()
         source = grid.coord_to_index(jnp.array([0]), jnp.array([0]))
         connectivity = dist_solver(grid, source)
 

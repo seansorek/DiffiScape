@@ -121,16 +121,12 @@ def cumulative_current(
 
     for xy, window in window_op.lazy_iterator(padded):
         grid = GridGraph(grid=window, fun=_mean_weight)
-        state = distance_solver.init(grid)
         center = window.shape[0] // 2
         source = grid.coord_to_index(
             jnp.array([center]), jnp.array([center])
         )
-        all_nodes = jnp.arange(grid.nv)
-        dist_values = distance_solver(
-            grid, sources=source, targets=all_nodes, state=state,
-        )
-        dist_2d = grid.node_values_to_array(dist_values.squeeze())
+        dist_values = distance_solver(grid, source)
+        dist_2d = grid.node_values_to_array(dist_values)
         current_acc = window_op.update_raster_with_window(
             xy, current_acc, dist_2d, fun=jnp.add,
         )
