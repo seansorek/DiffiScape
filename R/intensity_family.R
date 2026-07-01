@@ -129,7 +129,11 @@ family_negbin <- function() {
                 nb_theta * log(nb_theta / (nb_theta + term2)) +
                 n_obs    * log(term2 / (nb_theta + term2))
 
-      negll <- -(term1 - term2 + nb_adj)
+      # Correct NB-PPP log-likelihood: term1 (conditional point log-lik) plus
+      # NB marginal log P(N=n_obs | mu=term2, size=nb_theta).  The integral
+      # term -term2 must NOT appear alongside the full NB pmf; n_obs*log(term2)
+      # is the correct normalizer from the conditional density given N.
+      negll <- -(term1 - n_obs * log(pmax(term2, 1e-300)) + nb_adj)
       if (!is.finite(negll)) negll <- 1e15
       negll
     },
@@ -349,7 +353,7 @@ family_zinb <- function() {
                 nb_theta * log(nb_theta / (nb_theta + term2)) +
                 n_obs    * log(term2 / (nb_theta + term2))
 
-      negll <- -(term1 - term2 + nb_adj)
+      negll <- -(term1 - n_obs * log(pmax(term2, 1e-300)) + nb_adj)
       if (!is.finite(negll)) negll <- 1e15
       negll
     },

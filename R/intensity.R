@@ -260,7 +260,7 @@ compute_intensity <- function(z, alpha, gamma,
              nb_theta * log(nb_theta / (nb_theta + term2)) +
              n_obs    * log(term2 / (nb_theta + term2))
 
-  negll <- -(term1 - term2 + nb_adj)
+  negll <- -(term1 - n_obs * log(pmax(term2, 1e-300)) + nb_adj)
   if (!is.finite(negll)) negll <- 1e15
   negll
 }
