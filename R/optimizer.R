@@ -208,7 +208,7 @@ optimize_resistance_gradient <- function(basis_stack,
          call. = FALSE)
   }
 
-  # --- Data preparation (same pattern as .prepare_torch_inputs) ---------------
+  # --- Data preparation (same pattern as .prepare_backend_inputs) -------------
   np <- reticulate::import("numpy", convert = FALSE)
 
   n_basis   <- terra::nlyr(basis_stack)
@@ -441,7 +441,10 @@ optimize_resistance_gradient <- function(basis_stack,
 #' @param resistance_params Resistance parameter vector or list.
 #' @param basis_stack A [terra::SpatRaster] of basis functions.
 #' @param obs_points Data.frame with `x, y` columns.
-#' @param distribution `"negbin"` or `"gam"`.
+#' @param distribution `"negbin"` or `"gam"`.  `NULL` is treated as
+#'   `"negbin"` (the formal default does not protect against an explicit
+#'   `NULL` argument, since R argument matching still binds the parameter
+#'   in that case).
 #' @param omniscape_settings List with `radius`, `block_size`, `cleanup`.
 #' @param intensity_config List from [default_intensity_config()].
 #' @param covariates_obs Named list of covariate vectors at obs.
@@ -455,12 +458,13 @@ optimize_resistance_gradient <- function(basis_stack,
 #'   available/background locations for selection function families.  When
 #'   supplied, bypasses raster quadrature and uses these locations with unit
 #'   weights instead.  `NULL` (default) uses standard area-weighted raster
-#'   integration.
+#'   integration.  Not supported when `distribution = "gam"`; supplying
+#'   both raises an error.
 #' @param available_covariates Named list of covariate vectors at
 #'   `available_points` locations.  Required when `available_points` is
 #'   supplied and the intensity model includes covariates.
 #' @return A list with `loglik`, `intensity_params`, `intensity_se`,
-#'   `hessian`, `total_time`, `convergence`, `distribution`.
+#'   `hessian`, `total_time`, `omniscape_time`, `convergence`, `distribution`.
 #' @export
 evaluate_full_model <- function(resistance_params,
                                 basis_stack,
@@ -476,6 +480,18 @@ evaluate_full_model <- function(resistance_params,
                                 family              = NULL,
                                 available_points    = NULL,
                                 available_covariates = NULL) {
+
+  # Guard against an explicit NULL distribution being passed through by a
+  # caller (e.g. ds_fit_intensity() forwarding opt_result$distribution
+  # without a %||% fallback). An explicit NULL argument still binds the
+  # formal, so the default above does not protect against it -- this line
+  # does.
+  distribution <- distribution %||% "negbin"
+
+  if (distribution == "gam" && !is.null(available_points)) {
+    stop("available_points is not supported with distribution = 'gam'.",
+         call. = FALSE)
+  }
 
   t0 <- Sys.time()
 
@@ -543,7 +559,7 @@ evaluate_full_model <- function(resistance_params,
   )
   if (distribution != "gam" && !is.null(family))
     int_args$family <- family
-  if (!is.null(avail_conn)) {
+  if (distribution != "gam" && !is.null(avail_conn)) {
     int_args$available_connectivity <- avail_conn
     int_args$available_covariates   <- available_covariates
   }

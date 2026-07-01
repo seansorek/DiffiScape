@@ -223,3 +223,162 @@ test_that("optimize_resistance works with EI acquisition", {
   expect_equal(result$acquisition, "EI")
   expect_false(is.null(result$xi_initial))
 })
+
+
+# ---- evaluate_full_model ------------------------------------------------
+# Characterization tests written ahead of the Problem A/B refactor (issue #2):
+# collapsing .prepare_jax_inputs()/.prepare_torch_inputs() into
+# .prepare_backend_inputs(), and routing ds_fit_intensity()'s "gradient"
+# branch through evaluate_full_model() instead of reimplementing it. These
+# tests lock in evaluate_full_model()'s existing/target behaviour so the
+# refactor can be verified mechanically.
+
+test_that("evaluate_full_model resolves omniscape radius/block_size via modifyList with partial overrides", {
+  skip_on_cran()
+
+  basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  obs_points  <- data.frame(x = 0, y = 0)
+  mock_conn   <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+
+  captured_radius     <- NULL
+  captured_block_size <- NULL
+
+  local_mocked_bindings(
+    create_resistance_surface = function(...) mock_conn,
+    ds_jax_connectivity = function(resistance, radius, block_size, ...) {
+      captured_radius     <<- radius
+      captured_block_size <<- block_size
+      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
+    },
+    extract_connectivity = function(...) 1.0,
+    fit_intensity_nb = function(...) {
+      list(loglik = -1, estimates = c(alpha = 0, gamma = 0), se = NULL,
+           hessian = NULL, convergence = 0L)
+    },
+    .package = "DiffiScape"
+  )
+
+  # Partial override: only radius is supplied; block_size should fall back
+  # to the default (5L) via utils::modifyList(omni_def, omniscape_settings).
+  evaluate_full_model(
+    resistance_params  = list(r_0 = 0),
+    basis_stack         = basis_stack,
+    obs_points          = obs_points,
+    omniscape_settings  = list(radius = 25L),
+    verbose             = FALSE
+  )
+
+  expect_equal(captured_radius, 25L)
+  expect_equal(captured_block_size, 5L)
+})
+
+
+test_that("evaluate_full_model forwards available_points/available_covariates into fit_intensity_nb", {
+  skip_on_cran()
+
+  basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  obs_points  <- data.frame(x = 0, y = 0)
+  avail_pts   <- data.frame(x = c(0, 1), y = c(0, 1))
+  mock_conn   <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+
+  captured_args <- NULL
+
+  local_mocked_bindings(
+    create_resistance_surface = function(...) mock_conn,
+    ds_jax_connectivity = function(...) {
+      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
+    },
+    extract_connectivity = function(connectivity, points, ...) {
+      rep(1.0, nrow(as.data.frame(points)))
+    },
+    fit_intensity_nb = function(...) {
+      captured_args <<- list(...)
+      list(loglik = -1, estimates = c(alpha = 0, gamma = 0), se = NULL,
+           hessian = NULL, convergence = 0L)
+    },
+    .package = "DiffiScape"
+  )
+
+  evaluate_full_model(
+    resistance_params     = list(r_0 = 0),
+    basis_stack            = basis_stack,
+    obs_points              = obs_points,
+    available_points        = avail_pts,
+    available_covariates    = list(elev = c(0.1, 0.2)),
+    verbose                 = FALSE
+  )
+
+  expect_false(is.null(captured_args$available_connectivity))
+  expect_equal(captured_args$available_connectivity, c(1.0, 1.0))
+  expect_equal(captured_args$available_covariates, list(elev = c(0.1, 0.2)))
+})
+
+
+test_that("evaluate_full_model errors clearly when distribution='gam' and available_points is supplied", {
+  skip_on_cran()
+
+  basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  obs_points  <- data.frame(x = 0, y = 0)
+  avail_pts   <- data.frame(x = c(0, 1), y = c(0, 1))
+  mock_conn   <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+
+  local_mocked_bindings(
+    create_resistance_surface = function(...) mock_conn,
+    ds_jax_connectivity = function(...) {
+      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
+    },
+    extract_connectivity = function(connectivity, points, ...) {
+      rep(1.0, nrow(as.data.frame(points)))
+    },
+    .package = "DiffiScape"
+  )
+
+  expect_error(
+    evaluate_full_model(
+      resistance_params  = list(r_0 = 0),
+      basis_stack          = basis_stack,
+      obs_points            = obs_points,
+      distribution          = "gam",
+      available_points      = avail_pts,
+      verbose               = FALSE
+    ),
+    "not supported with distribution"
+  )
+})
+
+
+test_that("evaluate_full_model defaults distribution to 'negbin' when explicitly passed NULL", {
+  skip_on_cran()
+
+  basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  obs_points  <- data.frame(x = 0, y = 0)
+  mock_conn   <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+
+  captured_distribution <- "unset"
+
+  local_mocked_bindings(
+    create_resistance_surface = function(...) mock_conn,
+    ds_jax_connectivity = function(...) {
+      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
+    },
+    extract_connectivity = function(...) 1.0,
+    fit_intensity_nb = function(...) {
+      list(loglik = -1, estimates = c(alpha = 0, gamma = 0), se = NULL,
+           hessian = NULL, convergence = 0L)
+    },
+    .package = "DiffiScape"
+  )
+
+  # Mimics ds_fit_intensity()'s surrogate branch calling with
+  # distribution = opt_result$distribution where opt_result$distribution is
+  # NULL -- this must not error and must resolve to "negbin" internally.
+  result <- evaluate_full_model(
+    resistance_params  = list(r_0 = 0),
+    basis_stack          = basis_stack,
+    obs_points            = obs_points,
+    distribution          = NULL,
+    verbose               = FALSE
+  )
+
+  expect_equal(result$distribution, "negbin")
+})

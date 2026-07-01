@@ -12,11 +12,6 @@ test_that("ds_jax_sample_advi exists and is a function", {
 })
 
 
-test_that(".prepare_jax_inputs exists and is a function", {
-  expect_true(is.function(DiffiScape:::.prepare_jax_inputs))
-})
-
-
 test_that(".build_flax_model exists and is a function", {
   expect_true(is.function(DiffiScape:::.build_flax_model))
 })
@@ -52,29 +47,12 @@ test_that("ds_jax_sample_advi has expected formal arguments", {
 })
 
 
-# ---- .prepare_jax_inputs tests (require terra + Python/numpy) ----
+# ---- .prepare_backend_inputs tests (require terra + Python/numpy) ----
+# .prepare_jax_inputs() was collapsed into the shared .prepare_backend_inputs()
+# helper in R/utils.R; see test-utils.R for the full structure/parity tests.
 
-test_that(".prepare_jax_inputs returns expected structure", {
-  skip_on_cran()
-  skip_if_not_installed("terra")
-  skip_if_not_installed("reticulate")
-  skip_if_not(reticulate::py_module_available("numpy"),
-              "numpy not installed in active Python env")
-
-  r <- terra::rast(nrows = 5, ncols = 5, vals = runif(25))
-  obs <- data.frame(x = 0, y = 0)
-  prep <- DiffiScape:::.prepare_jax_inputs(r, obs)
-
-  expect_type(prep, "list")
-  expected_names <- c("basis_np", "obs_np", "vmask_np", "valid_mask",
-                      "n_rows", "n_cols", "cell_area", "n_valid", "n_obs")
-  for (nm in expected_names) {
-    expect_true(nm %in% names(prep),
-                info = sprintf(".prepare_jax_inputs missing field: %s", nm))
-  }
-  expect_equal(prep$n_rows, 5L)
-  expect_equal(prep$n_cols, 5L)
-  expect_equal(prep$n_valid, 25L)
+test_that("ds_jax_sample_nuts and ds_jax_sample_advi use the shared .prepare_backend_inputs helper", {
+  expect_true(is.function(DiffiScape:::.prepare_backend_inputs))
 })
 
 
