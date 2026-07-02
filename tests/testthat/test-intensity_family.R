@@ -97,31 +97,28 @@ test_that("family_negbin negloglik is finite for extreme nb_theta", {
   expect_true(is.finite(nll_large))
 })
 
-test_that("family_negbin nb_adj is computed correctly for known inputs", {
+test_that("family_negbin negloglik matches correct NB-PPP formula for known inputs", {
   fam <- family_negbin()
-  # Use a setup where term1, term2, n_obs can be computed manually
   # alpha=0, gamma=0: lambda_obs = lambda_int = exp(0) = 1 everywhere
-  n_obs <- 10
-  n_int <- 20
-  z_obs <- rep(0, n_obs)
-  z_int <- rep(0, n_int)
-  int_w <- rep(1, n_int)   # term2 = sum(int_w * 1) = 20
-  obs_w <- rep(1, n_obs)   # n_obs = 10
+  n_obs_val <- 10
+  n_int_val <- 20
+  z_obs <- rep(0, n_obs_val)
+  z_int <- rep(0, n_int_val)
+  int_w <- rep(1, n_int_val)   # term2 = sum(int_w * 1) = 20
+  obs_w <- rep(1, n_obs_val)   # n_obs = 10
 
   log_nb_theta <- log(2)
   nb_theta     <- 2
   term2        <- 20
   n_obs_sum    <- 10
 
-  # Manual nb_adj
-  expected_nb_adj <- lgamma(n_obs_sum + nb_theta) - lgamma(nb_theta) -
-    lgamma(n_obs_sum + 1) +
+  nb_adj <- lgamma(n_obs_sum + nb_theta) - lgamma(nb_theta) +
     nb_theta * log(nb_theta / (nb_theta + term2)) +
     n_obs_sum * log(term2 / (nb_theta + term2))
 
+  # Correct formula: term1 - n_obs*log(term2) + nb_adj
   # term1 = sum(obs_w * log(1)) = 0
-  # negll = -(0 - 20 + nb_adj)
-  expected_nll <- -(0 - 20 + expected_nb_adj)
+  expected_nll <- -(0 - n_obs_sum * log(term2) + nb_adj)
 
   nll <- fam$negloglik_fn(
     theta       = c(0, 0, log_nb_theta),
@@ -129,6 +126,28 @@ test_that("family_negbin nb_adj is computed correctly for known inputs", {
     int_weights = int_w, obs_weights = obs_w
   )
   expect_equal(nll, expected_nll, tolerance = 1e-8)
+})
+
+test_that("family_negbin nests family_poisson as nb_theta -> Inf", {
+  # As nb_theta -> Inf, NB(mu, size=nb_theta) -> Poisson(mu).
+  # So family_negbin log-lik should approach family_poisson log-lik.
+  fam_nb  <- family_negbin()
+  fam_poi <- family_poisson()
+  inp <- make_ppp_inputs(seed = 7)
+
+  theta_base <- c(-3, 0.5)
+  nll_poi <- fam_poi$negloglik_fn(
+    theta = theta_base,
+    z_obs = inp$z_obs, z_int = inp$z_int,
+    int_weights = inp$int_weights, obs_weights = inp$obs_weights
+  )
+  # NB with very large nb_theta should give nearly the same nll
+  nll_nb_large <- fam_nb$negloglik_fn(
+    theta = c(theta_base, log(1e8)),
+    z_obs = inp$z_obs, z_int = inp$z_int,
+    int_weights = inp$int_weights, obs_weights = inp$obs_weights
+  )
+  expect_equal(nll_nb_large, nll_poi, tolerance = 1e-3)
 })
 
 test_that("family_negbin deviance_residuals have correct length and are finite", {
