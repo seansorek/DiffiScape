@@ -112,8 +112,7 @@ test_that("family_negbin negloglik matches correct NB-PPP formula for known inpu
   term2        <- 20
   n_obs_sum    <- 10
 
-  nb_adj <- lgamma(n_obs_sum + nb_theta) - lgamma(nb_theta) -
-    lgamma(n_obs_sum + 1) +
+  nb_adj <- lgamma(n_obs_sum + nb_theta) - lgamma(nb_theta) +
     nb_theta * log(nb_theta / (nb_theta + term2)) +
     n_obs_sum * log(term2 / (nb_theta + term2))
 

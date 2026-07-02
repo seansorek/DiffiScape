@@ -255,8 +255,7 @@ compute_intensity <- function(z, alpha, gamma,
 
   # NB adjustment
   n_obs   <- sum(obs_weights)
-  nb_adj  <- lgamma(n_obs + nb_theta) - lgamma(nb_theta) -
-             lgamma(n_obs + 1) +
+  nb_adj  <- lgamma(n_obs + nb_theta) - lgamma(nb_theta) +
              nb_theta * log(nb_theta / (nb_theta + term2)) +
              n_obs    * log(term2 / (nb_theta + term2))
 
