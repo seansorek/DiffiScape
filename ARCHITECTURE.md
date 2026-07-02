@@ -60,7 +60,7 @@ Laplacian solve → current density) is implemented in two places:
    — pure-JAX with `jax.vmap`, `jax.grad` for autodiff. Used by both `surrogate` and `gradient`
    solvers. Includes cumulative current (global and windowed Omniscape-style).
 
-2. **`inst/python/diff_cs/`** (legacy, to be consolidated)
+2. **`inst/python/diff_cs/`**
    — PyTorch implementations. Used by `torch` / `irl` solvers. Includes custom autograd
    `Function`s wrapping the circuit solve for backpropagation.
 
@@ -78,19 +78,25 @@ The JAX backend is organized into clean, reusable modules:
 
 ### PyTorch backend (`inst/python/diff_cs/`)
 
-`05_torch_pipeline.py` is the entry-point module loaded by reticulate
-(`R/torch_bridge.R` imports it; it lazily loads `03`/`04` by file path). It
-contains:
+`05_torch_pipeline.py` is the module loaded by reticulate
+(`R/torch_bridge.R` imports it by exact path; `R` resolves entry points off it
+by string name via `ds_torch_call()`). It is a **thin re-export shim** — the
+implementation lives in the sibling `torch_pipeline/` package, organized into:
 
-- Autograd `Function`s wrapping the circuit solves (`_CircuitSolveFn`,
-  `_AbsorptionCircuitSolveFn`, `_DiffOmniscapeSolveFn`).
-- Resistance nets: `ResistanceNet` (MLP), `ConvResistanceNet`, `IRLResistanceNet`,
-  `SplineResistanceNet` (GAM-style).
-- Entry points: `run_torch_optimization` (MAP), `run_langevin_sampling` (MALA),
-  `run_hmc_sampling` (NUTS), `run_advi`, and `verify_*_gradient` finite-difference
-  checks.
-- Shared numerical defaults live in the `DEFAULT_*` constants block near the top
-  (resistance clamp range, CG tolerance).
+| Module | Responsibility |
+|--------|---|
+| `torch_pipeline/constants.py` | Shared numerical defaults (`DEFAULT_R_MIN/MAX/CLAMP_BETA/CG_TOL`) and GPU/cupy availability flags. |
+| `torch_pipeline/_module_loaders.py` | Lazy file-path imports of `03_circuit_solver.py` / `04_diff_omniscape.py` (siblings of `05_torch_pipeline.py`, one directory up from this package). |
+| `torch_pipeline/autograd_functions.py` | Cupy/torch DLPack bridges, adjoint-gradient math, and the custom `torch.autograd.Function` subclasses wrapping the circuit solves (`_CircuitSolveFn`, `_AbsorptionCircuitSolveFn`, `_DiffOmniscapeSolveFn`) plus the diff_omniscape bilinear interpolation/adjoint helpers. |
+| `torch_pipeline/resistance_nets.py` | Resistance nets — `ResistanceNet` (MLP), `ConvResistanceNet`, `IRLResistanceNet`, `SplineResistanceNet` (P-spline GAM, with its B-spline basis helpers) — plus the shared `_ppp_loglik` Poisson log-likelihood. |
+| `torch_pipeline/verify_gradients.py` | Finite-difference gradient checks (`verify_circuit_gradient`, `verify_conv_gradient`, `verify_softrl_gradient`, `verify_spline_gradient`). |
+| `torch_pipeline/optimization.py` | `run_torch_optimization` — MAP fitting via Adam. |
+| `torch_pipeline/samplers/common.py` | Shared Bayesian-sampler setup: `_setup_sampling_state` (checkpoint loading, network reconstruction, parameter collection) and `_compute_ess_chain` (effective sample size), used by all three samplers below. |
+| `torch_pipeline/samplers/langevin.py`, `hmc.py`, `advi.py` | `run_langevin_sampling` (MALA/ULA), `run_hmc_sampling` (NUTS), `run_advi`. |
+
+`05_torch_pipeline.py` itself stays at its original path/name (R and the
+Python test suite both load it there) and re-exports every top-level name the
+pre-split monolith had, so neither R nor existing tests needed to change.
 
 ## Data flow (end to end)
 

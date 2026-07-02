@@ -388,16 +388,16 @@ def forward_solve(
     if sources is None:
         sources = grid.coord_to_index(jnp.array([0]), jnp.array([0]))
 
-    distance = ResistanceDistance(solver=AMJaxCGSolver())
-    state = distance.init(grid)
+    distance = ResistanceDistance()
 
     t0 = time.time()
-    dist_values = distance(grid, nodes=sources, state=state)
+    dist_values = distance(grid, sources)
     elapsed = time.time() - t0
 
-    connectivity = np.array(grid.node_values_to_array(
-        dist_values.squeeze() if dist_values.ndim > 1 else dist_values
-    ))
+    # Multi-source: average distance over all sources before reshaping
+    if dist_values.ndim > 1:
+        dist_values = jnp.mean(dist_values, axis=0)
+    connectivity = np.array(grid.node_values_to_array(dist_values))
 
     return {
         "connectivity": connectivity,
@@ -500,7 +500,7 @@ def _connectivity_objective(params, basis_values, valid_mask, n_rows, n_cols,
 
     permeability = prepare_permeability(surface_2d, parameterization)
     grid = GridGraph(grid=permeability, fun=_mean_weight)
-    distance = ResistanceDistance(solver=AMJaxCGSolver())
+    distance = ResistanceDistance()
     source = grid.coord_to_index(jnp.array([0]), jnp.array([0]))
     connectivity = distance(grid, source)
 

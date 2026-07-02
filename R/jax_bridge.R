@@ -362,7 +362,7 @@ ds_install_jax_deps <- function(method  = "auto",
          call. = FALSE)
   }
 
-  pkgs <- c("jax", "jaxlib", "jaxscape", "numpy", "scipy",
+  pkgs <- c("jax", "jaxlib", "jaxscape", "amjax", "lineax", "numpy",
              "jaxopt", "optax", "flax", "numpyro")
   if (isTRUE(gpu)) {
     message("Note: for GPU support, install JAX with CUDA following ",
@@ -376,74 +376,12 @@ ds_install_jax_deps <- function(method  = "auto",
 
 
 # ============================================================================
-# Shared data-preparation helper
-# ============================================================================
-
-#' Prepare inputs for JAX-backed sampling and optimisation
-#'
-#' Converts a SpatRaster basis stack and observation coordinates into numpy
-#' arrays suitable for the bundled `diffiscape_jax` Python modules.  Mirrors
-#' the internal `.prepare_torch_inputs()` helper so any downstream R code can
-#' treat both backends symmetrically.
-#'
-#' @param basis_stack A [terra::SpatRaster] with K covariate layers.
-#' @param obs_points Data.frame with `x, y` columns (projected coords).
-#' @return A named list with:
-#'   \describe{
-#'     \item{basis_np}{numpy array, shape (n_valid, K).}
-#'     \item{obs_np}{numpy array of observation counts per valid cell.}
-#'     \item{vmask_np}{numpy boolean mask, shape (n_rows * n_cols,).}
-#'     \item{valid_mask}{Logical vector (R side).}
-#'     \item{n_rows, n_cols}{Integer grid dimensions.}
-#'     \item{cell_area}{Numeric cell area in map units squared.}
-#'     \item{n_valid}{Number of valid (non-NA) cells.}
-#'     \item{n_obs}{Total observation count.}
-#'   }
-#' @keywords internal
-.prepare_jax_inputs <- function(basis_stack, obs_points) {
-
-  np <- reticulate::import("numpy", convert = FALSE)
-
-  n_rows    <- terra::nrow(basis_stack)
-  n_cols    <- terra::ncol(basis_stack)
-  cell_area <- prod(terra::res(basis_stack))
-
-  basis_matrix <- as.matrix(basis_stack)
-  valid_mask   <- stats::complete.cases(basis_matrix)
-  basis_values <- basis_matrix[valid_mask, , drop = FALSE]
-
-  cell_indices <- terra::cellFromXY(
-    basis_stack,
-    cbind(obs_points$x, obs_points$y)
-  )
-  valid_obs <- !is.na(cell_indices) & valid_mask[cell_indices]
-  if (any(!valid_obs)) {
-    message(sprintf("    Dropped %d obs outside valid cells",
-                    sum(!valid_obs)))
-  }
-  cell_indices <- cell_indices[valid_obs]
-
-  obs_table        <- table(cell_indices)
-  obs_counts_full  <- rep(0L, terra::ncell(basis_stack))
-  obs_counts_full[as.integer(names(obs_table))] <- as.integer(obs_table)
-  obs_counts_valid <- obs_counts_full[valid_mask]
-
-  list(
-    basis_np   = np$array(basis_values, dtype = np$float64),
-    obs_np     = np$array(as.double(obs_counts_valid), dtype = np$float64),
-    vmask_np   = np$array(valid_mask, dtype = np$bool_),
-    valid_mask = valid_mask,
-    n_rows     = n_rows,
-    n_cols     = n_cols,
-    cell_area  = cell_area,
-    n_valid    = sum(valid_mask),
-    n_obs      = sum(obs_counts_valid)
-  )
-}
-
-
-# ============================================================================
 # Bayesian samplers via NumPyro
+# ============================================================================
+#
+# Data preparation for these samplers uses the shared .prepare_backend_inputs()
+# helper (R/utils.R), which also backs the PyTorch pipeline in
+# R/torch_pipeline.R.
 # ============================================================================
 
 #' Build a Flax resistance model and initialise parameters
@@ -567,7 +505,7 @@ ds_jax_sample_nuts <- function(basis_stack,
   }
 
   if (verbose) message("\n  Preparing data for NUTS sampling (JAX)...")
-  prep <- .prepare_jax_inputs(basis_stack, obs_points)
+  prep <- .prepare_backend_inputs(basis_stack, obs_points)
   if (verbose) {
     message(sprintf("    Grid: %d x %d (%d valid cells)",
                     prep$n_rows, prep$n_cols, prep$n_valid))
@@ -686,7 +624,7 @@ ds_jax_sample_advi <- function(basis_stack,
   }
 
   if (verbose) message("\n  Preparing data for ADVI (JAX)...")
-  prep <- .prepare_jax_inputs(basis_stack, obs_points)
+  prep <- .prepare_backend_inputs(basis_stack, obs_points)
   if (verbose) {
     message(sprintf("    Grid: %d x %d (%d valid cells)",
                     prep$n_rows, prep$n_cols, prep$n_valid))

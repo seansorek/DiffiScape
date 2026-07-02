@@ -18,51 +18,9 @@
 #
 # Builds the numpy inputs the Python backend expects from a SpatRaster of
 # basis layers and a data.frame of observation coordinates. Shared by every
-# entry point in this file.
+# entry point in this file via the .prepare_backend_inputs() helper in
+# R/utils.R (also used by the JAX bridge in R/jax_bridge.R).
 #
-#' @keywords internal
-.prepare_torch_inputs <- function(basis_stack, obs_points) {
-
-  np <- reticulate::import("numpy", convert = FALSE)
-
-  n_rows    <- terra::nrow(basis_stack)
-  n_cols    <- terra::ncol(basis_stack)
-  cell_area <- prod(terra::res(basis_stack))
-
-  basis_matrix <- as.matrix(basis_stack)
-  valid_mask   <- stats::complete.cases(basis_matrix)
-  basis_values <- basis_matrix[valid_mask, , drop = FALSE]
-
-  cell_indices <- terra::cellFromXY(
-    basis_stack,
-    cbind(obs_points$x, obs_points$y)
-  )
-  valid_obs <- !is.na(cell_indices) & valid_mask[cell_indices]
-  if (any(!valid_obs)) {
-    message(sprintf("    Dropped %d obs outside valid cells",
-                    sum(!valid_obs)))
-  }
-  cell_indices <- cell_indices[valid_obs]
-
-  obs_table        <- table(cell_indices)
-  obs_counts_full  <- rep(0L, terra::ncell(basis_stack))
-  obs_counts_full[as.integer(names(obs_table))] <- as.integer(obs_table)
-  obs_counts_valid <- obs_counts_full[valid_mask]
-
-  list(
-    basis_np   = np$array(basis_values, dtype = np$float64),
-    obs_np     = np$array(as.double(obs_counts_valid), dtype = np$float64),
-    vmask_np   = np$array(valid_mask, dtype = np$bool_),
-    valid_mask = valid_mask,
-    n_rows     = n_rows,
-    n_cols     = n_cols,
-    cell_area  = cell_area,
-    n_valid    = sum(valid_mask),
-    n_obs      = sum(obs_counts_valid)
-  )
-}
-
-
 # --------------- Torch pipeline configuration --------------------------------
 
 #' Default PyTorch pipeline configuration
@@ -417,7 +375,7 @@ run_torch_pipeline <- function(basis_stack,
   np <- reticulate::import("numpy", convert = FALSE)
 
   message("\n  Preparing data for PyTorch pipeline...")
-  prep <- .prepare_torch_inputs(basis_stack, obs_points)
+  prep <- .prepare_backend_inputs(basis_stack, obs_points)
   message(sprintf("    Grid: %d x %d (%d valid cells)",
                   prep$n_rows, prep$n_cols, prep$n_valid))
   message(sprintf("    Observations: %d GPS fixes", prep$n_obs))
@@ -973,7 +931,7 @@ run_bayesian_sampling <- function(basis_stack,
   if (is.null(output_dir)) output_dir <- model_dir
 
   message("\n  Preparing data for Langevin sampling...")
-  prep <- .prepare_torch_inputs(basis_stack, obs_points)
+  prep <- .prepare_backend_inputs(basis_stack, obs_points)
   message(sprintf("    Grid: %d x %d (%d valid cells)",
                   prep$n_rows, prep$n_cols, prep$n_valid))
   message(sprintf("    Observations: %d GPS fixes", prep$n_obs))
@@ -1079,7 +1037,7 @@ run_bayesian_sampling_hmc <- function(basis_stack,
   if (is.null(output_dir)) output_dir <- model_dir
 
   message("\n  Preparing data for HMC/NUTS sampling...")
-  prep <- .prepare_torch_inputs(basis_stack, obs_points)
+  prep <- .prepare_backend_inputs(basis_stack, obs_points)
   message(sprintf("    Grid: %d x %d (%d valid cells)",
                   prep$n_rows, prep$n_cols, prep$n_valid))
   message(sprintf("    Observations: %d GPS fixes", prep$n_obs))
@@ -1193,7 +1151,7 @@ run_advi <- function(basis_stack,
   if (is.null(output_dir)) output_dir <- model_dir
 
   message("\n  Preparing data for ADVI...")
-  prep <- .prepare_torch_inputs(basis_stack, obs_points)
+  prep <- .prepare_backend_inputs(basis_stack, obs_points)
   message(sprintf("    Grid: %d x %d (%d valid cells)",
                   prep$n_rows, prep$n_cols, prep$n_valid))
   message(sprintf("    Observations: %d GPS fixes", prep$n_obs))

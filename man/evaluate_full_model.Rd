@@ -28,7 +28,10 @@ evaluate_full_model(
 
 \item{obs_points}{Data.frame with \verb{x, y} columns.}
 
-\item{distribution}{\code{"negbin"} or \code{"gam"}.}
+\item{distribution}{\code{"negbin"} or \code{"gam"}.  \code{NULL} is treated as
+\code{"negbin"} (the formal default does not protect against an explicit
+\code{NULL} argument, since R argument matching still binds the parameter
+in that case).}
 
 \item{omniscape_settings}{List with \code{radius}, \code{block_size}, \code{cleanup}.}
 
@@ -51,7 +54,8 @@ default for the chosen \code{distribution}.}
 available/background locations for selection function families.  When
 supplied, bypasses raster quadrature and uses these locations with unit
 weights instead.  \code{NULL} (default) uses standard area-weighted raster
-integration.}
+integration.  Not supported when \code{distribution = "gam"}; supplying
+both raises an error.}
 
 \item{available_covariates}{Named list of covariate vectors at
 \code{available_points} locations.  Required when \code{available_points} is
@@ -59,7 +63,7 @@ supplied and the intensity model includes covariates.}
 }
 \value{
 A list with \code{loglik}, \code{intensity_params}, \code{intensity_se},
-\code{hessian}, \code{total_time}, \code{convergence}, \code{distribution}.
+\code{hessian}, \code{total_time}, \code{omniscape_time}, \code{convergence}, \code{distribution}.
 }
 \description{
 Creates a resistance surface, runs connectivity computation, and fits

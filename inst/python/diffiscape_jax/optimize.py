@@ -135,7 +135,7 @@ def run_parametric_optimization(
     loss_history = []
 
     if method == "lbfgs":
-        solver = jaxopt.LBFGS(fun=neg_loglik, maxiter=n_epochs, tol=1e-6)
+        solver = jaxopt.LBFGS(fun=neg_loglik, maxiter=n_epochs, tol=1e-6, jit=False)
         result = solver.run(params)
         best_params = result.params
         best_loss = float(neg_loglik(best_params))
@@ -304,7 +304,6 @@ def run_neural_optimization(
     from .core import prepare_permeability, _mean_weight, ppp_loglik
 
     from jaxscape import GridGraph, ResistanceDistance
-    from jaxscape.solvers import AMJaxCGSolver
 
     rng = jax.random.PRNGKey(seed)
 
@@ -379,7 +378,7 @@ def run_neural_optimization(
         # Permeability conversion and circuit solve
         perm = prepare_permeability(surface_2d, parameterization)
         grid = GridGraph(grid=perm, fun=_mean_weight)
-        dist_solver = ResistanceDistance(solver=AMJaxCGSolver())
+        dist_solver = ResistanceDistance()
         source = grid.coord_to_index(jnp.array([0]), jnp.array([0]))
         connectivity = dist_solver(grid, source)
 

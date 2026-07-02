@@ -78,3 +78,21 @@ or Flax neural-network resistance when \code{model_type} is set), or
 \code{\link[=run_torch_pipeline]{run_torch_pipeline()}} (PyTorch neural-network resistance), depending
 on \code{solver}.
 }
+\section{Config conventions}{
+
+The three backend families are deliberately \emph{not} unified onto a common
+config shape -- each keeps its pre-existing convention, and dispatch
+(via an internal \code{solver_spec()} S3 mechanism) is the one place that
+knows how to extract the right sublist for its solver:
+\describe{
+\item{\code{solver = "surrogate"}}{Plain top-level \code{config} entries (see
+\code{\link[=default_optimizer_config]{default_optimizer_config()}}). No sublist.}
+\item{\code{solver = "gradient"} / \code{"enzyme"}}{Top-level \code{config} entries
+for the parametric L-BFGS/Adam path, plus optional
+\code{config$model_config} / \code{config$optim_config} sublists when
+\code{model_type} selects a neural resistance model.}
+\item{\code{solver = "torch"} / \code{"irl"}}{A \code{config$torch} sublist forwarded
+as named arguments to \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.}
+}
+}
+

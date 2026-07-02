@@ -32,7 +32,7 @@ jobs:
         continue-on-error: true
 
   test:
-    name: Python ${{ matrix.python-version }}
+    name: Python ${{ matrix.python-version }} (torch)
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -58,14 +58,52 @@ jobs:
         run: |
           pytest tests/ \
             --cov=diff_cs \
-            --cov-report=xml \
+            --cov-report=xml:coverage-torch.xml \
             --cov-report=term-missing \
             -v
 
       - uses: codecov/codecov-action@v4
         if: matrix.python-version == '3.11'
         with:
-          files: inst/python/coverage.xml
+          files: inst/python/coverage-torch.xml
           flags: python
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+
+  test-jax:
+    name: Python ${{ matrix.python-version }} (jax)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: inst/python/diffiscape_jax/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r inst/python/diffiscape_jax/requirements.txt pytest-cov
+
+      - name: Run tests with coverage
+        working-directory: inst/python
+        run: |
+          pytest diffiscape_jax/tests/ \
+            --cov=diffiscape_jax \
+            --cov-report=xml:coverage-jax.xml \
+            --cov-report=term-missing \
+            -v
+
+      - uses: codecov/codecov-action@v4
+        if: matrix.python-version == '3.11'
+        with:
+          files: inst/python/coverage-jax.xml
+          flags: jax
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false

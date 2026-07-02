@@ -1,12 +1,12 @@
-# Codecov configuration for DiffiScape's three-language codebase.
+# Codecov configuration for DiffiScape's R + Python (JAX/torch) codebase.
 #
-# Coverage is uploaded by three separate workflows, each with its own flag:
-#   - r      : R/   (test-coverage.yml, via covr::codecov)
-#   - python : inst/python/diff_cs/   (python.yml, via pytest-cov)
-#   - julia  : inst/julia/DiffiScape/src/   (julia.yml, via --code-coverage)
+# Coverage is uploaded by separate workflows, each with its own flag:
+#   - r      : R/                          (test-coverage.yml, via covr::codecov)
+#   - python : inst/python/diff_cs/        (python.yml, via pytest-cov)
+#   - jax    : inst/python/diffiscape_jax/ (python.yml, via pytest-cov)
 #
 # `carryforward: true` keeps a flag's last-known coverage when a PR touches only
-# one language, so e.g. a Python-only PR doesn't blank out the R/Julia numbers.
+# one language/backend, so e.g. a Python-only PR doesn't blank out the R numbers.
 
 codecov:
   require_ci_to_pass: true
@@ -24,9 +24,9 @@ flags:
     paths:
       - inst/python/diff_cs/
     carryforward: true
-  julia:
+  jax:
     paths:
-      - inst/julia/DiffiScape/src/
+      - inst/python/diffiscape_jax/
     carryforward: true
 
 # Components surface per-language coverage in the Codecov dashboard.
@@ -40,10 +40,10 @@ component_management:
       name: Python torch backend
       paths:
         - inst/python/diff_cs/
-    - component_id: julia_enzyme
-      name: Julia/Enzyme backend
+    - component_id: python_jax
+      name: Python JAX backend
       paths:
-        - inst/julia/DiffiScape/src/
+        - inst/python/diffiscape_jax/
 
 coverage:
   status:

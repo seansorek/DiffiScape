@@ -1,6 +1,8 @@
 # Tests for R/torch_pipeline.R
-# Covers default_torch_config() (no external deps) and
-# .prepare_torch_inputs() (skipped without reticulate).
+# Covers default_torch_config() (no external deps). The shared
+# .prepare_backend_inputs() helper (formerly .prepare_torch_inputs(), now in
+# R/utils.R) is exercised here via mocks on the Bayesian sampler entry points,
+# and directly (with real terra/numpy) in test-utils.R.
 
 # ---- default_torch_config --------------------------------------------------
 
@@ -123,63 +125,15 @@ test_that("irl_resistance_model errors without a resistance_raster", {
 })
 
 
-# ---- .prepare_torch_inputs -------------------------------------------------
+# ---- .prepare_backend_inputs (formerly .prepare_torch_inputs) ---------------
+# .prepare_torch_inputs() was collapsed into the shared .prepare_backend_inputs()
+# helper in R/utils.R; see test-utils.R for the structure/cell_area/grid-dims/
+# parity tests previously duplicated here.
 
-test_that(".prepare_torch_inputs drops obs outside valid cells with message", {
-  skip_if_not_installed("reticulate")
-  skip_if_not_installed("terra")
-
-  # Create a small raster with an NA region
-  r <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 5,
-                   ymin = 0, ymax = 5)
-  vals <- runif(25)
-  vals[1] <- NA   # top-left cell is invalid
-  terra::values(r) <- vals
-  basis_stack <- c(r, r)
-
-  # One point inside a valid cell, one that will map to NA cell
-  obs_in_valid <- data.frame(x = 2.5, y = 2.5)
-  obs_in_na    <- data.frame(x = 100, y = 100)  # outside extent
-  obs_points   <- rbind(obs_in_valid, obs_in_na)
-
-  expect_message(
-    result <- DiffiScape:::.prepare_torch_inputs(basis_stack, obs_points),
-    "Dropped"
-  )
-  # Only the valid obs contributes
-  expect_equal(result$n_obs, 1L)
-})
-
-test_that(".prepare_torch_inputs computes cell_area correctly", {
-  skip_if_not_installed("reticulate")
-  skip_if_not_installed("terra")
-
-  r <- terra::rast(nrows = 4, ncols = 4, xmin = 0, xmax = 2,
-                   ymin = 0, ymax = 2)
-  terra::values(r) <- runif(16)
-  basis_stack <- c(r, r)
-
-  obs_points <- data.frame(x = 1.0, y = 1.0)
-  result     <- DiffiScape:::.prepare_torch_inputs(basis_stack, obs_points)
-
-  # Cell resolution is 0.5 x 0.5, so area = 0.25
-  expect_equal(result$cell_area, 0.25, tolerance = 1e-8)
-})
-
-test_that(".prepare_torch_inputs returns correct grid dimensions", {
-  skip_if_not_installed("reticulate")
-  skip_if_not_installed("terra")
-
-  r <- terra::rast(nrows = 6, ncols = 8, xmin = 0, xmax = 8,
-                   ymin = 0, ymax = 6)
-  terra::values(r) <- runif(48)
-  basis_stack <- c(r, r)
-
-  obs_points <- data.frame(x = 4, y = 3)
-  result     <- DiffiScape:::.prepare_torch_inputs(basis_stack, obs_points)
-
-  expect_equal(result$n_rows, 6L)
-  expect_equal(result$n_cols, 8L)
+test_that("run_torch_pipeline uses the shared .prepare_backend_inputs helper", {
+  expect_true(is.function(DiffiScape:::.prepare_backend_inputs))
+  expect_true(".prepare_backend_inputs" %in%
+              all.names(body(run_torch_pipeline)))
 })
 
 
@@ -309,7 +263,7 @@ test_that("run_bayesian_sampling dispatches to run_langevin_sampling", {
 
   local_mocked_bindings(
     ds_torch_setup = function(...) invisible(TRUE),
-    .prepare_torch_inputs = function(...) {
+    .prepare_backend_inputs = function(...) {
       list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
            vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
            n_obs = 1L, cell_area = 0.04)
@@ -348,7 +302,7 @@ test_that("run_bayesian_sampling_hmc dispatches to run_hmc_sampling", {
 
   local_mocked_bindings(
     ds_torch_setup = function(...) invisible(TRUE),
-    .prepare_torch_inputs = function(...) {
+    .prepare_backend_inputs = function(...) {
       list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
            vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
            n_obs = 1L, cell_area = 0.04)
@@ -383,7 +337,7 @@ test_that("run_advi dispatches to run_advi Python function", {
 
   local_mocked_bindings(
     ds_torch_setup = function(...) invisible(TRUE),
-    .prepare_torch_inputs = function(...) {
+    .prepare_backend_inputs = function(...) {
       list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
            vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
            n_obs = 1L, cell_area = 0.04)
@@ -417,7 +371,7 @@ test_that("run_bayesian_sampling calls ds_torch_setup when not initialized", {
 
   local_mocked_bindings(
     ds_torch_setup = function(...) { setup_called <<- TRUE; invisible(TRUE) },
-    .prepare_torch_inputs = function(...) {
+    .prepare_backend_inputs = function(...) {
       list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
            vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
            n_obs = 1L, cell_area = 0.04)
@@ -453,7 +407,7 @@ test_that("run_bayesian_sampling skips ds_torch_setup when already initialized",
 
   local_mocked_bindings(
     ds_torch_setup = function(...) { setup_called <<- TRUE },
-    .prepare_torch_inputs = function(...) {
+    .prepare_backend_inputs = function(...) {
       list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
            vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
            n_obs = 1L, cell_area = 0.04)
@@ -485,7 +439,7 @@ test_that("run_bayesian_sampling forwards custom output_dir", {
 
   local_mocked_bindings(
     ds_torch_setup = function(...) invisible(TRUE),
-    .prepare_torch_inputs = function(...) {
+    .prepare_backend_inputs = function(...) {
       list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
            vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
            n_obs = 1L, cell_area = 0.04)
@@ -519,7 +473,7 @@ test_that("run_bayesian_sampling_hmc warns on divergent transitions", {
 
   local_mocked_bindings(
     ds_torch_setup = function(...) invisible(TRUE),
-    .prepare_torch_inputs = function(...) {
+    .prepare_backend_inputs = function(...) {
       list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
            vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
            n_obs = 1L, cell_area = 0.04)
@@ -551,7 +505,7 @@ test_that("run_bayesian_sampling_hmc does not warn with 0 divergences", {
 
   local_mocked_bindings(
     ds_torch_setup = function(...) invisible(TRUE),
-    .prepare_torch_inputs = function(...) {
+    .prepare_backend_inputs = function(...) {
       list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
            vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
            n_obs = 1L, cell_area = 0.04)
@@ -582,7 +536,7 @@ test_that("run_advi warns when not converged", {
 
   local_mocked_bindings(
     ds_torch_setup = function(...) invisible(TRUE),
-    .prepare_torch_inputs = function(...) {
+    .prepare_backend_inputs = function(...) {
       list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
            vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
            n_obs = 1L, cell_area = 0.04)
@@ -615,7 +569,7 @@ test_that("run_advi does not warn when converged", {
 
   local_mocked_bindings(
     ds_torch_setup = function(...) invisible(TRUE),
-    .prepare_torch_inputs = function(...) {
+    .prepare_backend_inputs = function(...) {
       list(basis_np = matrix(0, 1, 1), obs_np = matrix(0, 1, 1),
            vmask_np = TRUE, n_rows = 5L, n_cols = 5L, n_valid = 25L,
            n_obs = 1L, cell_area = 0.04)
