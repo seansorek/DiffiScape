@@ -124,12 +124,16 @@ family_negbin <- function() {
       term2 <- sum(int_weights * lambda_int)
 
       n_obs  <- sum(obs_weights)
-      nb_adj <- lgamma(n_obs + nb_theta) - lgamma(nb_theta) -
-                lgamma(n_obs + 1) +
+      nb_adj <- lgamma(n_obs + nb_theta) - lgamma(nb_theta) +
                 nb_theta * log(nb_theta / (nb_theta + term2)) +
                 n_obs    * log(term2 / (nb_theta + term2))
 
-      negll <- -(term1 - term2 + nb_adj)
+      # Correct NB-PPP log-likelihood: term1 (conditional point log-lik) plus
+      # NB marginal log P(N=n_obs | mu=term2, size=nb_theta), derived from the
+      # Cox-process (Gamma-mixed Poisson) representation.  The pmf must NOT
+      # include an lgamma(n_obs + 1) factorial term: as in the Poisson PPP
+      # likelihood, the unordered point pattern density already cancels it.
+      negll <- -(term1 - n_obs * log(pmax(term2, 1e-300)) + nb_adj)
       if (!is.finite(negll)) negll <- 1e15
       negll
     },
@@ -344,12 +348,11 @@ family_zinb <- function() {
       term2 <- sum(int_weights * (1 - pi_val) * lambda_int)
 
       n_obs  <- sum(obs_weights)
-      nb_adj <- lgamma(n_obs + nb_theta) - lgamma(nb_theta) -
-                lgamma(n_obs + 1) +
+      nb_adj <- lgamma(n_obs + nb_theta) - lgamma(nb_theta) +
                 nb_theta * log(nb_theta / (nb_theta + term2)) +
                 n_obs    * log(term2 / (nb_theta + term2))
 
-      negll <- -(term1 - term2 + nb_adj)
+      negll <- -(term1 - n_obs * log(pmax(term2, 1e-300)) + nb_adj)
       if (!is.finite(negll)) negll <- 1e15
       negll
     },
