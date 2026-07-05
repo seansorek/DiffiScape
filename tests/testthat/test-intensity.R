@@ -48,7 +48,7 @@ test_that("fit_intensity_nb returns valid fit on synthetic data", {
   skip_on_cran()
   set.seed(42)
 
-  # Test the .nb_negloglik_cached function with correct args
+  # Test the negloglik_fn actually used by fit_intensity_nb() via family_negbin()
   n_obs <- 80
   n_int <- 400
   total <- n_obs + n_int
@@ -58,7 +58,7 @@ test_that("fit_intensity_nb returns valid fit on synthetic data", {
   obs_w  <- rep(1, n_obs)
   int_w  <- rep(0.01, n_int)
 
-  nll <- DiffiScape:::.nb_negloglik_cached(
+  nll <- family_negbin()$negloglik_fn(
     theta       = c(-3, 0.5, log(2)),
     z_obs       = z_obs,
     z_int       = z_int,

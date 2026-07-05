@@ -210,61 +210,6 @@ compute_intensity <- function(z, alpha, gamma,
 }
 
 
-#' Negative log-likelihood for the NB PPP intensity model (cached version)
-#'
-#' Operates on pre-extracted numeric vectors to avoid repeated raster I/O
-#' inside the optimiser.
-#'
-#' @param theta Parameter vector.  Layout: `c(alpha, gamma, [betas...],
-#'   log_nb_theta)`.  The last element is the log-dispersion parameter
-#'   (`size` in [stats::dnbinom]).
-#' @param z_obs,z_int Standardised connectivity at observations /
-#'   integration points.
-#' @param int_weights Quadrature weights for integration points.
-#' @param obs_weights Observation weights (typically all 1).
-#' @param cov_obs,cov_int Named lists of covariate vectors (or `NULL`).
-#' @param cov_names Character vector of covariate names (determines
-#'   which elements of `theta` map to betas).
-#' @return Scalar negative log-likelihood.
-#' @keywords internal
-.nb_negloglik_cached <- function(theta,
-                                  z_obs, z_int,
-                                  int_weights, obs_weights,
-                                  cov_obs    = NULL,
-                                  cov_int    = NULL,
-                                  cov_names  = character(0)) {
-
-  alpha <- theta[1]
-  gamma <- theta[2]
-
-  n_cov  <- length(cov_names)
-  betas  <- if (n_cov > 0) stats::setNames(theta[3:(2 + n_cov)], cov_names) else NULL
-
-  log_nb_theta <- theta[length(theta)]
-  nb_theta     <- exp(log_nb_theta)   # ensure > 0
-
-  # Observation intensities
-  lambda_obs <- compute_intensity(z_obs, alpha, gamma, cov_obs, betas)
-
-  # Integration intensities
-  lambda_int <- compute_intensity(z_int, alpha, gamma, cov_int, betas)
-
-  # PPP terms
-  term1 <- sum(obs_weights * log(pmax(lambda_obs, 1e-300)))
-  term2 <- sum(int_weights * lambda_int)
-
-  # NB adjustment
-  n_obs   <- sum(obs_weights)
-  nb_adj  <- lgamma(n_obs + nb_theta) - lgamma(nb_theta) +
-             nb_theta * log(nb_theta / (nb_theta + term2)) +
-             n_obs    * log(term2 / (nb_theta + term2))
-
-  negll <- -(term1 - n_obs * log(pmax(term2, 1e-300)) + nb_adj)
-  if (!is.finite(negll)) negll <- 1e15
-  negll
-}
-
-
 #' Fit the negative-binomial PPP intensity model
 #'
 #' Inner-loop MLE for `alpha`, `gamma`, optional covariate betas, and NB
