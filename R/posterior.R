@@ -383,7 +383,13 @@ posterior_sample <- function(laplace,
 #'
 #' @param opt_result Result from [optimize_resistance()].
 #' @return A list with `observed`, `predicted`, `residuals`, `rmse`,
-#'   `r_squared`, `coverage_95`.
+#'   `r_squared`, `coverage_95`, `n_failed`. The `observed`, `predicted`,
+#'   and `residuals` vectors are all restricted to the subset of points
+#'   for which the leave-one-out refit succeeded (i.e. they are the same
+#'   length and in the same order as each other, and are the exact values
+#'   used to compute `rmse`, `r_squared`, and `coverage_95`). `n_failed`
+#'   reports how many of the `n` leave-one-out fits failed and were
+#'   dropped from these vectors and summary statistics.
 #' @export
 loo_cv_surrogate <- function(opt_result) {
 
@@ -428,12 +434,13 @@ loo_cv_surrogate <- function(opt_result) {
   coverage <- mean(in_ci, na.rm = TRUE)
 
   list(
-    observed    = y,
-    predicted   = loo_pred,
-    residuals   = y - loo_pred,
+    observed    = y[valid],
+    predicted   = loo_pred[valid],
+    residuals   = resid,
     rmse        = rmse,
     r_squared   = r2,
-    coverage_95 = coverage
+    coverage_95 = coverage,
+    n_failed    = sum(!valid)
   )
 }
 
