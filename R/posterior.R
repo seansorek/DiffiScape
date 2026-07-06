@@ -290,7 +290,12 @@ posterior_sample <- function(laplace,
     chol(as.matrix(pd$mat))
   })
 
-  samples_list <- vector("list", n_draws)
+  # NOTE: each draw yields n_inner rows in the common case, but only 1 row
+  # when inner standard errors are NA (see below), so the total row count
+  # isn't knowable in advance. We grow the list from empty rather than
+  # pretending to pre-allocate n_draws slots that don't correspond to the
+  # true number of appended elements.
+  samples_list <- vector("list", 0L)
 
   for (d in seq_len(n_draws)) {
     message(sprintf("\n=== Posterior draw %d/%d ===", d, n_draws))
@@ -365,7 +370,10 @@ posterior_sample <- function(laplace,
     }
   }
 
-  samples <- do.call(rbind, samples_list[vapply(samples_list, is.data.frame, logical(1))])
+  # All elements of samples_list are guaranteed to be data.frames (or the
+  # list is empty), since every append above is `as.data.frame(row)` and
+  # there are no pre-allocated NULL slots to filter out.
+  samples <- if (length(samples_list) > 0) do.call(rbind, samples_list) else NULL
   if (is.null(samples) || nrow(samples) == 0) {
     warning("No valid posterior samples obtained")
     return(data.frame())
