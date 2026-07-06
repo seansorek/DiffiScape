@@ -458,12 +458,13 @@ fit_intensity_nb <- function(connectivity_at_obs,
   frac <- config$integration_subsample
   stopifnot(n_int_full > 0)
   if (frac < 1 && frac > 0) {
-    set.seed(config$seed)
-    n_samp  <- max(1L, round(n_int_full * frac))
-    step_sz <- n_int_full / n_samp
-    start_  <- stats::runif(1, 1, step_sz)
-    idx     <- unique(round(seq(start_, n_int_full, by = step_sz)))
-    idx     <- idx[idx <= n_int_full]
+    idx <- withr::with_seed(config$seed, {
+      n_samp  <- max(1L, round(n_int_full * frac))
+      step_sz <- n_int_full / n_samp
+      start_  <- stats::runif(1, 1, step_sz)
+      idx_    <- unique(round(seq(start_, n_int_full, by = step_sz)))
+      idx_[idx_ <= n_int_full]
+    })
     C_int   <- C_int_raw[idx]
     wt_mult <- n_int_full / length(idx)
   } else {
@@ -634,12 +635,13 @@ fit_intensity_gam <- function(connectivity_at_obs,
   frac <- config$integration_subsample
   stopifnot(n_int_full > 0)
   if (frac < 1 && frac > 0) {
-    set.seed(config$seed)
-    n_samp  <- max(1L, round(n_int_full * frac))
-    step_sz <- n_int_full / n_samp
-    start_  <- stats::runif(1, 1, step_sz)
-    idx     <- unique(round(seq(start_, n_int_full, by = step_sz)))
-    idx     <- idx[idx <= n_int_full]
+    idx <- withr::with_seed(config$seed, {
+      n_samp  <- max(1L, round(n_int_full * frac))
+      step_sz <- n_int_full / n_samp
+      start_  <- stats::runif(1, 1, step_sz)
+      idx_    <- unique(round(seq(start_, n_int_full, by = step_sz)))
+      idx_[idx_ <= n_int_full]
+    })
     C_int   <- C_int_raw[idx]
     int_xy  <- int_coords[idx, , drop = FALSE]
     wt_mult <- n_int_full / length(idx)
