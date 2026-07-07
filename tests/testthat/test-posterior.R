@@ -381,3 +381,39 @@ test_that("loo_cv_surrogate surfaces n_failed and shrinks vectors when LOO fits 
   expect_equal(length(res$residuals), n - 2L)
   expect_equal(res$residuals, res$observed - res$predicted)
 })
+
+
+# ---------------------------------------------------------------------------
+# posterior_sample — list accumulation correctness (issue #33)
+# ---------------------------------------------------------------------------
+
+test_that("posterior_sample returns n_draws * n_inner rows with no missing blocks", {
+  skip_on_cran()
+  args <- .make_minimal_posterior_args()
+  n_draws <- 4L
+  n_inner <- 3L
+  local_mocked_bindings(
+    evaluate_full_model = function(...) list(
+      loglik           = -100,
+      intensity_params = c(alpha = 1),
+      intensity_se     = c(alpha = 0.1),
+      convergence      = 0L
+    ),
+    params_vector_to_list = function(theta, n_basis) list(r_0 = theta[1]),
+    .package = "DiffiScape"
+  )
+
+  samples <- posterior_sample(args$laplace, args$opt_result,
+                              args$basis_stack, args$obs_points,
+                              n_draws = n_draws, n_inner = n_inner)
+
+  expect_s3_class(samples, "data.frame")
+  expect_equal(nrow(samples), n_draws * n_inner)
+  # No NULL/NA blocks: every row must be fully populated (no NA rows
+  # introduced by leftover/misaligned list slots)
+  expect_false(anyNA(samples))
+  expect_true(all(vapply(seq_len(nrow(samples)), function(i) {
+    is.numeric(samples$r_0[i]) && is.numeric(samples$alpha[i]) &&
+      is.numeric(samples$loglik[i])
+  }, logical(1))))
+})

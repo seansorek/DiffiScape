@@ -48,7 +48,7 @@ test_that("fit_intensity_nb returns valid fit on synthetic data", {
   skip_on_cran()
   set.seed(42)
 
-  # Test the .nb_negloglik_cached function with correct args
+  # Test the negloglik_fn actually used by fit_intensity_nb() via family_negbin()
   n_obs <- 80
   n_int <- 400
   total <- n_obs + n_int
@@ -58,7 +58,7 @@ test_that("fit_intensity_nb returns valid fit on synthetic data", {
   obs_w  <- rep(1, n_obs)
   int_w  <- rep(0.01, n_int)
 
-  nll <- DiffiScape:::.nb_negloglik_cached(
+  nll <- family_negbin()$negloglik_fn(
     theta       = c(-3, 0.5, log(2)),
     z_obs       = z_obs,
     z_int       = z_int,
@@ -156,6 +156,72 @@ test_that("fit_intensity_nb with terra raster returns correct output structure",
   expect_true("loglik" %in% names(fit))
   expect_true("convergence" %in% names(fit))
   expect_true(is.finite(fit$loglik))
+})
+
+test_that("fit_intensity_nb does not perturb the global RNG stream (#31)", {
+  skip_on_cran()
+  skip_if_not_installed("terra")
+  skip_if_not_installed("withr")
+
+  r <- terra::rast(nrows = 10, ncols = 10, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(100, mean = 5))
+
+  obs_x <- runif(20, 0.1, 0.9)
+  obs_y <- runif(20, 0.1, 0.9)
+  conn_at_obs <- abs(rnorm(20, mean = 5))
+
+  cfg <- default_intensity_config()
+  expect_true(cfg$integration_subsample < 1)  # ensure subsample path is hit
+
+  set.seed(2024)
+  before_stream <- runif(5)
+
+  set.seed(2024)
+  invisible(fit_intensity_nb(
+    connectivity_at_obs = conn_at_obs,
+    connectivity_raster = r,
+    obs_coords          = data.frame(x = obs_x, y = obs_y),
+    config              = cfg
+  ))
+  after_stream <- runif(5)
+
+  # The draws immediately following the same seed should be identical to
+  # the draws with no fit_intensity_nb() call in between: the fit call
+  # must not have consumed/reset the global RNG stream.
+  expect_equal(before_stream, after_stream)
+})
+
+test_that("fit_intensity_gam does not perturb the global RNG stream (#31)", {
+  skip_on_cran()
+  skip_if_not_installed("terra")
+  skip_if_not_installed("mgcv")
+  skip_if_not_installed("withr")
+
+  r <- terra::rast(nrows = 10, ncols = 10, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(100, mean = 5))
+
+  obs_x <- runif(30, 0.1, 0.9)
+  obs_y <- runif(30, 0.1, 0.9)
+  conn_at_obs <- abs(rnorm(30, mean = 5))
+
+  cfg <- default_intensity_config()
+  expect_true(cfg$integration_subsample < 1)
+
+  set.seed(2024)
+  before_stream <- runif(5)
+
+  set.seed(2024)
+  invisible(fit_intensity_gam(
+    connectivity_at_obs = conn_at_obs,
+    connectivity_raster = r,
+    obs_coords          = data.frame(x = obs_x, y = obs_y),
+    config              = cfg
+  ))
+  after_stream <- runif(5)
+
+  expect_equal(before_stream, after_stream)
 })
 
 test_that("residualise_connectivity returns correct structure with one covariate", {
