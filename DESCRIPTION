@@ -25,11 +25,13 @@ Imports:
     stats,
     graphics,
     grDevices,
+    methods,
     utils
 Suggests:
     reticulate,
     ggplot2,
     spdep,
+    ranger,
     testthat (>= 3.0.0),
     withr,
     knitr,

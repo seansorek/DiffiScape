@@ -90,7 +90,7 @@ laplace_resistance <- function(opt_result,
     surrogate_fn <- function(theta) {
       x <- matrix(theta, nrow = 1)
       colnames(x) <- pnames
-      -stats::predict(surrogate, newdata = x, type = "UK")$mean
+      -predict_surrogate(surrogate, x)$mean
     }
 
     H <- numDeriv::hessian(surrogate_fn, best_vec, method.args = list(eps = step))
@@ -377,9 +377,13 @@ posterior_sample <- function(laplace,
 
 # --------------- LOO-CV for GP emulator -------------------------------------
 
-#' Leave-one-out cross-validation of the GP surrogate
+#' Leave-one-out cross-validation of the outer-loop surrogate
 #'
-#' Uses the analytical LOO formula for Gaussian processes.
+#' For the GP surrogate (`surrogate_type = "gp"`, the default), this uses
+#' repeated refitting (one fit per held-out point) with the same Matern
+#' GP; for the Random Forest surrogate (`"rf"`) it likewise refits with
+#' one point held out each time.  Works with either surrogate backend via
+#' [predict_surrogate()].
 #'
 #' @param opt_result Result from [optimize_resistance()].
 #' @return A list with `observed`, `predicted`, `residuals`, `rmse`,
@@ -390,6 +394,12 @@ loo_cv_surrogate <- function(opt_result) {
   surrogate <- opt_result$surrogate
   if (is.null(surrogate)) stop("No surrogate in opt_result", call. = FALSE)
 
+  surrogate_type <- if (inherits(surrogate, "ds_surrogate")) {
+    surrogate$type
+  } else {
+    "gp"
+  }
+
   X <- as.matrix(opt_result$X_evaluated)
   y <- opt_result$y_evaluated
 
@@ -399,18 +409,18 @@ loo_cv_surrogate <- function(opt_result) {
   loo_sd    <- numeric(n)
 
   for (i in seq_len(n)) {
-    gp_loo <- tryCatch(
-      .fit_surrogate(X[-i, , drop = FALSE], y[-i]),
+    fit_loo <- tryCatch(
+      fit_surrogate(X[-i, , drop = FALSE], y[-i], type = surrogate_type),
       error = function(e) NULL
     )
-    if (is.null(gp_loo)) {
+    if (is.null(fit_loo)) {
       loo_pred[i] <- NA
       loo_sd[i]   <- NA
       next
     }
     xi <- matrix(X[i, ], nrow = 1)
     colnames(xi) <- colnames(X)
-    p <- stats::predict(gp_loo, newdata = xi, type = "UK")
+    p <- predict_surrogate(fit_loo, xi)
     loo_pred[i] <- p$mean
     loo_sd[i]   <- p$sd
   }

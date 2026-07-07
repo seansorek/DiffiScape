@@ -118,7 +118,9 @@ test_that("optimize_resistance returns expected result structure", {
   expect_s3_class(result$X_evaluated, "data.frame")
   expect_type(result$y_evaluated, "double")
   expect_equal(result$n_evaluations, 7L)
-  expect_s4_class(result$surrogate, "km")
+  expect_s3_class(result$surrogate, "ds_surrogate")
+  expect_equal(result$surrogate$type, "gp")
+  expect_s4_class(result$surrogate$model, "km")
   expect_type(result$bounds, "list")
 })
 

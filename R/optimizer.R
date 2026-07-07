@@ -69,6 +69,18 @@
 #'     [link_exp()]). Controls how raw parameters map to resistance values.}
 #' }
 #'
+#' @section Surrogate model:
+#' \describe{
+#'   \item{`surrogate_type`}{Character. `"gp"` (Gaussian Process via
+#'     \pkg{DiceKriging}, default) or `"rf"` (Random Forest via
+#'     \pkg{ranger}). Selects the model used to approximate the outer-loop
+#'     objective surface for the Thompson Sampling / Expected Improvement
+#'     acquisition loop. See [fit_surrogate()].}
+#'   \item{`surrogate_config`}{Named list of extra arguments forwarded to
+#'     the surrogate constructor (e.g. `list(num.trees = 500)` for `"rf"`).
+#'     Default: `list()`.}
+#' }
+#'
 #' @section Connectivity solver:
 #' \describe{
 #'   \item{`omniscape`}{Named list passed to the Omniscape solver:
@@ -117,6 +129,10 @@ default_optimizer_config <- function() {
 
     # Resistance link
     resistance_link = NULL,    # resistance_link object (NULL -> link_exp())
+
+    # Surrogate model for the outer loop: "gp" (default) or "rf"
+    surrogate_type   = "gp",
+    surrogate_config = list(),
 
     # Omniscape / connectivity
     omniscape = list(radius = 13L, block_size = 5L, cleanup = TRUE)
@@ -675,41 +691,184 @@ evaluate_full_model <- function(resistance_params,
 }
 
 
-# --------------- GP surrogate -----------------------------------------------
+# --------------- Surrogate model abstraction --------------------------------
+#
+# The outer loop needs a regression surrogate for the (expensive) objective
+# surface. Two backends are supported:
+#   "gp" - Gaussian Process regression via DiceKriging::km() (default;
+#          preserves all prior behaviour exactly).
+#   "rf" - Random Forest regression via ranger::ranger(), using its
+#          jackknife-after-bootstrap variance estimator to provide the
+#          predictive SD required by the TS/EI acquisition functions.
+#
+# Every surrogate is wrapped in a small S3 object (class "ds_surrogate")
+# carrying `$type`, `$model`, and `$predictor_names` so downstream code
+# (.thompson_sampling, .expected_improvement, .compute_dimension_scales,
+# loo_cv_surrogate, laplace_resistance) can call predict_surrogate() without
+# needing to know which backend produced the fit.
+# ------------------------------------------------------------------------
 
-#' @keywords internal
-.fit_surrogate <- function(X, y) {
+#' Fit a surrogate regression model for the outer optimisation loop
+#'
+#' Factory function that fits either a Gaussian Process (`"gp"`, the
+#' default and historical behaviour) or a Random Forest (`"rf"`) regression
+#' surrogate of the (expensive) outer-loop objective, and wraps it in a
+#' common `"ds_surrogate"` object so both backends can be used
+#' interchangeably by the Thompson Sampling / Expected Improvement
+#' acquisition functions and by [loo_cv_surrogate()] / [laplace_resistance()].
+#'
+#' @param X Numeric matrix or data.frame of evaluated parameter vectors
+#'   (one row per evaluation).
+#' @param y Numeric vector of objective values (one per row of `X`).
+#' @param type Character; `"gp"` (default, [DiceKriging::km()] with a
+#'   Matern 5/2 kernel) or `"rf"` (Random Forest via [ranger::ranger()],
+#'   using jackknife-after-bootstrap variance estimates as the predictive
+#'   SD needed for acquisition). Defaults to `"gp"` so existing callers of
+#'   [optimize_resistance()] are unaffected.
+#' @param config Named list of extra arguments forwarded to the underlying
+#'   constructor (`DiceKriging::km()` for `"gp"`, `ranger::ranger()` for
+#'   `"rf"`).
+#' @return An object of class `"ds_surrogate"`: a list with `type`, `model`
+#'   (the fitted backend object), and `predictor_names`.
+#' @seealso [predict_surrogate()], [default_optimizer_config()]
+#' @export
+fit_surrogate <- function(X, y, type = c("gp", "rf"), config = list()) {
+  type <- match.arg(type)
+
   if (is.data.frame(X)) X <- as.matrix(X)
+  storage.mode(X) <- "double"
 
-  # Exact-duplicate rows make the correlation matrix singular; remove them.
+  # Exact-duplicate rows make the GP correlation matrix singular; remove
+  # them for both backends for consistent behaviour.
   keep <- !duplicated(X)
   X <- X[keep, , drop = FALSE]
   y <- y[keep]
 
+  pnames <- colnames(X)
+
+  model <- switch(type,
+    gp = .fit_surrogate_gp(X, y, config),
+    rf = .fit_surrogate_rf(X, y, config)
+  )
+
+  structure(
+    list(type = type, model = model, predictor_names = pnames),
+    class = "ds_surrogate"
+  )
+}
+
+
+#' Legacy raw-GP surrogate fit (backward-compatible internal helper)
+#'
+#' Equivalent to `fit_surrogate(X, y, type = "gp")$model`: fits a
+#' [DiceKriging::km()] GP directly and returns the raw `km` object (not the
+#' `ds_surrogate` wrapper). Kept for internal callers and historical tests
+#' that operate on the raw GP object directly.
+#'
+#' @keywords internal
+.fit_surrogate <- function(X, y, config = list()) {
+  if (is.data.frame(X)) X <- as.matrix(X)
+  storage.mode(X) <- "double"
+  keep <- !duplicated(X)
+  X <- X[keep, , drop = FALSE]
+  y <- y[keep]
+  .fit_surrogate_gp(X, y, config)
+}
+
+
+#' @keywords internal
+.fit_surrogate_gp <- function(X, y, config = list()) {
+  args_default <- list(
+    formula      = ~1,
+    design       = X,
+    response     = y,
+    covtype      = "matern5_2",
+    control      = list(trace = FALSE),
+    nugget.estim = TRUE,
+    nugget       = 1
+  )
+  args <- utils::modifyList(args_default, config)
+
   tryCatch(
-    DiceKriging::km(
-      formula      = ~1,
-      design       = X,
-      response     = y,
-      covtype      = "matern5_2",
-      control      = list(trace = FALSE),
-      nugget.estim = TRUE,
-      nugget       = 1
-    ),
+    do.call(DiceKriging::km, args),
     error = function(e) {
       # Near-duplicate points can still make the estimated-nugget path fail.
       # Retry with a fixed regularising nugget (1 % of response variance).
-      DiceKriging::km(
-        formula      = ~1,
-        design       = X,
-        response     = y,
-        covtype      = "matern5_2",
-        control      = list(trace = FALSE),
+      args_fallback <- utils::modifyList(args, list(
         nugget.estim = FALSE,
         nugget       = max(stats::var(y) * 0.01, 1e-2)
-      )
+      ))
+      do.call(DiceKriging::km, args_fallback)
     }
   )
+}
+
+
+#' @keywords internal
+.fit_surrogate_rf <- function(X, y, config = list()) {
+  if (!requireNamespace("ranger", quietly = TRUE)) {
+    stop("Package 'ranger' is required for surrogate_type = 'rf'. ",
+         "Install with install.packages('ranger').", call. = FALSE)
+  }
+
+  df <- as.data.frame(X)
+  df$.y <- y
+
+  args_default <- list(
+    formula    = .y ~ .,
+    data       = df,
+    num.trees  = 500L,
+    keep.inbag = TRUE
+  )
+  args <- utils::modifyList(args_default, config)
+  args$data <- df  # ensure config can't drop the response column
+
+  do.call(ranger::ranger, args)
+}
+
+
+#' Predict from a surrogate model
+#'
+#' Uniform prediction interface across surrogate backends, returning a mean
+#' and predictive standard deviation regardless of whether the surrogate is
+#' a GP ([DiceKriging::km()]) or a Random Forest ([ranger::ranger()]).
+#'
+#' For backward compatibility, `surrogate` may also be a raw
+#' [DiceKriging::km()] object (as returned by the legacy internal
+#' `.fit_surrogate()` helper) in addition to a `"ds_surrogate"` object from
+#' [fit_surrogate()].
+#'
+#' @param surrogate A `"ds_surrogate"` object from [fit_surrogate()], or a
+#'   raw `km` object.
+#' @param newdata Numeric matrix or data.frame of query points.
+#' @return A list with `mean` and `sd`, one value per row of `newdata`.
+#' @export
+predict_surrogate <- function(surrogate, newdata) {
+  if (is.vector(newdata)) newdata <- matrix(newdata, nrow = 1)
+  if (is.data.frame(newdata)) newdata <- as.matrix(newdata)
+
+  # Backward-compat: a raw km object (e.g. from the legacy .fit_surrogate())
+  if (methods::is(surrogate, "km")) {
+    colnames(newdata) <- colnames(surrogate@X)
+    pred <- stats::predict(surrogate, newdata = newdata, type = "UK")
+    return(list(mean = pred$mean, sd = pred$sd))
+  }
+
+  if (!inherits(surrogate, "ds_surrogate")) {
+    stop("`surrogate` must be a `ds_surrogate` object from fit_surrogate() ",
+         "(or a raw km object).", call. = FALSE)
+  }
+
+  colnames(newdata) <- surrogate$predictor_names
+
+  if (surrogate$type == "gp") {
+    pred <- stats::predict(surrogate$model, newdata = newdata, type = "UK")
+    list(mean = pred$mean, sd = pred$sd)
+  } else {
+    pred <- stats::predict(surrogate$model, data = as.data.frame(newdata),
+                           type = "se", se.method = "jack")
+    list(mean = pred$predictions, sd = pred$se)
+  }
 }
 
 
@@ -718,9 +877,7 @@ evaluate_full_model <- function(resistance_params,
 #' @keywords internal
 .thompson_sampling <- function(x, model, min_sd = 1e-6) {
   # TODO 1: try more advanced TS techniques
-  if (is.vector(x)) x <- matrix(x, nrow = 1)
-  colnames(x) <- colnames(model@X)
-  pred <- stats::predict(model, newdata = x, type = "UK")
+  pred <- predict_surrogate(model, x)
   mu   <- pred$mean
   sig  <- pmax(pred$sd, min_sd)
   stats::rnorm(length(mu), mean = mu, sd = sig)
@@ -741,10 +898,7 @@ evaluate_full_model <- function(resistance_params,
                                    xi_min        = 0.02,
                                    decay_divisor = 5,
                                    min_sd        = 1e-10) {
-  if (is.vector(x)) x <- matrix(x, nrow = 1)
-  colnames(x) <- colnames(model@X)
-
-  pred  <- stats::predict(model, newdata = x, type = "UK")
+  pred  <- predict_surrogate(model, x)
   mu    <- pred$mean
   sigma <- pred$sd
 
@@ -816,13 +970,13 @@ evaluate_full_model <- function(resistance_params,
   x_best <- as.numeric(best_point)
   names(x_best) <- pnames
 
-  gp_mean <- function(x) {
+  surrogate_mean <- function(x) {
     xm <- matrix(x, nrow = 1)
     colnames(xm) <- pnames
-    stats::predict(surrogate, newdata = xm, type = "UK")$mean
+    predict_surrogate(surrogate, xm)$mean
   }
 
-  H <- tryCatch(numDeriv::hessian(gp_mean, x_best), error = function(e) NULL)
+  H <- tryCatch(numDeriv::hessian(surrogate_mean, x_best), error = function(e) NULL)
   if (is.null(H)) {
     sc <- rep(1, n_p); names(sc) <- pnames; return(sc)
   }
@@ -872,7 +1026,10 @@ evaluate_full_model <- function(resistance_params,
 #'   `available_points` locations.  Required when `available_points` is
 #'   supplied and the intensity model includes covariates.
 #' @return A list with `best_params`, `best_loglik`, `X_evaluated`,
-#'   `y_evaluated`, `surrogate`, `bounds`, `n_evaluations`.
+#'   `y_evaluated`, `surrogate`, `bounds`, `n_evaluations`.  `surrogate` is
+#'   a `"ds_surrogate"` object (see [fit_surrogate()]); use
+#'   [predict_surrogate()] to query it regardless of the backend selected
+#'   via `config$surrogate_type` (`"gp"`, the default, or `"rf"`).
 #' @export
 optimize_resistance <- function(basis_stack,
                                 obs_points,
@@ -901,9 +1058,11 @@ optimize_resistance <- function(basis_stack,
   X_eval <- data.frame()
   y_eval <- numeric()
 
-  distribution <- config$distribution
-  res_link     <- config$resistance_link %||% link_exp()
-  int_family   <- config$family  # may be NULL (uses default for distribution)
+  distribution     <- config$distribution
+  res_link         <- config$resistance_link %||% link_exp()
+  int_family       <- config$family  # may be NULL (uses default for distribution)
+  surrogate_type   <- config$surrogate_type %||% "gp"
+  surrogate_config <- config$surrogate_config %||% list()
 
   # ======= Phase 1: LHS ====================================================
   message("\n", strrep("=", 60))
@@ -968,7 +1127,8 @@ optimize_resistance <- function(basis_stack,
       y_eval[bad] <- max(penalty, 1e10)
     }
 
-    surrogate <- .fit_surrogate(X_eval, y_eval)
+    surrogate <- fit_surrogate(X_eval, y_eval, type = surrogate_type,
+                               config = surrogate_config)
 
     best_idx   <- which.min(y_eval)
     best_point <- as.numeric(X_eval[best_idx, ])
@@ -1061,7 +1221,8 @@ optimize_resistance <- function(basis_stack,
   message(sprintf("  Best log-likelihood: %.2f", -y_eval[best_idx]))
   message(strrep("=", 60))
 
-  final_surrogate <- .fit_surrogate(X_eval, y_eval)
+  final_surrogate <- fit_surrogate(X_eval, y_eval, type = surrogate_type,
+                                   config = surrogate_config)
 
   results <- list(
     best_params   = best_params,

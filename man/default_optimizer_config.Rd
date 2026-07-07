@@ -75,6 +75,20 @@ Default: \code{3000}.}
 }
 }
 
+\section{Surrogate model}{
+
+\describe{
+\item{\code{surrogate_type}}{Character. \code{"gp"} (Gaussian Process via
+\pkg{DiceKriging}, default) or \code{"rf"} (Random Forest via
+\pkg{ranger}). Selects the model used to approximate the outer-loop
+objective surface for the Thompson Sampling / Expected Improvement
+acquisition loop. See \code{\link[=fit_surrogate]{fit_surrogate()}}.}
+\item{\code{surrogate_config}}{Named list of extra arguments forwarded to
+the surrogate constructor (e.g. \code{list(num.trees = 500)} for \code{"rf"}).
+Default: \code{list()}.}
+}
+}
+
 \section{Connectivity solver}{
 
 \describe{
