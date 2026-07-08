@@ -301,3 +301,119 @@ test_that("posterior_sample warns when inner standard errors are NA", {
     "standard errors are NA"
   )
 })
+
+
+# ---------------------------------------------------------------------------
+# loo_cv_surrogate (issue #40) - consistent vectors and surfaced failures
+# ---------------------------------------------------------------------------
+
+.make_loo_opt_result <- function(seed = 1, n = 15) {
+  set.seed(seed)
+  bounds <- list(r_0 = c(-2, 2), z_1 = c(-3, 3))
+  X      <- .create_lhs_design(n, bounds)
+  y      <- rowSums(as.matrix(X)^2) + rnorm(n, sd = 0.05)
+  gp     <- .fit_surrogate(as.matrix(X), y)
+
+  list(
+    X_evaluated = X,
+    y_evaluated = y,
+    surrogate   = gp,
+    bounds      = bounds
+  )
+}
+
+test_that("loo_cv_surrogate returns observed/predicted/residuals of equal, consistent length", {
+  skip_on_cran()
+  opt_result <- .make_loo_opt_result()
+
+  res <- loo_cv_surrogate(opt_result)
+
+  expect_equal(length(res$observed), length(res$predicted))
+  expect_equal(length(res$observed), length(res$residuals))
+  expect_equal(res$residuals, res$observed - res$predicted)
+})
+
+test_that("loo_cv_surrogate rmse/r_squared are computed from the returned residuals", {
+  skip_on_cran()
+  opt_result <- .make_loo_opt_result(seed = 2)
+
+  res <- loo_cv_surrogate(opt_result)
+
+  expect_equal(res$rmse, sqrt(mean(res$residuals^2)), tolerance = 1e-10)
+
+  ss_res <- sum(res$residuals^2)
+  ss_tot <- sum((res$observed - mean(res$observed))^2)
+  expect_equal(res$r_squared, 1 - ss_res / ss_tot, tolerance = 1e-10)
+})
+
+test_that("loo_cv_surrogate reports n_failed = 0 when all LOO fits succeed", {
+  skip_on_cran()
+  opt_result <- .make_loo_opt_result(seed = 3)
+
+  res <- loo_cv_surrogate(opt_result)
+
+  expect_identical(res$n_failed, 0L)
+  expect_equal(length(res$observed), length(opt_result$y_evaluated))
+})
+
+test_that("loo_cv_surrogate surfaces n_failed and shrinks vectors when LOO fits fail", {
+  skip_on_cran()
+  opt_result <- .make_loo_opt_result(seed = 4)
+  n <- length(opt_result$y_evaluated)
+
+  # Force the 1st and 3rd leave-one-out refits to fail.
+  real_fit_surrogate <- .fit_surrogate
+  call_count <- 0L
+  local_mocked_bindings(
+    .fit_surrogate = function(X, y) {
+      call_count <<- call_count + 1L
+      if (call_count %in% c(1L, 3L)) stop("forced failure")
+      real_fit_surrogate(X, y)
+    },
+    .package = "DiffiScape"
+  )
+
+  res <- loo_cv_surrogate(opt_result)
+
+  expect_identical(res$n_failed, 2L)
+  expect_equal(length(res$observed), n - 2L)
+  expect_equal(length(res$predicted), n - 2L)
+  expect_equal(length(res$residuals), n - 2L)
+  expect_equal(res$residuals, res$observed - res$predicted)
+})
+
+
+# ---------------------------------------------------------------------------
+# posterior_sample — list accumulation correctness (issue #33)
+# ---------------------------------------------------------------------------
+
+test_that("posterior_sample returns n_draws * n_inner rows with no missing blocks", {
+  skip_on_cran()
+  args <- .make_minimal_posterior_args()
+  n_draws <- 4L
+  n_inner <- 3L
+  local_mocked_bindings(
+    evaluate_full_model = function(...) list(
+      loglik           = -100,
+      intensity_params = c(alpha = 1),
+      intensity_se     = c(alpha = 0.1),
+      convergence      = 0L
+    ),
+    params_vector_to_list = function(theta, n_basis) list(r_0 = theta[1]),
+    .package = "DiffiScape"
+  )
+
+  samples <- posterior_sample(args$laplace, args$opt_result,
+                              args$basis_stack, args$obs_points,
+                              n_draws = n_draws, n_inner = n_inner)
+
+  expect_s3_class(samples, "data.frame")
+  expect_equal(nrow(samples), n_draws * n_inner)
+  # No NULL/NA blocks: every row must be fully populated (no NA rows
+  # introduced by leftover/misaligned list slots)
+  expect_false(anyNA(samples))
+  expect_true(all(vapply(seq_len(nrow(samples)), function(i) {
+    is.numeric(samples$r_0[i]) && is.numeric(samples$alpha[i]) &&
+      is.numeric(samples$loglik[i])
+  }, logical(1))))
+})

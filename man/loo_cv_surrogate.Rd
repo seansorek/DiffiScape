@@ -11,7 +11,13 @@ loo_cv_surrogate(opt_result)
 }
 \value{
 A list with \code{observed}, \code{predicted}, \code{residuals}, \code{rmse},
-\code{r_squared}, \code{coverage_95}.
+\code{r_squared}, \code{coverage_95}, \code{n_failed}. The \code{observed}, \code{predicted},
+and \code{residuals} vectors are all restricted to the subset of points
+for which the leave-one-out refit succeeded (i.e. they are the same
+length and in the same order as each other, and are the exact values
+used to compute \code{rmse}, \code{r_squared}, and \code{coverage_95}). \code{n_failed}
+reports how many of the \code{n} leave-one-out fits failed and were
+dropped from these vectors and summary statistics.
 }
 \description{
 For the GP surrogate (\code{surrogate_type = "gp"}, the default), this uses
