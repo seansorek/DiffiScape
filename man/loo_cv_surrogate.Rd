@@ -2,7 +2,7 @@
 % Please edit documentation in R/posterior.R
 \name{loo_cv_surrogate}
 \alias{loo_cv_surrogate}
-\title{Leave-one-out cross-validation of the GP surrogate}
+\title{Leave-one-out cross-validation of the outer-loop surrogate}
 \usage{
 loo_cv_surrogate(opt_result)
 }
@@ -20,5 +20,9 @@ reports how many of the \code{n} leave-one-out fits failed and were
 dropped from these vectors and summary statistics.
 }
 \description{
-Uses the analytical LOO formula for Gaussian processes.
+For the GP surrogate (\code{surrogate_type = "gp"}, the default), this uses
+repeated refitting (one fit per held-out point) with the same Matern
+GP; for the Random Forest surrogate (\code{"rf"}) it likewise refits with
+one point held out each time.  Works with either surrogate backend via
+\code{\link[=predict_surrogate]{predict_surrogate()}}.
 }

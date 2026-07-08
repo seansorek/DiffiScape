@@ -50,7 +50,10 @@ supplied and the intensity model includes covariates.}
 }
 \value{
 A list with \code{best_params}, \code{best_loglik}, \code{X_evaluated},
-\code{y_evaluated}, \code{surrogate}, \code{bounds}, \code{n_evaluations}.
+\code{y_evaluated}, \code{surrogate}, \code{bounds}, \code{n_evaluations}.  \code{surrogate} is
+a \code{"ds_surrogate"} object (see \code{\link[=fit_surrogate]{fit_surrogate()}}); use
+\code{\link[=predict_surrogate]{predict_surrogate()}} to query it regardless of the backend selected
+via \code{config$surrogate_type} (\code{"gp"}, the default, or \code{"rf"}).
 }
 \description{
 Two-stage loop:
