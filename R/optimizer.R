@@ -822,6 +822,12 @@ fit_surrogate <- function(X, y, type = c("gp", "rf"), config = list()) {
   )
   args <- utils::modifyList(args_default, config)
   args$data <- df  # ensure config can't drop the response column
+  if (isFALSE(args$keep.inbag)) {
+    warning("surrogate_config$keep.inbag = FALSE is incompatible with the ",
+            "jackknife SD estimate used by predict_surrogate(); overriding ",
+            "to keep.inbag = TRUE.", call. = FALSE)
+    args$keep.inbag <- TRUE
+  }
 
   do.call(ranger::ranger, args)
 }

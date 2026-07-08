@@ -92,6 +92,27 @@ test_that("predict_surrogate rejects objects that aren't a ds_surrogate or km", 
 })
 
 
+test_that("fit_surrogate(type = 'rf') overrides keep.inbag = FALSE with a warning", {
+  skip_on_cran()
+  skip_if_not_installed("ranger")
+  set.seed(5)
+  X <- matrix(runif(20), ncol = 2)
+  colnames(X) <- c("r_0", "z_1")
+  y <- rowSums(X^2)
+
+  expect_warning(
+    rf <- fit_surrogate(X, y, type = "rf", config = list(keep.inbag = FALSE)),
+    "keep.inbag"
+  )
+  expect_false(is.null(rf$model$inbag.counts))
+
+  cand <- matrix(runif(4), ncol = 2)
+  colnames(cand) <- c("r_0", "z_1")
+  pred <- expect_no_error(predict_surrogate(rf, cand))
+  expect_true(all(pred$sd >= 0))
+})
+
+
 test_that(".thompson_sampling and .expected_improvement work with an RF surrogate", {
   skip_on_cran()
   skip_if_not_installed("ranger")

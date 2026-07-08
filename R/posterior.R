@@ -413,6 +413,7 @@ loo_cv_surrogate <- function(opt_result) {
   } else {
     "gp"
   }
+  surrogate_config <- opt_result$config$surrogate_config %||% list()
 
   X <- as.matrix(opt_result$X_evaluated)
   y <- opt_result$y_evaluated
@@ -424,7 +425,8 @@ loo_cv_surrogate <- function(opt_result) {
 
   for (i in seq_len(n)) {
     fit_loo <- tryCatch(
-      fit_surrogate(X[-i, , drop = FALSE], y[-i], type = surrogate_type),
+      fit_surrogate(X[-i, , drop = FALSE], y[-i],
+                    type = surrogate_type, config = surrogate_config),
       error = function(e) NULL
     )
     if (is.null(fit_loo)) {

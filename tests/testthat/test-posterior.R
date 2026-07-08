@@ -361,14 +361,17 @@ test_that("loo_cv_surrogate surfaces n_failed and shrinks vectors when LOO fits 
   opt_result <- .make_loo_opt_result(seed = 4)
   n <- length(opt_result$y_evaluated)
 
-  # Force the 1st and 3rd leave-one-out refits to fail.
-  real_fit_surrogate <- .fit_surrogate
+  # Force the 1st and 3rd leave-one-out refits to fail. loo_cv_surrogate()
+  # dispatches through fit_surrogate() -> .fit_surrogate_gp() for the "gp"
+  # backend, so that's the function to intercept (not the legacy
+  # .fit_surrogate() wrapper, which is no longer on this code path).
+  real_fit_surrogate_gp <- .fit_surrogate_gp
   call_count <- 0L
   local_mocked_bindings(
-    .fit_surrogate = function(X, y) {
+    .fit_surrogate_gp = function(X, y, config = list()) {
       call_count <<- call_count + 1L
       if (call_count %in% c(1L, 3L)) stop("forced failure")
-      real_fit_surrogate(X, y)
+      real_fit_surrogate_gp(X, y, config)
     },
     .package = "DiffiScape"
   )
@@ -380,6 +383,35 @@ test_that("loo_cv_surrogate surfaces n_failed and shrinks vectors when LOO fits 
   expect_equal(length(res$predicted), n - 2L)
   expect_equal(length(res$residuals), n - 2L)
   expect_equal(res$residuals, res$observed - res$predicted)
+})
+
+
+test_that("loo_cv_surrogate threads opt_result$config$surrogate_config through to LOO refits", {
+  skip_on_cran()
+  opt_result <- .make_loo_opt_result(seed = 5)
+  opt_result$surrogate <- structure(
+    list(type = "gp", model = opt_result$surrogate, predictor_names = colnames(opt_result$X_evaluated)),
+    class = "ds_surrogate"
+  )
+  opt_result$config <- list(surrogate_type = "gp",
+                            surrogate_config = list(nugget.estim = FALSE, nugget = 0.5))
+
+  seen_configs <- list()
+  real_fit_surrogate <- fit_surrogate
+  local_mocked_bindings(
+    fit_surrogate = function(X, y, type = c("gp", "rf"), config = list()) {
+      seen_configs[[length(seen_configs) + 1L]] <<- config
+      real_fit_surrogate(X, y, type = type, config = config)
+    },
+    .package = "DiffiScape"
+  )
+
+  loo_cv_surrogate(opt_result)
+
+  expect_true(length(seen_configs) > 0)
+  for (cfg in seen_configs) {
+    expect_identical(cfg, list(nugget.estim = FALSE, nugget = 0.5))
+  }
 })
 
 
