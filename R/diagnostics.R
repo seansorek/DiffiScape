@@ -543,7 +543,7 @@ ds_ppc <- function(posterior_samples,
          "(negbin, poisson, zinb), not GAM fits.", call. = FALSE)
   }
 
-  if (!is.null(seed)) set.seed(seed)
+  if (!is.null(seed)) withr::local_seed(seed)
 
   # --- Pre-extract raster data (once) ---
   C_vals    <- terra::values(connectivity)[, 1]
