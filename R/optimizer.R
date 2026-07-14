@@ -1049,7 +1049,7 @@ optimize_resistance <- function(basis_stack,
                                 available_points     = NULL,
                                 available_covariates = NULL) {
  # TODO refactor this function to work with more flexible resistance models (e.g. non-linear, non-parametric, ML-based).
-  set.seed(config$seed)
+  withr::local_seed(config$seed)
 
   n_basis  <- terra::nlyr(basis_stack)
   if (is.null(bounds)) bounds <- get_default_bounds(n_basis)

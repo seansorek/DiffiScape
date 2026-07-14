@@ -262,7 +262,7 @@ posterior_sample <- function(laplace,
                              family               = NULL,
                              seed                 = 42L) {
 
-  set.seed(seed)
+  withr::local_seed(seed)
 
   n_basis  <- terra::nlyr(basis_stack)
   if (is.null(bounds)) bounds <- opt_result$bounds
