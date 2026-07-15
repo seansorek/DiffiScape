@@ -638,3 +638,180 @@ test_that("verify_irl_gradient warns on failure", {
   )
   expect_false(result$pass)
 })
+
+
+# ---- verify_torch_gradient ---------------------------------------------------
+
+test_that("verify_torch_gradient messages on pass", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+  skip_if_not_installed("terra")
+  skip_if_not(reticulate::py_module_available("numpy"),
+              "numpy not available")
+
+  r <- terra::rast(nrows = 25, ncols = 25, xmin = 0, xmax = 25,
+                   ymin = 0, ymax = 25, nlyrs = 2)
+  terra::values(r) <- runif(25 * 25 * 2)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    ds_torch_call = function(...) list(pass = TRUE, max_rel_error = 1e-5),
+    .package = "DiffiScape"
+  )
+
+  expect_message(
+    result <- verify_torch_gradient(r, crop_size = 10L),
+    "PASSED"
+  )
+  expect_true(result$pass)
+})
+
+test_that("verify_torch_gradient warns on failure", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+  skip_if_not_installed("terra")
+  skip_if_not(reticulate::py_module_available("numpy"),
+              "numpy not available")
+
+  r <- terra::rast(nrows = 25, ncols = 25, xmin = 0, xmax = 25,
+                   ymin = 0, ymax = 25, nlyrs = 2)
+  terra::values(r) <- runif(25 * 25 * 2)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    ds_torch_call = function(...) list(pass = FALSE, max_rel_error = 0.5),
+    .package = "DiffiScape"
+  )
+
+  expect_warning(
+    result <- verify_torch_gradient(r, crop_size = 10L),
+    "FAILED"
+  )
+  expect_false(result$pass)
+})
+
+test_that("verify_torch_gradient adjusts radius/block for small crops", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+  skip_if_not_installed("terra")
+  skip_if_not(reticulate::py_module_available("numpy"),
+              "numpy not available")
+
+  r <- terra::rast(nrows = 25, ncols = 25, xmin = 0, xmax = 25,
+                   ymin = 0, ymax = 25, nlyrs = 2)
+  terra::values(r) <- runif(25 * 25 * 2)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    ds_torch_call = function(...) list(pass = TRUE, max_rel_error = 1e-5),
+    .package = "DiffiScape"
+  )
+
+  expect_message(
+    result <- verify_torch_gradient(r, crop_size = 10L),
+    "adjusted"
+  )
+  expect_true(result$pass)
+})
+
+
+# ---- verify_conv_gradient ----------------------------------------------------
+
+test_that("verify_conv_gradient messages on pass", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+  skip_if_not_installed("terra")
+  skip_if_not(reticulate::py_module_available("numpy"),
+              "numpy not available")
+
+  r <- terra::rast(nrows = 25, ncols = 25, xmin = 0, xmax = 25,
+                   ymin = 0, ymax = 25, nlyrs = 2)
+  terra::values(r) <- runif(25 * 25 * 2)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    ds_torch_call = function(...) list(pass = TRUE, max_rel_error = 1e-5),
+    .package = "DiffiScape"
+  )
+
+  expect_message(
+    result <- verify_conv_gradient(r, crop_size = 10L),
+    "PASSED"
+  )
+  expect_true(result$pass)
+})
+
+test_that("verify_conv_gradient warns on failure", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+  skip_if_not_installed("terra")
+  skip_if_not(reticulate::py_module_available("numpy"),
+              "numpy not available")
+
+  r <- terra::rast(nrows = 25, ncols = 25, xmin = 0, xmax = 25,
+                   ymin = 0, ymax = 25, nlyrs = 2)
+  terra::values(r) <- runif(25 * 25 * 2)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    ds_torch_call = function(...) list(pass = FALSE, max_rel_error = 0.5),
+    .package = "DiffiScape"
+  )
+
+  expect_warning(
+    result <- verify_conv_gradient(r, crop_size = 10L),
+    "FAILED"
+  )
+  expect_false(result$pass)
+})
+
+
+# ---- verify_spline_gradient --------------------------------------------------
+
+test_that("verify_spline_gradient messages on pass", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+  skip_if_not_installed("terra")
+  skip_if_not(reticulate::py_module_available("numpy"),
+              "numpy not available")
+
+  r <- terra::rast(nrows = 25, ncols = 25, xmin = 0, xmax = 25,
+                   ymin = 0, ymax = 25, nlyrs = 2)
+  terra::values(r) <- runif(25 * 25 * 2)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    ds_torch_call = function(...) list(pass = TRUE, max_rel_error = 1e-5),
+    .package = "DiffiScape"
+  )
+
+  expect_message(
+    result <- verify_spline_gradient(r, crop_size = 10L),
+    "PASSED"
+  )
+  expect_true(result$pass)
+})
+
+test_that("verify_spline_gradient warns on failure", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+  skip_if_not_installed("terra")
+  skip_if_not(reticulate::py_module_available("numpy"),
+              "numpy not available")
+
+  r <- terra::rast(nrows = 25, ncols = 25, xmin = 0, xmax = 25,
+                   ymin = 0, ymax = 25, nlyrs = 2)
+  terra::values(r) <- runif(25 * 25 * 2)
+
+  local_mocked_bindings(
+    ds_torch_setup = function(...) invisible(TRUE),
+    ds_torch_call = function(...) list(pass = FALSE, max_rel_error = 0.5),
+    .package = "DiffiScape"
+  )
+
+  expect_warning(
+    result <- verify_spline_gradient(r, crop_size = 10L),
+    "FAILED"
+  )
+  expect_false(result$pass)
+})
