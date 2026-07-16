@@ -17,3 +17,5 @@ tests/testthat/diffiscape_output/
 # R CMD check output
 check_out/
 *.Rcheck/
+pe/
+nul

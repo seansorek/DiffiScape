@@ -4,6 +4,55 @@ test_that("extract_connectivity function exists", {
   expect_true(is.function(extract_connectivity))
 })
 
+
+# ---- extract_connectivity behavioral tests -----------------------------------
+
+test_that("extract_connectivity returns correct values from data.frame input", {
+  skip_if_not_installed("terra")
+
+  r <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 5, ymin = 0, ymax = 5)
+  terra::values(r) <- 1:25
+
+  pts <- data.frame(x = c(0.5, 1.5, 2.5), y = c(4.5, 3.5, 2.5))
+  result <- extract_connectivity(r, pts)
+  expect_equal(result, c(1, 7, 13))
+})
+
+test_that("extract_connectivity accepts matrix input", {
+  skip_if_not_installed("terra")
+
+  r <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 5, ymin = 0, ymax = 5)
+  terra::values(r) <- 1:25
+
+  pts <- matrix(c(0.5, 1.5, 4.5, 3.5), ncol = 2)
+  colnames(pts) <- c("x", "y")
+  result <- extract_connectivity(r, pts)
+  expect_equal(result, c(1, 7))
+})
+
+test_that("extract_connectivity accepts SpatVector input", {
+  skip_if_not_installed("terra")
+
+  r <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 5, ymin = 0, ymax = 5)
+  terra::values(r) <- 1:25
+
+  pts <- terra::vect(data.frame(x = c(0.5, 1.5), y = c(4.5, 3.5)),
+                     geom = c("x", "y"), crs = terra::crs(r))
+  result <- extract_connectivity(r, pts)
+  expect_equal(result, c(1, 7))
+})
+
+test_that("extract_connectivity with buffer returns mean of surrounding cells", {
+  skip_if_not_installed("terra")
+
+  r <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 5, ymin = 0, ymax = 5)
+  terra::values(r) <- 10
+  pts <- data.frame(x = 2.5, y = 2.5)
+
+  result <- extract_connectivity(r, pts, buffer = 0.5)
+  expect_equal(result, 10)
+})
+
 test_that("run_cumulative_current function exists", {
   expect_true(is.function(run_cumulative_current))
 })
