@@ -15,7 +15,7 @@ from diffiscape_jax.optimize import run_parametric_optimization
 class TestRunParametricOptimization:
     """Tests for run_parametric_optimization."""
 
-    @pytest.fixture()
+    @pytest.fixture(scope="class")
     def small_problem(self):
         """Create a small optimization problem for testing."""
         n_rows, n_cols = 10, 10
@@ -34,24 +34,32 @@ class TestRunParametricOptimization:
             "init_params": init_params,
         }
 
-    def test_lbfgs_returns_expected_keys(self, small_problem):
-        """Test that L-BFGS returns dict with all expected keys."""
-        result = run_parametric_optimization(
-            small_problem["basis_values"],
-            small_problem["obs_counts"],
-            small_problem["valid_mask"],
-            small_problem["n_rows"],
-            small_problem["n_cols"],
-            cell_area=1.0,
-            init_params=small_problem["init_params"],
-            link_fn="exp",
-            radius=3,
-            block_size=2,
-            parameterization="resistance",
-            method="lbfgs",
-            n_epochs=50,
+    @pytest.fixture(scope="class")
+    def lbfgs_result(self, small_problem):
+        return run_parametric_optimization(
+            small_problem["basis_values"], small_problem["obs_counts"],
+            small_problem["valid_mask"], small_problem["n_rows"],
+            small_problem["n_cols"], cell_area=1.0,
+            init_params=small_problem["init_params"], link_fn="exp",
+            radius=3, block_size=2, parameterization="resistance",
+            method="lbfgs", n_epochs=50, verbose=False,
+        )
+
+    @pytest.fixture(scope="class")
+    def adam_result(self, small_problem):
+        return run_parametric_optimization(
+            small_problem["basis_values"], small_problem["obs_counts"],
+            small_problem["valid_mask"], small_problem["n_rows"],
+            small_problem["n_cols"], cell_area=1.0,
+            init_params=small_problem["init_params"], link_fn="exp",
+            radius=3, block_size=2, parameterization="resistance",
+            method="adam", lr=0.01, n_epochs=20, patience=21,
             verbose=False,
         )
+
+    def test_lbfgs_returns_expected_keys(self, lbfgs_result):
+        """Test that L-BFGS returns dict with all expected keys."""
+        result = lbfgs_result
 
         assert "best_params" in result
         assert "alpha" in result
@@ -64,93 +72,31 @@ class TestRunParametricOptimization:
         assert isinstance(result["alpha"], float)
         assert isinstance(result["gamma"], float)
 
-    def test_lbfgs_param_shape(self, small_problem):
+    def test_lbfgs_param_shape(self, lbfgs_result):
         """Test that L-BFGS returns params with correct shape."""
-        result = run_parametric_optimization(
-            small_problem["basis_values"],
-            small_problem["obs_counts"],
-            small_problem["valid_mask"],
-            small_problem["n_rows"],
-            small_problem["n_cols"],
-            cell_area=1.0,
-            init_params=small_problem["init_params"],
-            link_fn="exp",
-            radius=3,
-            block_size=2,
-            parameterization="resistance",
-            method="lbfgs",
-            n_epochs=50,
-            verbose=False,
-        )
+        result = lbfgs_result
 
         assert len(result["best_params"]) == 3
         assert isinstance(result["best_params"], np.ndarray)
 
-    def test_lbfgs_runs_epochs(self, small_problem):
+    def test_lbfgs_runs_epochs(self, lbfgs_result):
         """Test that L-BFGS runs at least one epoch."""
-        result = run_parametric_optimization(
-            small_problem["basis_values"],
-            small_problem["obs_counts"],
-            small_problem["valid_mask"],
-            small_problem["n_rows"],
-            small_problem["n_cols"],
-            cell_area=1.0,
-            init_params=small_problem["init_params"],
-            link_fn="exp",
-            radius=3,
-            block_size=2,
-            parameterization="resistance",
-            method="lbfgs",
-            n_epochs=50,
-            verbose=False,
-        )
+        result = lbfgs_result
 
         assert result["n_epochs_run"] > 0
         assert isinstance(result["loss_history"], list)
         assert result["elapsed"] > 0
 
-    def test_lbfgs_loglik_finite(self, small_problem):
+    def test_lbfgs_loglik_finite(self, lbfgs_result):
         """Test that L-BFGS produces a finite log-likelihood."""
-        result = run_parametric_optimization(
-            small_problem["basis_values"],
-            small_problem["obs_counts"],
-            small_problem["valid_mask"],
-            small_problem["n_rows"],
-            small_problem["n_cols"],
-            cell_area=1.0,
-            init_params=small_problem["init_params"],
-            link_fn="exp",
-            radius=3,
-            block_size=2,
-            parameterization="resistance",
-            method="lbfgs",
-            n_epochs=50,
-            verbose=False,
-        )
+        result = lbfgs_result
 
         assert np.isfinite(result["best_loglik"])
         assert np.all(np.isfinite(result["best_params"]))
 
-    def test_adam_returns_expected_keys(self, small_problem):
+    def test_adam_returns_expected_keys(self, adam_result):
         """Test that Adam returns dict with all expected keys."""
-        result = run_parametric_optimization(
-            small_problem["basis_values"],
-            small_problem["obs_counts"],
-            small_problem["valid_mask"],
-            small_problem["n_rows"],
-            small_problem["n_cols"],
-            cell_area=1.0,
-            init_params=small_problem["init_params"],
-            link_fn="exp",
-            radius=3,
-            block_size=2,
-            parameterization="resistance",
-            method="adam",
-            lr=0.01,
-            n_epochs=20,
-            patience=10,
-            verbose=False,
-        )
+        result = adam_result
 
         assert "best_params" in result
         assert "alpha" in result
@@ -163,27 +109,10 @@ class TestRunParametricOptimization:
         assert isinstance(result["alpha"], float)
         assert isinstance(result["gamma"], float)
 
-    def test_adam_records_loss_history(self, small_problem):
+    def test_adam_records_loss_history(self, adam_result):
         """Test that Adam records per-epoch loss history."""
-        n_epochs = 15
-        result = run_parametric_optimization(
-            small_problem["basis_values"],
-            small_problem["obs_counts"],
-            small_problem["valid_mask"],
-            small_problem["n_rows"],
-            small_problem["n_cols"],
-            cell_area=1.0,
-            init_params=small_problem["init_params"],
-            link_fn="exp",
-            radius=3,
-            block_size=2,
-            parameterization="resistance",
-            method="adam",
-            lr=0.01,
-            n_epochs=n_epochs,
-            patience=n_epochs + 1,  # No early stopping
-            verbose=False,
-        )
+        n_epochs = 20
+        result = adam_result
 
         assert len(result["loss_history"]) == n_epochs
         assert result["n_epochs_run"] == n_epochs

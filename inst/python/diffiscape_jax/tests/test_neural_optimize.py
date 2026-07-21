@@ -14,7 +14,7 @@ from diffiscape_jax.optimize import run_neural_optimization
 class TestRunNeuralOptimization:
     """Tests for run_neural_optimization."""
 
-    @pytest.fixture()
+    @pytest.fixture(scope="class")
     def small_problem(self):
         """Create a small optimization problem for testing."""
         n_rows, n_cols, n_basis = 8, 8, 2
@@ -32,22 +32,20 @@ class TestRunNeuralOptimization:
             "n_cells": n_cells,
         }
 
-    def test_mlp_returns_expected_keys(self, small_problem):
-        """Test that MLP optimization returns dict with all expected keys."""
-        result = run_neural_optimization(
-            small_problem["basis_values"],
-            small_problem["obs_counts"],
-            small_problem["valid_mask"],
-            small_problem["n_rows"],
-            small_problem["n_cols"],
-            cell_area=1.0,
-            model_type="mlp",
+    @pytest.fixture(scope="class")
+    def mlp_result(self, small_problem):
+        return run_neural_optimization(
+            small_problem["basis_values"], small_problem["obs_counts"],
+            small_problem["valid_mask"], small_problem["n_rows"],
+            small_problem["n_cols"], cell_area=1.0, model_type="mlp",
             model_config={"hidden_dim": 16, "n_hidden_layers": 1},
             optim_config={"lr": 0.01, "n_epochs": 5, "patience": 10},
-            parameterization="resistance",
-            seed=42,
-            verbose=False,
+            parameterization="resistance", seed=42, verbose=False,
         )
+
+    def test_mlp_returns_expected_keys(self, mlp_result):
+        """Test that MLP optimization returns dict with all expected keys."""
+        result = mlp_result
 
         expected_keys = {
             "resistance", "alpha", "gamma", "best_loglik", "loss_history",
@@ -57,40 +55,16 @@ class TestRunNeuralOptimization:
         assert isinstance(result["alpha"], float)
         assert isinstance(result["gamma"], float)
 
-    def test_mlp_resistance_shape(self, small_problem):
+    def test_mlp_resistance_shape(self, small_problem, mlp_result):
         """Test that MLP produces resistance with correct shape."""
-        result = run_neural_optimization(
-            small_problem["basis_values"],
-            small_problem["obs_counts"],
-            small_problem["valid_mask"],
-            small_problem["n_rows"],
-            small_problem["n_cols"],
-            cell_area=1.0,
-            model_type="mlp",
-            model_config={"hidden_dim": 16, "n_hidden_layers": 1},
-            optim_config={"lr": 0.01, "n_epochs": 5, "patience": 10},
-            seed=42,
-            verbose=False,
-        )
+        result = mlp_result
 
         assert result["resistance"].shape == (small_problem["n_cells"],)
         assert isinstance(result["resistance"], np.ndarray)
 
-    def test_mlp_finite_values(self, small_problem):
+    def test_mlp_finite_values(self, mlp_result):
         """Test that MLP optimization produces finite resistance values."""
-        result = run_neural_optimization(
-            small_problem["basis_values"],
-            small_problem["obs_counts"],
-            small_problem["valid_mask"],
-            small_problem["n_rows"],
-            small_problem["n_cols"],
-            cell_area=1.0,
-            model_type="mlp",
-            model_config={"hidden_dim": 16, "n_hidden_layers": 1},
-            optim_config={"lr": 0.01, "n_epochs": 5, "patience": 10},
-            seed=42,
-            verbose=False,
-        )
+        result = mlp_result
 
         assert np.all(np.isfinite(result["resistance"]))
         assert np.all(result["resistance"] > 0)
@@ -207,8 +181,8 @@ class TestRunNeuralOptimization:
                 verbose=False,
             )
 
-    def test_default_configs(self, small_problem):
-        """Test that None configs use sensible defaults."""
+    def test_default_model_config_with_fast_optimization(self, small_problem):
+        """Test the default model config without running 300 production epochs."""
         result = run_neural_optimization(
             small_problem["basis_values"],
             small_problem["obs_counts"],
@@ -217,11 +191,10 @@ class TestRunNeuralOptimization:
             small_problem["n_cols"],
             model_type="mlp",
             model_config=None,
-            optim_config=None,
+            optim_config={"n_epochs": 1, "patience": 1},
             seed=42,
             verbose=False,
         )
 
-        # Should run with defaults (300 epochs, patience 30)
         assert result["n_epochs_run"] > 0
         assert "resistance" in result
