@@ -1,8 +1,8 @@
 # Tests for R/pipeline.R
 
 test_that("torch is the default solver", {
-  expect_identical(formals(ds_optimize)$solver[[1]], "torch")
-  expect_identical(formals(diffiscape)$solver[[1]], "torch")
+  expect_identical(eval(formals(ds_optimize)$solver)[[1]], "torch")
+  expect_identical(eval(formals(diffiscape)$solver)[[1]], "torch")
 })
 
 test_that("ds_load_data reads CSV correctly", {
@@ -193,7 +193,8 @@ test_that("diffiscape forwards omniscape_settings to refit, posterior, and diagn
     rasters            = list(layer1 = basis),
     omniscape_settings = custom_settings,
     n_posterior         = 3L,
-    plot               = FALSE
+    plot               = FALSE,
+    solver             = "surrogate"
   )
 
   expect_equal(captured_fit_settings, custom_settings)

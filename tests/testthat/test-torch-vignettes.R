@@ -1,6 +1,8 @@
 test_that("torch vignettes are self-contained fast examples", {
   vignette_dir <- file.path(testthat::test_path(), "..", "..", "vignettes")
   vignette_files <- file.path(vignette_dir, c("torch-mlp.Rmd", "spline-gam.Rmd"))
+  skip_if_not(all(file.exists(vignette_files)),
+              "source vignettes are unavailable in the installed package")
 
   for (vignette_file in vignette_files) {
     contents <- paste(readLines(vignette_file, warn = FALSE), collapse = "\n")
