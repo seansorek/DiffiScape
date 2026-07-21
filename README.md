@@ -2,13 +2,13 @@
 
 **Landscape Connectivity Optimization — a modular R framework for resistance and intensity model experimentation**
 
-DiffiScape is an R package designed as a flexible glue layer for fitting landscape resistance surfaces against animal movement data. It bridges circuit-theory connectivity computation via JAX (primary) or PyTorch with a suite of swappable likelihood models, making it easy to experiment with different resistance and intensity model combinations. Both point process likelihoods (for occurrence/count data) and selection function likelihoods (RSF, RSP, and conditional logistic for iSSA/SSA) are supported, with the architecture designed to accommodate additional movement data likelihoods in the future.
+DiffiScape is an R package designed as a flexible glue layer for fitting landscape resistance surfaces against animal movement data. It bridges circuit-theory connectivity computation via PyTorch (the default) or JAX with a suite of swappable likelihood models, making it easy to experiment with different resistance and intensity model combinations. Both point process likelihoods (for occurrence/count data) and selection function likelihoods (RSF, RSP, and conditional logistic for iSSA/SSA) are supported, with the architecture designed to accommodate additional movement data likelihoods in the future.
 
 Users supply environmental rasters and GPS locations (or paired used-available locations for selection models); DiffiScape estimates resistance parameters that best explain the observed spatial distribution of animal occurrences or movement choices. The package ships three optimization modes:
 
 - **Surrogate BO** — Latin Hypercube Sampling → GP emulator → Thompson Sampling or Expected Improvement (selectable) via JAX connectivity
 - **Gradient descent** — parametric or neural network resistance via automatic differentiation in JAX
-- **PyTorch neural networks** — MLP / convolutional / spline-GAM / IRL value-shaped resistance networks trained with a differentiable circuit solver, plus MAP optimization and full Bayesian posterior sampling (Langevin/MALA, NUTS, ADVI)
+- **PyTorch** — log-linear resistance with global absorption and `log(lambda) = alpha + gamma * log(1 + connectivity)` by default; optional MLP / convolutional / spline-GAM / IRL models, MAP optimization, and Bayesian posterior sampling
 
 ---
 
@@ -23,17 +23,17 @@ remotes::install_github("seansorek/DiffiScape")
 
 ### Python Requirements
 
-DiffiScape now requires Python for all solver modes (surrogate, gradient, torch/irl). Before using the package you need:
+DiffiScape now requires Python for all solver modes (surrogate, gradient, torch/irl). The default uses PyTorch; install JAX only when selecting a JAX solver. Before using the package you need:
 
 - **Python ≥ 3.10** — [Download Python](https://www.python.org/downloads/) or use a conda distribution
 - **JAX, JAXScape, Flax, NumPyro** — installed automatically on first use, or install manually via `pip install jax jaxscape flax numpyro`
-- **PyTorch** (optional) — required only for `solver = "torch"` or `solver = "irl"` modes
+- **PyTorch** — required for the default `solver = "torch"` mode and optional for JAX-only modes
 
 ```r
 # R will use reticulate to manage your Python environment
 # Install minimal deps on first use, or manually:
-ds_install_jax_deps()      # JAX+JAXScape (recommended)
-ds_install_torch_deps()    # Optional: PyTorch for neural network backend
+ds_install_jax_deps()      # JAX+JAXScape (only for JAX solver modes)
+ds_install_torch_deps()    # PyTorch default backend
 ```
 
 ---
@@ -43,7 +43,7 @@ ds_install_torch_deps()    # Optional: PyTorch for neural network backend
 ```r
 library(DiffiScape)
 
-# Run the full pipeline in one call (uses JAX surrogate solver by default)
+# Run the full pipeline in one call (uses the PyTorch log-linear pipeline by default)
 # DiffiScape does not handle raster preprocessing. Make sure everything is aligned!
 result <- diffiscape(
   obs_data  = "gps_locations.csv",   # CSV with x, y columns (or shapefile)
@@ -54,7 +54,7 @@ result <- diffiscape(
 # Inspect results
 result$opt_result$best_loglik     # Best log-likelihood
 result$opt_result$best_params     # Optimal resistance parameters
-result$posterior$summary          # Posterior summary table
+result$opt_result$intensity_params # Fitted alpha/gamma intensity parameters
 
 # Use different solvers:
 result_gradient <- diffiscape(obs_data, rasters, output_dir, solver = "gradient")
@@ -328,15 +328,21 @@ my_link <- resistance_link(
 
 DiffiScape provides three distinct solver modes, each with different trade-offs.
 
-### Surrogate Optimizer (JAX) — Default
+The default pipeline uses log-linear resistance, global absorption, and the parametric intensity model:
 
-The primary solver mode using Bayesian Optimization with Gaussian Process emulation. Fast, robust, and derivative-free for moderate-dimensional problems.
+`log(lambda) = alpha + gamma * log(1 + connectivity)`
+
+It has no spatial autocorrelation term. Select another solver explicitly when needed.
+
+### PyTorch Log-Linear Pipeline — Default
+
+The default solver jointly fits the log-linear resistance and intensity models through the global-absorption circuit solver.
 
 ```r
 # Default behavior
 opt <- ds_optimize(basis, pts, config = cfg)
 
-# Explicit specification
+# JAX surrogate remains available explicitly
 opt <- ds_optimize(basis, pts, config = cfg, solver = "surrogate")
 
 # Custom configuration
@@ -380,7 +386,8 @@ ds_torch_check()  # TRUE when ready
 result <- run_torch_pipeline(
   basis_stack = basis,
   obs_points  = pts,
-  model_type  = "mlp",        # "mlp", "conv", "spline_gam", or "irl"
+  solver      = "global_absorption",
+  model_type  = "loglinear",  # "loglinear", "mlp", "conv", "spline_gam", or "irl"
   n_epochs    = 500L,
   output_dir  = "torch_results/"
 )
@@ -423,7 +430,7 @@ verify_spline_gradient(basis, pts)   # spline-GAM gradient
 ```r
 opt <- ds_optimize(basis, pts, solver = "torch",
                    config = list(torch = list(
-                     model_type = "mlp", n_epochs = 300L
+                     model_type = "loglinear", n_epochs = 300L
                    )))
 ```
 
