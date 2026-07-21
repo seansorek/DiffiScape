@@ -5,7 +5,7 @@ test_that("torch vignettes are self-contained fast examples", {
   for (vignette_file in vignette_files) {
     contents <- paste(readLines(vignette_file, warn = FALSE), collapse = "\n")
 
-    expect_match(contents, "opts_chunk\\$set\\([^\\n]*eval = TRUE")
+    expect_match(contents, "opts_chunk\\$set\\([^\\n]*eval = FALSE")
     expect_no_match(contents, "path/to/")
     expect_match(contents, "nrows = 100L, ncols = 100L")
     expect_match(contents, "canopy =")

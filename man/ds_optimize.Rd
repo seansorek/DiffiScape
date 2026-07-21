@@ -16,7 +16,7 @@ ds_optimize(
   residualise = FALSE,
   available_points = NULL,
   available_covariates = NULL,
-  solver = c("surrogate", "gradient", "enzyme", "torch", "irl"),
+  solver = c("torch", "surrogate", "gradient", "enzyme", "irl"),
   model_type = "parametric"
 )
 }
@@ -53,10 +53,10 @@ integration.}
 \code{available_points} locations.  Required when \code{available_points} is
 supplied and the intensity model includes covariates.}
 
-\item{solver}{Character; \code{"surrogate"} (GP + Thompson Sampling or
-Expected Improvement, default), \code{"gradient"} (L-BFGS / Adam via JAX
-auto-diff), \code{"enzyme"} (deprecated, alias for \code{"gradient"}),
-\code{"torch"} (PyTorch neural-network resistance), or \code{"irl"}
+\item{solver}{Character; \code{"torch"} (PyTorch log-linear resistance by
+default), \code{"surrogate"} (GP + Thompson Sampling or Expected Improvement),
+\code{"gradient"} (L-BFGS / Adam via JAX auto-diff),
+\code{"enzyme"} (deprecated, alias for \code{"gradient"}), or \code{"irl"}
 (PyTorch value-shaped resistance: a reward network is turned into a
 resistance surface via soft value iteration, then run through the same
 differentiable circuit solver -- a convenience alias for \code{solver = "torch"}

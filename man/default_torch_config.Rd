@@ -44,9 +44,9 @@ Default: \code{10}.}
 \section{Connectivity solver}{
 
 \describe{
-\item{\code{solver}}{Character. Circuit solver: \code{"diff_omniscape"} (focal
-Omniscape, default), \code{"global"} (all-pairs), or
-\code{"global_absorption"} (all-pairs with absorption).}
+\item{\code{solver}}{Character. Circuit solver: \code{"global_absorption"}
+(all-pairs with absorption, default), \code{"diff_omniscape"} (focal
+Omniscape), or \code{"global"} (all-pairs).}
 \item{\code{radius}}{Integer. Omniscape focal radius in cells. Default: \code{15}.}
 \item{\code{block_size}}{Integer. Omniscape focal block size. Default: \code{10}.}
 \item{\code{focal_fraction}}{Numeric. Fraction of focal cells sampled
@@ -123,7 +123,7 @@ steps. Default: \code{60}.}
 \section{Spline-GAM model (model_type = "spline_gam")}{
 
 \describe{
-\item{\code{model_type}}{Character. \code{"mlp"} (default), \code{"conv"}, \code{"spline_gam"},
+\item{\code{model_type}}{Character. \code{"loglinear"} (default), \code{"mlp"}, \code{"conv"}, \code{"spline_gam"},
 or \code{"irl"} (value-shaped resistance — a reward network is turned into a
 resistance surface via soft value iteration, then run through the same
 differentiable circuit solver).}

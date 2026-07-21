@@ -22,7 +22,7 @@ diffiscape(
   rescale_basis = TRUE,
   pattern = "*.tif",
   omniscape_settings = list(),
-  solver = c("surrogate", "gradient", "enzyme", "torch", "irl")
+  solver = c("torch", "surrogate", "gradient", "enzyme", "irl")
 )
 }
 \arguments{
@@ -71,9 +71,9 @@ every connectivity step (final refit, posterior sampling, and
 diagnostics).  Recognised entries: \code{radius} (default \code{13L}),
 \code{block_size} (default \code{5L}), \code{cleanup} (default \code{TRUE}).}
 
-\item{solver}{Character; \code{"surrogate"} (default, GP surrogate optimiser),
-\code{"gradient"} (L-BFGS / Adam via JAX auto-diff), \code{"enzyme"} (deprecated,
-alias for \code{"gradient"}), \code{"torch"} (PyTorch neural-network resistance),
+\item{solver}{Character; \code{"torch"} (default, PyTorch log-linear resistance),
+\code{"surrogate"} (GP surrogate optimiser), \code{"gradient"} (L-BFGS / Adam via
+JAX auto-diff), \code{"enzyme"} (deprecated, alias for \code{"gradient"}),
 or \code{"irl"} (PyTorch value-shaped resistance).  For \code{"torch"} / \code{"irl"},
 \code{\link[=run_torch_pipeline]{run_torch_pipeline()}} fits resistance and intensity jointly in a
 single call, so the separate intensity-fitting step is skipped and
