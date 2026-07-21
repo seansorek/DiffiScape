@@ -146,6 +146,7 @@ _DiffOmniscapeSolveFn = _autograd_functions._DiffOmniscapeSolveFn
 # Resistance nets (+ shared PPP log-likelihood)
 # ---------------------------------------------------------------------------
 _resistance_nets = _tp_import("resistance_nets")
+LogLinearResistanceNet = _resistance_nets.LogLinearResistanceNet
 ResistanceNet = _resistance_nets.ResistanceNet
 _ConvResBlock = _resistance_nets._ConvResBlock
 ConvResistanceNet = _resistance_nets.ConvResistanceNet
@@ -197,7 +198,7 @@ __all__ = [
     "_compute_interp_weights", "_interpolate_block_grid",
     "_interpolate_backward_fast", "_local_adjoint_dl_dR",
     "_DiffOmniscapeSolveFn",
-    "ResistanceNet", "_ConvResBlock", "ConvResistanceNet", "IRLResistanceNet",
+    "LogLinearResistanceNet", "ResistanceNet", "_ConvResBlock", "ConvResistanceNet", "IRLResistanceNet",
     "_bspline_knots", "_bspline_basis_matrix", "_bspline_basis_matrix_torch",
     "_diff_penalty_matrix", "SplineResistanceNet", "_ppp_loglik",
     "verify_circuit_gradient", "verify_conv_gradient",

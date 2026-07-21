@@ -1,6 +1,7 @@
 """Resistance-mapping neural network / GAM models.
 
-Contains the four resistance net classes:
+Contains the five resistance net classes:
+  - LogLinearResistanceNet: log-linear covariate model.
   - ResistanceNet: MLP with linear skip connection.
   - ConvResistanceNet (+ _ConvResBlock): convolutional encoder + MLP head.
   - IRLResistanceNet: inverse-reinforcement-learning value-shaped resistance.
@@ -24,6 +25,37 @@ from .constants import DEFAULT_R_MIN, DEFAULT_R_MAX, DEFAULT_CLAMP_BETA
 # ===========================================================================
 # Neural-network resistance model
 # ===========================================================================
+
+class LogLinearResistanceNet(nn.Module):
+    """Log R(x) = r_0 + z · φ(x)."""
+
+    def __init__(self, n_features=4, R_min=DEFAULT_R_MIN,
+                 R_max=DEFAULT_R_MAX, beta=DEFAULT_CLAMP_BETA):
+        super().__init__()
+        self.R_min = R_min
+        self.R_max = R_max
+        self.beta = beta
+        self.skip = nn.Linear(n_features, 1)
+        nn.init.normal_(self.skip.weight, std=0.1)
+        nn.init.constant_(self.skip.bias, 3.0)
+
+    def warm_start(self, theta):
+        theta = np.asarray(theta, dtype=np.float64).ravel()
+        with torch.no_grad():
+            self.skip.weight.copy_(torch.tensor([theta[1:]], dtype=torch.float64))
+            self.skip.bias.copy_(torch.tensor([theta[0]], dtype=torch.float64))
+
+    def forward(self, x):
+        R, _ = self.forward_with_log_R(x)
+        return R
+
+    def forward_with_log_R(self, x):
+        log_R = self.skip(x).squeeze(-1)
+        log_lo, log_hi = math.log(self.R_min), math.log(self.R_max)
+        clamped = log_lo + F.softplus(log_R - log_lo, beta=self.beta)
+        clamped = log_hi - F.softplus(log_hi - clamped, beta=self.beta)
+        return torch.exp(clamped), log_R
+
 
 class ResistanceNet(nn.Module):
     """

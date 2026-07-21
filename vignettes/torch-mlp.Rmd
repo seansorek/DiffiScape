@@ -1,192 +1,184 @@
 ---
-title: "Neural Network Resistance via PyTorch (MLP / ConvNet)"
+title: "Neural Network Resistance via PyTorch (MLP)"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Neural Network Resistance via PyTorch (MLP / ConvNet)}
+  %\VignetteIndexEntry{Neural Network Resistance via PyTorch (MLP)}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, eval = FALSE, message = FALSE, warning = FALSE)
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, message = FALSE, warning = FALSE)
 ```
 
-This vignette demonstrates the PyTorch neural-network pipeline. Instead of a
-log-linear resistance parameterization, a learned MLP (or dilated ConvResNet)
-maps the environmental basis functions to log-resistance at every pixel,
-capturing nonlinear covariate effects and spatial interactions. The global
-absorption circuit solver runs the connectivity forward pass; PyTorch autograd
-differentiates back through it.
+This vignette fits a small neural resistance model to a synthetic 100 x 100
+urban landscape. Parks are represented by high canopy cover, while roads and
+built areas have high impervious cover. The example is designed to exercise
+the full differentiable circuit pipeline on a CPU, rather than to provide a
+real ecological analysis.
 
-This is the fastest pipeline per iteration (~50–100x vs. GAM), and it can fit
-models with hundreds to thousands of parameters.
+## Simulate the urban landscape and point process
 
-This pipeline requires a 5-layer basis stack: the four NLCD layers plus an
-elevation layer from the Copernicus DEM (or any DEM).
+The two input rasters are canopy cover and impervious surface, each scaled to
+[0, 1]. The data-generating resistance model is
 
-## Setup
+\[\log R = -1 * \mathrm{canopy} + 1 * \mathrm{impervious}.\]
 
-```{r paths}
+We solve the global-absorption circuit on that true resistance surface. The
+point-process model is \(\log \lambda = 2\log(1 + C) + u(s)\), where \(u(s)\)
+is a smooth, spatially autocorrelated random effect. Finally, we condition on
+1,000 observed events and sample their cells in proportion to \(\lambda\).
+
+```{r data}
 library(DiffiScape)
 library(terra)
 
-obs_data_path  <- "path/to/train_points.rds"
-nlcd_dir       <- "path/to/nlcd_data/"
-elevation_path <- "path/to/elevation.tif"   # Copernicus DEM or similar
-output_dir     <- "output/torch"
-dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+withr::local_seed(42)
+template <- terra::rast(
+  nrows = 100L, ncols = 100L,
+  xmin = 0, xmax = 10000, ymin = 0, ymax = 10000, crs = "EPSG:3857"
+)
+coords <- terra::crds(template, df = TRUE)
+x <- (coords$x - min(coords$x)) / diff(range(coords$x))
+y <- (coords$y - min(coords$y)) / diff(range(coords$y))
+layer <- function(values) {
+  raster <- template
+  terra::values(raster) <- values
+  raster
+}
+
+# Four irregular parks embedded in an urban matrix, plus a simple road grid.
+parks <- pmin(1, exp(-((x - 0.20)^2 + (y - 0.76)^2) / 0.012) +
+                 exp(-((x - 0.72)^2 + (y - 0.72)^2) / 0.020) +
+                 exp(-((x - 0.30)^2 + (y - 0.25)^2) / 0.010) +
+                 exp(-((x - 0.78)^2 + (y - 0.30)^2) / 0.014))
+roads <- as.numeric(abs(sin(8 * pi * x)) < 0.08 |
+                    abs(sin(8 * pi * y)) < 0.08)
+canopy <- pmin(1, pmax(0, 0.08 + 0.90 * parks - 0.20 * roads +
+                          rnorm(terra::ncell(template), sd = 0.04)))
+impervious <- pmin(1, pmax(0, 0.15 + 0.25 * (1 - parks) + 0.40 * roads + 0.25 * x +
+                              rnorm(terra::ncell(template), sd = 0.04)))
+basis_stack <- create_basis_stack(list(
+  canopy = layer(canopy),
+  impervious = layer(impervious)
+), rescale = TRUE)
+
+# Smooth white noise twice to create a spatially autocorrelated log-intensity
+# effect. It is deliberately omitted from the fitted model.
+spatial_effect <- terra::focal(layer(rnorm(terra::ncell(template))),
+                               w = matrix(1, 9, 9), fun = "mean",
+                               na.rm = TRUE, fillvalue = 0)
+spatial_effect <- terra::focal(spatial_effect, w = matrix(1, 9, 9),
+                               fun = "mean", na.rm = TRUE, fillvalue = 0)
+spatial_effect <- 0.35 * as.numeric(scale(terra::values(spatial_effect)))
+
+true_log_resistance <- -1 * canopy + 1 * impervious
+true_resistance <- layer(exp(true_log_resistance))
+ds_torch_setup()
+circuit_solver <- DiffiScape:::.ds_env$torch_module$`_get_circuit_module`()
+truth <- circuit_solver$solve_circuit_absorption(
+  terra::as.matrix(true_resistance, wide = TRUE), absorption = 0.20,
+  source_spacing = 1L, source_from_resistance = TRUE
+)
+true_connectivity <- layer(as.numeric(reticulate::py_to_r(truth$current_density)))
+log_lambda <- 2 * log1p(terra::values(true_connectivity)) + spatial_effect
+sampling_weight <- exp(log_lambda - max(log_lambda))
+obs_cells <- sample(seq_len(terra::ncell(template)), 1000L,
+                    replace = TRUE, prob = sampling_weight)
+obs_points <- coords[obs_cells, c("x", "y")]
+output_dir <- file.path(tempdir(), "diffiscape-torch-mlp")
 ```
 
-## Load data and build 5-layer basis
+## Inspect the simulated truth
 
-Elevation is included as a fifth covariate. `ds_create_basis()` accepts a
-character vector of paths to individual rasters and aligns them to a common
-grid automatically.
-
-```{r load-data}
-obs_points <- readRDS(obs_data_path)
-
-nlcd_paths <- list.files(nlcd_dir, pattern = "\\.tif$", full.names = TRUE)
-basis_stack <- ds_create_basis(c(nlcd_paths, elevation_path), rescale = TRUE)
-cat("Basis layers:", names(basis_stack), "\n")   # should be 5 layers
+```{r simulated-truth, fig.width=12, fig.height=4, dpi=96}
+op <- par(mfrow = c(1, 3))
+plot(basis_stack[["canopy"]], main = "Canopy cover")
+plot(basis_stack[["impervious"]], main = "Impervious surface")
+plot(true_connectivity, main = "True connectivity")
+par(op)
 ```
 
-## Initialise PyTorch
+## Verify gradients and fit a compact MLP
 
-```{r init-torch}
-ds_torch_setup()   # initialises reticulate + Python environment
-ds_torch_check()   # confirms torch is available
-```
+The gradient check uses a 12 x 12 centre crop. The model itself runs on the
+full 100 x 100 landscape, but uses a narrow one-hidden-layer MLP and at most
+10 epochs with a relatively local absorption term to remain practical on a
+weak CPU. The short run uses a conservative sign-correct warm start
+`c(0, -0.5, 0.5)`, rather than the true coefficients, so the example does not
+mistake a cold-start numerical transient for an ecological conclusion.
 
-## Verify gradients (optional but recommended)
+```{r fit}
+gradient_check <- verify_torch_gradient(
+  basis_stack, crop_size = 12L, solver = "global_absorption", absorption = 0.20
+)
+stopifnot(isTRUE(gradient_check$pass))
 
-End-to-end finite-difference check of the circuit–NN gradient chain. A
-relative error above ~5 % suggests a numerical issue worth investigating
-before committing to a full training run.
-
-```{r verify-gradients}
-verify_torch_gradient(basis_stack,
-                      solver     = "global_absorption",
-                      absorption = 0.002)
-
-verify_conv_gradient(basis_stack,
-                     solver        = "global_absorption",
-                     absorption    = 0.002,
-                     conv_channels = 16L,
-                     n_conv_layers = 3L)
-```
-
-## Configure the torch pipeline
-
-Settings match the original 06d analysis. Key choices:
-
-- `solver = "global_absorption"` — one global circuit solve with an absorption
-  term; much faster than 23 000 local Omniscape solves.
-- `use_conv = TRUE` — dilated ConvResNet captures spatial context.
-- `intensity_hidden = 16L` — learned intensity MLP instead of parametric
-  γ·log(1+C).
-
-```{r config}
 cfg <- default_torch_config()
+cfg$solver <- "global_absorption"
+cfg$absorption <- 0.20
+cfg$source_spacing <- 1L
+cfg$model_type <- "mlp"
+cfg$hidden_dim <- 4L
+cfg$n_hidden_layers <- 1L
+cfg$lr <- 0.005
+cfg$n_epochs <- 10L
+cfg$patience <- 5L
+cfg$warmup_epochs <- 1L
+cfg$reg_mean <- 0.2
+cfg$reg_var <- 0.0
+cfg$reg_skip <- 0.05
+cfg$log_R_baseline <- 0.0
+cfg$seed <- 42L
+cfg$device <- "cpu"
 
-# Solver
-cfg$solver           <- "global_absorption"
-cfg$absorption       <- 0.002
-cfg$focal_fraction   <- 0.5
-cfg$source_spacing   <- 1L
-cfg$source_from_resistance <- TRUE
-
-# ConvResNet architecture
-cfg$hidden_dim       <- 16L
-cfg$n_hidden_layers  <- 3L
-cfg$use_conv         <- TRUE
-cfg$n_conv_layers    <- 3L
-cfg$conv_channels    <- 16L
-cfg$conv_kernel_size <- 3L
-cfg$dropout          <- 0.1
-cfg$use_dilated      <- TRUE
-cfg$intensity_hidden <- 16L   # 0 = parametric; >0 = learned MLP
-
-# Optimiser
-cfg$lr               <- 0.05
-cfg$weight_decay     <- 1e-4
-cfg$n_epochs         <- 1000L
-cfg$patience         <- 100L
-cfg$grad_clip        <- 10.0
-cfg$warmup_epochs    <- 10L
-
-# Regularisation
-cfg$reg_mean         <- 1.0    # penalises deviation from log_R_baseline
-cfg$reg_var          <- 0.0
-cfg$reg_skip         <- 0.1    # skip-connection penalty (prevents NN collapse)
-cfg$log_R_baseline   <- 3.0    # target: exp(3) ≈ 20
-
-cfg$seed             <- 42L
-cfg$device           <- "auto"  # uses GPU if available
-```
-
-## Run the torch pipeline
-
-```{r run-torch}
 results <- run_torch_pipeline(
-  basis_stack = basis_stack,
-  obs_points  = obs_points,
-  config      = cfg,
-  output_dir  = output_dir
+  basis_stack = basis_stack, obs_points = obs_points,
+  config = cfg, output_dir = output_dir,
+  warm_start_theta = c(0, -0.5, 0.5)
 )
-
-cat("Best log-likelihood:", results$best_loglik, "\n")
-cat("Best epoch:", results$best_epoch, "/", results$n_epochs_run, "\n")
-cat("Total time:", results$total_time, "sec\n")
-cat("Effective log-linear params:\n")
-print(results$effective_loglinear)   # [r_0, z_1, ..., z_5]
 ```
 
-## Inspect outputs
+## Diagnostic and visual checks
 
-```{r outputs}
-terra::writeRaster(results$resistance_raster,
-                   file.path(output_dir, "optimized_resistance.tif"), overwrite = TRUE)
-terra::writeRaster(results$connectivity_raster,
-                   file.path(output_dir, "optimized_connectivity.tif"), overwrite = TRUE)
-terra::writeRaster(results$intensity_raster,
-                   file.path(output_dir, "predicted_intensity.tif"), overwrite = TRUE)
-```
+The fitted model intentionally omits the simulated spatial random effect, so
+it should recover broad resistance/connectivity structure rather than every
+local intensity fluctuation. The assertions catch numerical failures; the
+loss trace and side-by-side maps make broad agreement visually inspectable.
 
-## Optional: post-hoc GAM on the optimised connectivity surface
-
-Fitting a spatial GAM after training allows you to inspect smooth covariate
-effects and spatial residuals without re-running the circuit solver.
-
-```{r posthoc-gam}
-icfg <- default_intensity_config()
-icfg$covariate_type     <- "smooth"
-icfg$include_spatial_re <- TRUE
-
-intensity_fit <- ds_fit_intensity(
-  opt_result         = results,
-  basis_stack        = basis_stack,
-  obs_points         = obs_points,
-  omniscape_settings = list(radius = 15L, block_size = 5L),
-  intensity_config   = icfg
+```{r diagnostics, fig.width=12, fig.height=4, dpi=96}
+stopifnot(
+  all(is.finite(results$loss_history)),
+  all(is.finite(terra::values(results$resistance_raster))),
+  all(is.finite(terra::values(results$connectivity_raster))),
+  all(is.finite(terra::values(results$intensity_raster))),
+  all(terra::values(results$resistance_raster) > 0),
+  all(terra::values(results$intensity_raster) > 0)
 )
+print(data.frame(
+  coefficient = c("canopy", "impervious"),
+  true_log_resistance_effect = c(-1, 1),
+  fitted_effective_loglinear = results$effective_loglinear[-1]
+))
 
-diag <- ds_diagnose(intensity_fit, obs_points, results$connectivity_raster,
-                    intensity_config = icfg, plot = TRUE)
+plot(results$loss_history, type = "l", xlab = "Epoch", ylab = "Objective",
+     main = "Training objective")
+op <- par(mfrow = c(1, 3))
+plot(true_resistance, main = "True resistance")
+plot(results$resistance_raster, main = "Fitted resistance")
+plot(results$connectivity_raster, main = "Fitted connectivity")
+par(op)
 ```
-
-## Save summary
 
 ```{r save}
 saveRDS(
   list(
+    true_log_resistance = true_log_resistance,
+    true_connectivity = true_connectivity,
     effective_loglinear = results$effective_loglinear,
-    alpha               = results$alpha,
-    gamma               = results$gamma,
-    best_loglik         = results$best_loglik,
-    best_epoch          = results$best_epoch,
-    n_params            = results$n_params,
-    total_time          = results$total_time
+    best_loglik = results$best_loglik,
+    best_epoch = results$best_epoch,
+    total_time = results$total_time
   ),
   file.path(output_dir, "torch_optimization_results.rds")
 )

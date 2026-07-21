@@ -120,8 +120,9 @@ ds_create_basis <- function(rasters,
 #' @param available_covariates Named list of covariate vectors at
 #'   `available_points` locations.  Required when `available_points` is
 #'   supplied and the intensity model includes covariates.
-#' @param solver Character; `"surrogate"` (GP + Thompson Sampling or
-#'   Expected Improvement, default), `"gradient"` (L-BFGS / Adam via JAX
+#' @param solver Character; `"torch"` (PyTorch log-linear resistance by
+#'   default), `"surrogate"` (GP + Thompson Sampling or Expected Improvement),
+#'   `"gradient"` (L-BFGS / Adam via JAX
 #'   auto-diff), `"enzyme"` (deprecated, alias for `"gradient"`),
 #'   `"torch"` (PyTorch neural-network resistance), or `"irl"`
 #'   (PyTorch value-shaped resistance: a reward network is turned into a
@@ -161,8 +162,8 @@ ds_optimize <- function(basis_stack,
                         residualise          = FALSE,
                         available_points     = NULL,
                         available_covariates = NULL,
-                        solver               = c("surrogate", "gradient",
-                                                 "enzyme", "torch", "irl"),
+                        solver               = c("torch", "surrogate", "gradient",
+                                                 "enzyme", "irl"),
                         model_type           = "parametric") {
 
   solver <- match.arg(solver)
@@ -596,10 +597,10 @@ ds_diagnose <- function(intensity_fit,
 #'   every connectivity step (final refit, posterior sampling, and
 #'   diagnostics).  Recognised entries: `radius` (default `13L`),
 #'   `block_size` (default `5L`), `cleanup` (default `TRUE`).
-#' @param solver Character; `"surrogate"` (default, GP surrogate optimiser),
-#'   `"gradient"` (L-BFGS / Adam via JAX auto-diff), `"enzyme"` (deprecated,
-#'   alias for `"gradient"`), `"torch"` (PyTorch neural-network resistance),
-#'   or `"irl"` (PyTorch value-shaped resistance).  For `"torch"` / `"irl"`,
+#' @param solver Character; `"torch"` (default, PyTorch log-linear resistance),
+#'   `"surrogate"` (GP surrogate optimiser), `"gradient"` (L-BFGS / Adam via
+#'   JAX auto-diff), `"enzyme"` (deprecated, alias for `"gradient"`),
+#'   or `"irl"` (PyTorch value-shaped resistance). For `"torch"` / `"irl"`,
 #'   [run_torch_pipeline()] fits resistance and intensity jointly in a
 #'   single call, so the separate intensity-fitting step is skipped and
 #'   `posterior`/`diagnostics`/`ppc` are `NULL` (those require either a
@@ -626,8 +627,8 @@ diffiscape <- function(obs_data,
                        rescale_basis        = TRUE,
                        pattern              = "*.tif",
                        omniscape_settings   = list(),
-                       solver               = c("surrogate", "gradient",
-                                                "enzyme", "torch", "irl")) {
+                       solver               = c("torch", "surrogate", "gradient",
+                                                "enzyme", "irl")) {
 
   solver <- match.arg(solver)
   spec <- solver_spec(solver)

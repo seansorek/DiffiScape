@@ -1,5 +1,10 @@
 # Tests for R/pipeline.R
 
+test_that("torch is the default solver", {
+  expect_identical(formals(ds_optimize)$solver[[1]], "torch")
+  expect_identical(formals(diffiscape)$solver[[1]], "torch")
+})
+
 test_that("ds_load_data reads CSV correctly", {
   tmp <- tempfile(fileext = ".csv")
   df  <- data.frame(x = 1:5, y = 6:10, extra = letters[1:5])

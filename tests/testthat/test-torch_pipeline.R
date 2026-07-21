@@ -57,9 +57,9 @@ test_that("default_torch_config defaults are within valid ranges", {
   expect_true(cfg$spline_degree >= 1)
 })
 
-test_that("default_torch_config default solver is diff_omniscape", {
+test_that("default_torch_config defaults to global absorption", {
   cfg <- default_torch_config()
-  expect_equal(cfg$solver, "diff_omniscape")
+  expect_equal(cfg$solver, "global_absorption")
 })
 
 test_that("default_torch_config immutability: calls return independent lists", {
@@ -74,9 +74,9 @@ test_that("default_torch_config device default is auto", {
   expect_equal(cfg$device, "auto")
 })
 
-test_that("default_torch_config model_type default is mlp", {
+test_that("default_torch_config model_type default is loglinear", {
   cfg <- default_torch_config()
-  expect_equal(cfg$model_type, "mlp")
+  expect_equal(cfg$model_type, "loglinear")
 })
 
 test_that("default_torch_config use_conv default is FALSE", {
@@ -87,6 +87,7 @@ test_that("default_torch_config use_conv default is FALSE", {
 test_that("default_torch_config intensity_spline default is FALSE", {
   cfg <- default_torch_config()
   expect_false(cfg$intensity_spline)
+  expect_identical(cfg$intensity_hidden, 0L)
 })
 
 
