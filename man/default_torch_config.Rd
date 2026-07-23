@@ -56,7 +56,9 @@ Default: \code{0.01}.}
 \item{\code{cg_tol}}{Numeric. Conjugate-gradient solver tolerance.
 Default: \code{1e-6}.}
 \item{\code{source_spacing}}{Integer. Lattice spacing in cells between circuit
-sources for the global solver. Default: \code{5}.}
+sources for the global solver. Default: \code{1} (the \code{global_absorption}
+solver forces spacing back to 1 regardless, so this avoids an
+avoidable warning on the out-of-the-box config).}
 \item{\code{source_from_resistance}}{Logical. Weight source strength by inverse
 resistance. Default: \code{TRUE}.}
 }

@@ -66,7 +66,9 @@
 #'   \item{`cg_tol`}{Numeric. Conjugate-gradient solver tolerance.
 #'     Default: `1e-6`.}
 #'   \item{`source_spacing`}{Integer. Lattice spacing in cells between circuit
-#'     sources for the global solver. Default: `5`.}
+#'     sources for the global solver. Default: `1` (the `global_absorption`
+#'     solver forces spacing back to 1 regardless, so this avoids an
+#'     avoidable warning on the out-of-the-box config).}
 #'   \item{`source_from_resistance`}{Logical. Weight source strength by inverse
 #'     resistance. Default: `TRUE`.}
 #' }
@@ -179,7 +181,7 @@ default_torch_config <- function() {
     focal_fraction          = 0.5,
     absorption              = 0.01,
     cg_tol                  = 1e-6,
-    source_spacing          = 5L,
+    source_spacing          = 1L,
     source_from_resistance  = TRUE,
 
     # --- Regularisation ---
