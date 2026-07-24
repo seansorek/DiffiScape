@@ -44,9 +44,9 @@ Default: \code{10}.}
 \section{Connectivity solver}{
 
 \describe{
-\item{\code{solver}}{Character. Circuit solver: \code{"diff_omniscape"} (focal
-Omniscape, default), \code{"global"} (all-pairs), or
-\code{"global_absorption"} (all-pairs with absorption).}
+\item{\code{solver}}{Character. Circuit solver: \code{"global_absorption"}
+(all-pairs with absorption, default), \code{"diff_omniscape"} (focal
+Omniscape), or \code{"global"} (all-pairs).}
 \item{\code{radius}}{Integer. Omniscape focal radius in cells. Default: \code{15}.}
 \item{\code{block_size}}{Integer. Omniscape focal block size. Default: \code{10}.}
 \item{\code{focal_fraction}}{Numeric. Fraction of focal cells sampled
@@ -56,7 +56,9 @@ Default: \code{0.01}.}
 \item{\code{cg_tol}}{Numeric. Conjugate-gradient solver tolerance.
 Default: \code{1e-6}.}
 \item{\code{source_spacing}}{Integer. Lattice spacing in cells between circuit
-sources for the global solver. Default: \code{5}.}
+sources for the global solver. Default: \code{1} (the \code{global_absorption}
+solver forces spacing back to 1 regardless, so this avoids an
+avoidable warning on the out-of-the-box config).}
 \item{\code{source_from_resistance}}{Logical. Weight source strength by inverse
 resistance. Default: \code{TRUE}.}
 }
@@ -123,7 +125,7 @@ steps. Default: \code{60}.}
 \section{Spline-GAM model (model_type = "spline_gam")}{
 
 \describe{
-\item{\code{model_type}}{Character. \code{"mlp"} (default), \code{"conv"}, \code{"spline_gam"},
+\item{\code{model_type}}{Character. \code{"loglinear"} (default), \code{"mlp"}, \code{"conv"}, \code{"spline_gam"},
 or \code{"irl"} (value-shaped resistance — a reward network is turned into a
 resistance surface via soft value iteration, then run through the same
 differentiable circuit solver).}

@@ -54,9 +54,9 @@
 #'
 #' @section Connectivity solver:
 #' \describe{
-#'   \item{`solver`}{Character. Circuit solver: `"diff_omniscape"` (focal
-#'     Omniscape, default), `"global"` (all-pairs), or
-#'     `"global_absorption"` (all-pairs with absorption).}
+#'   \item{`solver`}{Character. Circuit solver: `"global_absorption"`
+#'     (all-pairs with absorption, default), `"diff_omniscape"` (focal
+#'     Omniscape), or `"global"` (all-pairs).}
 #'   \item{`radius`}{Integer. Omniscape focal radius in cells. Default: `15`.}
 #'   \item{`block_size`}{Integer. Omniscape focal block size. Default: `10`.}
 #'   \item{`focal_fraction`}{Numeric. Fraction of focal cells sampled
@@ -66,7 +66,9 @@
 #'   \item{`cg_tol`}{Numeric. Conjugate-gradient solver tolerance.
 #'     Default: `1e-6`.}
 #'   \item{`source_spacing`}{Integer. Lattice spacing in cells between circuit
-#'     sources for the global solver. Default: `5`.}
+#'     sources for the global solver. Default: `1` (the `global_absorption`
+#'     solver forces spacing back to 1 regardless, so this avoids an
+#'     avoidable warning on the out-of-the-box config).}
 #'   \item{`source_from_resistance`}{Logical. Weight source strength by inverse
 #'     resistance. Default: `TRUE`.}
 #' }
@@ -123,8 +125,8 @@
 #'
 #' @section Spline-GAM model (model_type = "spline_gam"):
 #' \describe{
-#'   \item{`model_type`}{Character. `"mlp"` (default), `"conv"`, `"spline_gam"`,
-#'     or `"irl"` (value-shaped resistance — a reward network is turned into a
+#'   \item{`model_type`}{Character. `"loglinear"` (default), `"mlp"`, `"conv"`,
+#'     `"spline_gam"`, or `"irl"` (value-shaped resistance — a reward network is turned into a
 #'     resistance surface via soft value iteration, then run through the same
 #'     differentiable circuit solver).}
 #'   \item{`n_knots`}{Integer. Spline knots per covariate. Default: `10`.}
@@ -173,13 +175,13 @@ default_torch_config <- function() {
     warmup_epochs           = 10L,
 
     # --- Solver ---
-    solver                  = "diff_omniscape",
+    solver                  = "global_absorption",
     radius                  = 15L,
     block_size              = 10L,
     focal_fraction          = 0.5,
     absorption              = 0.01,
     cg_tol                  = 1e-6,
-    source_spacing          = 5L,
+    source_spacing          = 1L,
     source_from_resistance  = TRUE,
 
     # --- Regularisation ---
@@ -203,7 +205,7 @@ default_torch_config <- function() {
     intensity_hidden        = 0L,
 
     # --- Spline-GAM model ---
-    model_type              = "mlp",
+    model_type              = "loglinear",
     n_knots                 = 10L,
     spline_degree           = 3L,
     include_interactions    = TRUE,
@@ -283,8 +285,8 @@ default_torch_config <- function() {
 #' @param warmup_epochs Integer; linear LR warm-up epochs.
 #' @param absorption_schedule Optional numeric vector for an absorption
 #'   curriculum.
-#' @param model_type Character; `"mlp"`, `"conv"`, `"spline_gam"`, or `"irl"`
-#'   (value-shaped resistance from soft value iteration).
+#' @param model_type Character; `"loglinear"`, `"mlp"`, `"conv"`, `"spline_gam"`,
+#'   or `"irl"` (value-shaped resistance from soft value iteration).
 #' @param beta Numeric; soft value-iteration temperature (IRL only).
 #' @param gamma_d Numeric; MDP discount / leakage for value iteration, `< 1`
 #'   (IRL only).

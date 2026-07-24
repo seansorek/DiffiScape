@@ -20,7 +20,8 @@ from .autograd_functions import (
     _DiffOmniscapeSolveFn,
 )
 from .resistance_nets import (
-    ResistanceNet, ConvResistanceNet, IRLResistanceNet, SplineResistanceNet,
+    LogLinearResistanceNet, ResistanceNet, ConvResistanceNet, IRLResistanceNet,
+    SplineResistanceNet,
     _ppp_loglik,
 )
 
@@ -61,7 +62,7 @@ def run_torch_optimization(
     seed=42,
     verbose=True,
     # Solver selection
-    solver="diff_omniscape",     # "diff_omniscape", "global", or "global_absorption"
+    solver="global_absorption",  # "diff_omniscape", "global", or "global_absorption"
     radius=15,                   # diff_omniscape: focal neighbourhood half-width
     block_size=10,               # diff_omniscape: spacing between focal pixels
     focal_fraction=0.5,          # diff_omniscape: fraction of focals used per epoch
@@ -80,7 +81,7 @@ def run_torch_optimization(
     warmup_epochs=10,            # LR linear warm-up epochs (0 = off)
     absorption_schedule=None,    # Absorption curriculum: [start, end] or None
     # Model type
-    model_type="mlp",            # "mlp", "conv", or "spline_gam"
+    model_type="loglinear",      # "loglinear", "mlp", "conv", or "spline_gam"
     n_knots=10,                  # SplineResistanceNet: internal knots per covariate
     spline_degree=3,             # SplineResistanceNet: B-spline degree
     include_interactions=True,   # SplineResistanceNet: pairwise tensor products
@@ -201,6 +202,7 @@ def run_torch_optimization(
         model_type = "conv"
     use_conv = (model_type == "conv")
     use_spline = (model_type == "spline_gam")
+    use_loglinear = (model_type == "loglinear")
     use_irl = (model_type == "irl")
     # Grid-context nets (conv encoder, IRL value iteration) need the 2D basis
     # grid and the (basis_grid, valid_mask, basis_valid) forward signature.
@@ -328,6 +330,8 @@ def run_torch_optimization(
             n_value_iter=int(n_value_iter),
             value_scale_init=float(value_scale_init),
         ).double().to(dev)
+    elif use_loglinear:
+        net = LogLinearResistanceNet(n_features).double().to(dev)
     else:
         net = ResistanceNet(n_features, hidden_dim, n_hidden_layers).double().to(dev)
     alpha = nn.Parameter(torch.tensor(0.0, dtype=torch.float64, device=dev))

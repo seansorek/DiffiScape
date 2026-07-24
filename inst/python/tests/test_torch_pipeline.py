@@ -55,6 +55,14 @@ class TestResistanceNet:
         assert all(p.grad is not None for p in net.parameters())
 
 
+class TestLogLinearResistanceNet:
+    def test_has_only_linear_resistance_parameters(self):
+        net = tp.LogLinearResistanceNet(n_features=3).double()
+        out = net(torch.randn(9, 3, dtype=torch.float64))
+        assert out.shape == (9,)
+        assert sum(p.numel() for p in net.parameters()) == 4
+
+
 class TestConvResistanceNet:
     def test_forward_shape(self):
         net = tp.ConvResistanceNet(n_features=3).double()
