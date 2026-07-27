@@ -384,3 +384,124 @@ test_that("evaluate_full_model defaults distribution to 'negbin' when explicitly
 
   expect_equal(result$distribution, "negbin")
 })
+
+
+test_that("evaluate_full_model errors instead of silently dropping out-of-mask obs_points for family_clogit() with strata (#90)", {
+  skip_on_cran()
+
+  basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  # Two used locations (one per stratum); the mock extract_connectivity()
+  # below returns NA for the first one, simulating a point that falls
+  # outside the connectivity raster's valid mask.
+  obs_points  <- data.frame(x = c(0, 1), y = c(0, 1))
+  avail_pts   <- data.frame(x = c(0, 1, 2, 3), y = c(0, 1, 2, 3))
+  mock_conn   <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+
+  fam <- family_clogit(
+    stratum_ids_used  = c(1L, 2L),
+    stratum_ids_avail = c(1L, 1L, 2L, 2L)
+  )
+
+  local_mocked_bindings(
+    create_resistance_surface = function(...) mock_conn,
+    ds_jax_connectivity = function(...) {
+      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
+    },
+    extract_connectivity = function(connectivity, points, ...) {
+      n <- nrow(as.data.frame(points))
+      vals <- rep(1.0, n)
+      vals[1] <- NA_real_  # first location falls outside the mask
+      vals
+    },
+    .package = "DiffiScape"
+  )
+
+  expect_error(
+    evaluate_full_model(
+      resistance_params  = list(r_0 = 0),
+      basis_stack          = basis_stack,
+      obs_points            = obs_points,
+      available_points      = avail_pts,
+      family                = fam,
+      verbose               = FALSE
+    ),
+    "stratum idx_map"
+  )
+})
+
+
+test_that("evaluate_full_model errors instead of silently dropping out-of-mask available_points for family_clogit() with strata (#90)", {
+  skip_on_cran()
+
+  basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  obs_points  <- data.frame(x = c(0, 1), y = c(0, 1))
+  avail_pts   <- data.frame(x = c(0, 1, 2, 3), y = c(0, 1, 2, 3))
+  mock_conn   <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+
+  fam <- family_clogit(
+    stratum_ids_used  = c(1L, 2L),
+    stratum_ids_avail = c(1L, 1L, 2L, 2L)
+  )
+
+  local_mocked_bindings(
+    create_resistance_surface = function(...) mock_conn,
+    ds_jax_connectivity = function(...) {
+      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
+    },
+    extract_connectivity = function(connectivity, points, ...) {
+      n <- nrow(as.data.frame(points))
+      vals <- rep(1.0, n)
+      if (n == 4) vals[1] <- NA_real_  # avail point outside the mask
+      vals
+    },
+    .package = "DiffiScape"
+  )
+
+  expect_error(
+    evaluate_full_model(
+      resistance_params  = list(r_0 = 0),
+      basis_stack          = basis_stack,
+      obs_points            = obs_points,
+      available_points      = avail_pts,
+      family                = fam,
+      verbose               = FALSE
+    ),
+    "stratum idx_map"
+  )
+})
+
+
+test_that("evaluate_full_model still drops out-of-mask obs_points for non-strata families (unchanged behaviour)", {
+  skip_on_cran()
+
+  basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  obs_points  <- data.frame(x = c(0, 1), y = c(0, 1))
+  mock_conn   <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+
+  local_mocked_bindings(
+    create_resistance_surface = function(...) mock_conn,
+    ds_jax_connectivity = function(...) {
+      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
+    },
+    extract_connectivity = function(connectivity, points, ...) {
+      n <- nrow(as.data.frame(points))
+      vals <- rep(1.0, n)
+      vals[1] <- NA_real_
+      vals
+    },
+    fit_intensity_nb = function(...) {
+      list(loglik = -1, estimates = c(alpha = 0, gamma = 0), se = NULL,
+           hessian = NULL, convergence = 0L)
+    },
+    .package = "DiffiScape"
+  )
+
+  expect_no_error(
+    evaluate_full_model(
+      resistance_params  = list(r_0 = 0),
+      basis_stack          = basis_stack,
+      obs_points            = obs_points,
+      verbose               = FALSE
+    )
+  )
+})

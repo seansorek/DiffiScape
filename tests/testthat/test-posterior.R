@@ -172,6 +172,54 @@ test_that("laplace_resistance covariance is symmetric", {
 })
 
 
+test_that("laplace_resistance refit path errors instead of silently dropping out-of-mask points for family_clogit() with strata (#90)", {
+  skip_on_cran()
+  skip_if_not_installed("numDeriv")
+
+  opt_result <- list(
+    best_params = list(r_0 = 0, z_1 = 0),
+    bounds      = list(r_0 = c(-2, 2), z_1 = c(-3, 3)),
+    surrogate   = NULL,   # forces refit <- TRUE
+    distribution = "negbin"
+  )
+
+  basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  obs_points  <- data.frame(x = c(0, 1), y = c(0, 1))
+  avail_pts   <- data.frame(x = c(0, 1, 2, 3), y = c(0, 1, 2, 3))
+  mock_conn   <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+
+  fam <- family_clogit(
+    stratum_ids_used  = c(1L, 2L),
+    stratum_ids_avail = c(1L, 1L, 2L, 2L)
+  )
+
+  local_mocked_bindings(
+    create_resistance_surface = function(...) mock_conn,
+    ds_jax_connectivity = function(...) {
+      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
+    },
+    extract_connectivity = function(connectivity, points, ...) {
+      n <- nrow(as.data.frame(points))
+      vals <- rep(1.0, n)
+      vals[1] <- NA_real_  # simulate a point outside the valid mask
+      vals
+    },
+    .package = "DiffiScape"
+  )
+
+  expect_error(
+    laplace_resistance(
+      opt_result,
+      basis_stack       = basis_stack,
+      obs_points        = obs_points,
+      available_points  = avail_pts,
+      family            = fam
+    ),
+    "stratum idx_map"
+  )
+})
+
+
 test_that("laplace_resistance warns when refit=TRUE but basis_stack/obs_points absent", {
   skip_on_cran()
   skip_if_not_installed("numDeriv")
