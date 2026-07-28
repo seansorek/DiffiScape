@@ -121,6 +121,21 @@ laplace_resistance <- function(opt_result,
 
       conn_obs <- extract_connectivity(cum_rast, obs_points)
       valid    <- !is.na(conn_obs)
+      if (any(!valid) && !is.null(family) && identical(family$name, "clogit") &&
+          isTRUE(family$uses_strata)) {
+        stop(sprintf(
+          "%d of %d obs_points fall outside the connectivity raster's valid ",
+          sum(!valid), length(valid)),
+          "mask on the refit path. family_clogit() precomputes its stratum ",
+          "idx_map from the positions of stratum_ids_used/stratum_ids_avail ",
+          "at construction time; silently dropping rows here would shift ",
+          "those positions and corrupt the used/available pairing without ",
+          "any error. Pre-filter obs_points together with ",
+          "stratum_ids_used (dropping the same rows from both) before ",
+          "calling laplace_resistance().",
+          call. = FALSE
+        )
+      }
       if (sum(valid) < 3) return(-1e10)
 
       fit_fn <- switch(distribution,
@@ -141,6 +156,22 @@ laplace_resistance <- function(opt_result,
       if (!is.null(available_points)) {
         avail_conn_raw <- extract_connectivity(cum_rast, available_points)
         avail_valid    <- !is.na(avail_conn_raw)
+        if (any(!avail_valid) && !is.null(family) &&
+            identical(family$name, "clogit") && isTRUE(family$uses_strata)) {
+          stop(sprintf(
+            "%d of %d available_points fall outside the connectivity ",
+            sum(!avail_valid), length(avail_valid)),
+            "raster's valid mask on the refit path. family_clogit() ",
+            "precomputes its stratum idx_map from the positions of ",
+            "stratum_ids_used/stratum_ids_avail at construction time; ",
+            "silently dropping rows here would shift those positions and ",
+            "corrupt the used/available pairing without any error. ",
+            "Pre-filter available_points together with stratum_ids_avail ",
+            "(dropping the same rows from both) before calling ",
+            "laplace_resistance().",
+            call. = FALSE
+          )
+        }
         avail_conn     <- avail_conn_raw[avail_valid]
         avail_cov      <- if (!is.null(available_covariates))
           lapply(available_covariates, function(v) v[avail_valid]) else NULL

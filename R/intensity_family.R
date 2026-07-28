@@ -595,8 +595,14 @@ family_rsp <- function(background_weight = 1000) {
 #' [fit_intensity_selection()].
 #'
 #' For stratified data (e.g. step-selection analysis), pass stratum IDs at
-#' family creation time and set
-#' `intensity_config$integration_subsample = 1` to preserve stratum integrity.
+#' family creation time. `intensity_config$integration_subsample` is not
+#' consulted on the `available_connectivity` selection-mode path (see
+#' `fit_intensity_nb()`), so it has no effect here -- stratum integrity is
+#' instead protected by `evaluate_full_model()` and `laplace_resistance()`
+#' refusing (via `stop()`) to silently drop `obs_points`/`available_points`
+#' that fall outside the connectivity raster's valid mask. Ensure your
+#' points and their matching `stratum_ids_used`/`stratum_ids_avail` are
+#' pre-filtered to the valid mask before fitting.
 #'
 #' @param stratum_ids_used Integer or character vector of length \eqn{n_\text{used}},
 #'   giving the stratum each used location belongs to.  Must be provided
@@ -641,7 +647,7 @@ family_clogit <- function(stratum_ids_used  = NULL,
     idx_map <- NULL
   }
 
-  intensity_family(
+  fam <- intensity_family(
     name = "clogit",
 
     negloglik_fn = function(theta,
@@ -713,6 +719,14 @@ family_clogit <- function(stratum_ids_used  = NULL,
       c("gamma", paste0("beta_", cov_names))
     }
   )
+
+  # Flag whether this family instance carries a stratum index map, so
+  # callers (evaluate_full_model(), laplace_resistance()) can refuse to
+  # silently drop out-of-mask points -- doing so would invalidate the
+  # positional idx_map baked in above without any corresponding
+  # adjustment. See #90.
+  fam$uses_strata <- use_strata
+  fam
 }
 
 

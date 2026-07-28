@@ -29,6 +29,12 @@ argument of \code{\link[=optimize_resistance]{optimize_resistance()}}, \code{\li
 \code{\link[=fit_intensity_selection]{fit_intensity_selection()}}.
 
 For stratified data (e.g. step-selection analysis), pass stratum IDs at
-family creation time and set
-\code{intensity_config$integration_subsample = 1} to preserve stratum integrity.
+family creation time. \code{intensity_config$integration_subsample} is not
+consulted on the \code{available_connectivity} selection-mode path (see
+\code{fit_intensity_nb()}), so it has no effect here -- stratum integrity is
+instead protected by \code{evaluate_full_model()} and \code{laplace_resistance()}
+refusing (via \code{stop()}) to silently drop \code{obs_points}/\code{available_points}
+that fall outside the connectivity raster's valid mask. Ensure your
+points and their matching \code{stratum_ids_used}/\code{stratum_ids_avail} are
+pre-filtered to the valid mask before fitting.
 }
