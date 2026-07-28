@@ -185,6 +185,66 @@ test_that("laplace_resistance warns when refit=TRUE but basis_stack/obs_points a
 
 
 # ---------------------------------------------------------------------------
+# refit-path Hessian sign (issue #94)
+# ---------------------------------------------------------------------------
+
+test_that("laplace_resistance refit path returns strictly positive, finite std_error for a well-identified toy problem (#94)", {
+  skip_on_cran()
+  skip_if_not_installed("numDeriv")
+
+  # opt_result with surrogate = NULL forces refit <- TRUE unconditionally,
+  # exercising the refit_fn path that had the sign bug.
+  opt_result <- list(
+    best_params  = list(r_0 = 0, z_1 = 0),
+    bounds       = list(r_0 = c(-2, 2), z_1 = c(-3, 3)),
+    surrogate    = NULL,
+    distribution = "negbin"
+  )
+
+  basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
+  obs_points  <- data.frame(x = c(0, 1, 2), y = c(0, 1, 2))
+  mock_conn   <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+
+  # A concave, well-identified log-likelihood surface with known curvature:
+  # ll(theta) = -0.5 * k * sum(theta^2), maximised at theta = 0. The true
+  # Hessian of the LL is -k*I, so the true covariance is (1/k)*I and
+  # std_error = sqrt(1/k) for every parameter -- strictly positive.
+  k <- 4
+  captured_theta <- NULL
+
+  local_mocked_bindings(
+    create_resistance_surface = function(params, basis_stack, link) {
+      captured_theta <<- unlist(params)
+      mock_conn
+    },
+    ds_jax_connectivity = function(...) {
+      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
+    },
+    extract_connectivity = function(connectivity, points, ...) {
+      rep(1.0, nrow(as.data.frame(points)))
+    },
+    fit_intensity_nb = function(...) {
+      ll <- -0.5 * k * sum(captured_theta^2)
+      list(loglik = ll, estimates = c(alpha = 0, gamma = 0), se = NULL,
+           hessian = NULL, convergence = 0L)
+    },
+    .package = "DiffiScape"
+  )
+
+  lap <- laplace_resistance(
+    opt_result,
+    basis_stack = basis_stack,
+    obs_points  = obs_points,
+    step        = 1e-2
+  )
+
+  expect_true(all(is.finite(lap$std_error)))
+  expect_true(all(lap$std_error > 0))
+  expect_equal(lap$std_error, rep(sqrt(1 / k), 2), tolerance = 1e-2)
+})
+
+
+# ---------------------------------------------------------------------------
 # nearPD fallback warnings (issue #16)
 # ---------------------------------------------------------------------------
 
