@@ -309,9 +309,29 @@ family_gaussian <- function(known_sd = NULL) {
 
 #' Zero-inflated Negative Binomial intensity family
 #'
-#' Extends the NB model with an extra zero-inflation parameter
+#' Extends the aggregate NB-PPP model with an extra zero-inflation parameter
 #' \eqn{\pi = \text{logit}^{-1}(\text{logit\_pi})}, where with
-#' probability \eqn{\pi} the observation is a structural zero.
+#' probability \eqn{\pi} the observed count \eqn{n_\text{obs}} is a
+#' structural zero (independent of the intensity surface), and with
+#' probability \eqn{1 - \pi} it is drawn from the ordinary NB-PPP model
+#' used by [family_negbin()]:
+#' \deqn{
+#'   P(N = n) = \begin{cases}
+#'     \pi + (1 - \pi)\,\text{NB}(0 \mid \Lambda, \theta) & n = 0 \\
+#'     (1 - \pi)\,\text{NB}(n \mid \Lambda, \theta) & n > 0
+#'   \end{cases}
+#' }
+#' where \eqn{\Lambda = \sum_j w_j \lambda_j} is the (non-inflated) mean
+#' intensity integral and \eqn{\theta} is the NB size parameter. Critically,
+#' \eqn{\Lambda} and the point-location density are *not* scaled by
+#' \eqn{(1 - \pi)}: only the marginal probability of the aggregate count
+#' \eqn{n_\text{obs}} is zero-inflated. This keeps \eqn{\pi} from being
+#' absorbed into the intercept \eqn{\alpha} (see #91) -- with a single
+#' realised \eqn{n_\text{obs} > 0} (the typical case), \eqn{\pi} enters the
+#' log-likelihood only via an additive \eqn{\log(1 - \pi)} term, so it is
+#' identified in principle but only weakly so from a single aggregate
+#' count; expect it to be pinned near its lower bound unless the data
+#' includes genuine zero-count replicates.
 #'
 #' @return An [intensity_family] object.
 #' @export
@@ -343,16 +363,39 @@ family_zinb <- function() {
       lambda_obs <- compute_intensity(z_obs, alpha, gamma, cov_obs, betas)
       lambda_int <- compute_intensity(z_int, alpha, gamma, cov_int, betas)
 
-      # PPP terms (on non-inflated component)
-      term1 <- sum(obs_weights * log(pmax((1 - pi_val) * lambda_obs, 1e-300)))
-      term2 <- sum(int_weights * (1 - pi_val) * lambda_int)
+      # Point-location density and the mean count Lambda are NOT scaled by
+      # (1 - pi_val): zero-inflation acts only on the marginal probability
+      # of the aggregate count n_obs below, not on where points fall
+      # conditional on being real. Scaling both terms by (1 - pi_val), as
+      # the previous implementation did, makes pi_val enter the likelihood
+      # only through the product exp(alpha) * (1 - pi_val), perfectly
+      # confounding it with alpha and leaving it unidentifiable (#91).
+      term1  <- sum(obs_weights * log(pmax(lambda_obs, 1e-300)))
+      Lambda <- sum(int_weights * lambda_int)
 
-      n_obs  <- sum(obs_weights)
-      nb_adj <- lgamma(n_obs + nb_theta) - lgamma(nb_theta) +
-                nb_theta * log(nb_theta / (nb_theta + term2)) +
-                n_obs    * log(term2 / (nb_theta + term2))
+      n_obs <- sum(obs_weights)
 
-      negll <- -(term1 - n_obs * log(pmax(term2, 1e-300)) + nb_adj)
+      if (n_obs > 0) {
+        # log(1 - pi_val) + log NB(n_obs | Lambda, nb_theta), with the NB
+        # pmf's -lgamma(n_obs + 1) factorial term omitted (as in
+        # family_negbin(): it cancels with the unordered point-pattern
+        # combinatorial factor elsewhere). The trailing
+        # "- n_obs * log(Lambda)" outer term cancels the "+ n_obs *
+        # log(Lambda)" inside nb_adj, matching family_negbin()'s
+        # Cox-process derivation exactly, plus the additive zero-inflation
+        # log(1 - pi_val) term.
+        nb_adj <- lgamma(n_obs + nb_theta) - lgamma(nb_theta) +
+                  nb_theta * log(nb_theta / (nb_theta + Lambda)) +
+                  n_obs    * log(Lambda / (nb_theta + Lambda))
+
+        negll <- -(term1 - n_obs * log(pmax(Lambda, 1e-300)) + nb_adj +
+                     log(pmax(1 - pi_val, 1e-300)))
+      } else {
+        # Structural-zero branch: P(N = 0) = pi + (1 - pi) * NB(0 | Lambda, theta)
+        p_zero_nb <- (nb_theta / (nb_theta + Lambda))^nb_theta
+        negll <- -log(pmax(pi_val + (1 - pi_val) * p_zero_nb, 1e-300))
+      }
+
       if (!is.finite(negll)) negll <- 1e15
       negll
     },

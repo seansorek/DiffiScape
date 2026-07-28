@@ -414,6 +414,75 @@ test_that("family_zinb deviance_residuals have correct length and finiteness", {
   expect_true(all(is.finite(dr)))
 })
 
+test_that("family_zinb negloglik_fn is sensitive to logit_pi at matched alpha (#91)", {
+  # Regression test for #91: (1 - pi) previously scaled both the point-log
+  # term and the integral term identically, so it cancelled exactly out of
+  # the likelihood and logit_pi had zero effect at fixed alpha -- i.e. the
+  # negloglik_fn was numerically *constant* in logit_pi. After the fix,
+  # pi enters only via an additive log(1 - pi) term on the count marginal,
+  # so two different logit_pi values (at matched alpha/gamma/nb_theta) must
+  # give two different negloglik values.
+  fam <- family_zinb()
+  inp <- make_ppp_inputs()
+
+  nll_pi_low <- fam$negloglik_fn(
+    theta       = c(-3, 0.5, log(2), -2),   # logit_pi = -2 -> pi ~= 0.12
+    z_obs       = inp$z_obs, z_int = inp$z_int,
+    int_weights = inp$int_weights, obs_weights = inp$obs_weights
+  )
+  nll_pi_high <- fam$negloglik_fn(
+    theta       = c(-3, 0.5, log(2), 2),    # logit_pi =  2 -> pi ~= 0.88
+    z_obs       = inp$z_obs, z_int = inp$z_int,
+    int_weights = inp$int_weights, obs_weights = inp$obs_weights
+  )
+
+  expect_false(isTRUE(all.equal(nll_pi_low, nll_pi_high)))
+
+  # And the difference must match the closed-form additive offset predicted
+  # by the fix: for n_obs > 0, negll(logit_pi) = const - log(1 - pi_val), so
+  # negll_high - negll_low == log(1 - pi_low) - log(1 - pi_high) exactly
+  # (independent of alpha/gamma/nb_theta/data).
+  pi_low  <- 1 / (1 + exp(2))    # pi at logit_pi = -2
+  pi_high <- 1 / (1 + exp(-2))   # pi at logit_pi =  2
+  expect_equal(nll_pi_high - nll_pi_low,
+               log(1 - pi_low) - log(1 - pi_high),
+               tolerance = 1e-8)
+})
+
+test_that("family_zinb negloglik_fn no longer confounds alpha and logit_pi via a common (1 - pi) scale factor (#91)", {
+  # Before the fix, negloglik_fn(alpha, ..., logit_pi) depended on alpha and
+  # logit_pi only through the product exp(alpha) * (1 - pi_val): shifting
+  # alpha by delta and simultaneously choosing a new logit_pi such that
+  # (1 - pi_new) = (1 - pi_old) * exp(-delta) left the log-likelihood
+  # exactly unchanged (a flat ridge). After the fix that exact
+  # compensation no longer holds.
+  fam <- family_zinb()
+  inp <- make_ppp_inputs()
+
+  alpha0    <- -3
+  logit_pi0 <- 0
+  pi0       <- 1 / (1 + exp(-logit_pi0))
+
+  delta      <- 0.7
+  alpha1     <- alpha0 + delta
+  pi1        <- 1 - (1 - pi0) * exp(-delta)   # the old "compensating" pi
+  logit_pi1  <- log(pi1 / (1 - pi1))
+
+  nll0 <- fam$negloglik_fn(
+    theta       = c(alpha0, 0.5, log(2), logit_pi0),
+    z_obs       = inp$z_obs, z_int = inp$z_int,
+    int_weights = inp$int_weights, obs_weights = inp$obs_weights
+  )
+  nll1 <- fam$negloglik_fn(
+    theta       = c(alpha1, 0.5, log(2), logit_pi1),
+    z_obs       = inp$z_obs, z_int = inp$z_int,
+    int_weights = inp$int_weights, obs_weights = inp$obs_weights
+  )
+
+  expect_false(isTRUE(all.equal(nll0, nll1, tolerance = 1e-6)))
+})
+
+
 test_that("family_zinb init_fn has correct parameter count", {
   fam <- family_zinb()
   for (n_cov in c(0, 2)) {

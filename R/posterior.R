@@ -136,7 +136,7 @@ laplace_resistance <- function(opt_result,
           call. = FALSE
         )
       }
-      if (sum(valid) < 3) return(1e10)
+      if (sum(valid) < 3) return(-1e10)
 
       fit_fn <- switch(distribution,
         negbin = fit_intensity_nb, gam = fit_intensity_gam)
@@ -180,8 +180,13 @@ laplace_resistance <- function(opt_result,
       }
       int_fit <- do.call(fit_fn, int_args)
 
-      neg_ll <- -int_fit$loglik
-      if (!is.finite(neg_ll)) 1e10 else neg_ll
+      # Return the log-likelihood itself (not its negation), to match
+      # surrogate_fn's sign convention above -- both branches must hand
+      # numDeriv::hessian() an objective of the *same* sign so that the
+      # single `neg_H <- -H` negation below is correct for either path.
+      # See #94.
+      ll <- int_fit$loglik
+      if (!is.finite(ll)) -1e10 else ll
     }
 
     H <- numDeriv::hessian(refit_fn, best_vec,
@@ -191,7 +196,10 @@ laplace_resistance <- function(opt_result,
          call. = FALSE)
   }
 
-  # H is the Hessian of the neg-LL -> neg-H is Hessian of LL
+  # Both surrogate_fn and refit_fn return the log-likelihood (not its
+  # negation), so H above is always the Hessian of the LL -> neg-H is the
+  # (positive-definite, at a proper MAP) Hessian of the neg-LL, i.e. the
+  # observed Fisher information. See #94.
   neg_H <- -H
 
   # try Cholesky; fall back to nearPD

@@ -10,7 +10,27 @@ family_zinb()
 An \link{intensity_family} object.
 }
 \description{
-Extends the NB model with an extra zero-inflation parameter
+Extends the aggregate NB-PPP model with an extra zero-inflation parameter
 \eqn{\pi = \text{logit}^{-1}(\text{logit\_pi})}, where with
-probability \eqn{\pi} the observation is a structural zero.
+probability \eqn{\pi} the observed count \eqn{n_\text{obs}} is a
+structural zero (independent of the intensity surface), and with
+probability \eqn{1 - \pi} it is drawn from the ordinary NB-PPP model
+used by \code{\link[=family_negbin]{family_negbin()}}:
+\deqn{
+  P(N = n) = \begin{cases}
+    \pi + (1 - \pi)\,\text{NB}(0 \mid \Lambda, \theta) & n = 0 \\
+    (1 - \pi)\,\text{NB}(n \mid \Lambda, \theta) & n > 0
+  \end{cases}
+}
+where \eqn{\Lambda = \sum_j w_j \lambda_j} is the (non-inflated) mean
+intensity integral and \eqn{\theta} is the NB size parameter. Critically,
+\eqn{\Lambda} and the point-location density are \emph{not} scaled by
+\eqn{(1 - \pi)}: only the marginal probability of the aggregate count
+\eqn{n_\text{obs}} is zero-inflated. This keeps \eqn{\pi} from being
+absorbed into the intercept \eqn{\alpha} (see #91) -- with a single
+realised \eqn{n_\text{obs} > 0} (the typical case), \eqn{\pi} enters the
+log-likelihood only via an additive \eqn{\log(1 - \pi)} term, so it is
+identified in principle but only weakly so from a single aggregate
+count; expect it to be pinned near its lower bound unless the data
+includes genuine zero-count replicates.
 }
