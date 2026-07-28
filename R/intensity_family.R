@@ -554,9 +554,11 @@ family_rsp <- function(background_weight = 1000) {
         }
       }
 
-      # Numerically stable log-sigmoid and log(1-sigmoid)
-      log_p_obs   <- -log1p(exp(-f_obs))
-      log_1mp_int <- -log1p(exp( f_int))
+      # Numerically stable log-sigmoid: log sigma(x) = -log1p(exp(-|x|)) + min(x, 0),
+      # which never exponentiates a positive argument (unlike the naive form).
+      log_sigmoid <- function(x) -log1p(exp(-abs(x))) + pmin(x, 0)
+      log_p_obs   <- log_sigmoid(f_obs)
+      log_1mp_int <- log_sigmoid(-f_int)
 
       negll <- -(sum(obs_weights * log_p_obs) +
                  background_weight * sum(int_weights * log_1mp_int))

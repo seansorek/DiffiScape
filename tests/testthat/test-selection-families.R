@@ -90,6 +90,40 @@ test_that("family_rsp() background_weight affects negloglik", {
   expect_false(isTRUE(all.equal(nll1, nll2)))
 })
 
+test_that("family_rsp() negloglik_fn is finite and non-degenerate at large |z| (issue #93)", {
+  # f_obs = alpha + gamma*z_obs = 800, f_int = -800: sigma(f_obs) ~ 1 and
+  # 1 - sigma(f_int) ~ 1, so negll should be close to 0. The naive
+  # log-sigmoid overflows exp(-f_obs)/exp(f_int) to Inf here, producing
+  # -Inf -> the `negll <- 1e15` overflow-guard plateau instead of ~0.
+  fam <- family_rsp(background_weight = 500)
+  z_obs <- rep(800, 5)
+  z_int <- rep(-800, 5)
+  nll <- fam$negloglik_fn(
+    theta = c(0, 1),
+    z_obs = z_obs, z_int = z_int,
+    int_weights = rep(1, 5), obs_weights = rep(1, 5)
+  )
+  expect_true(is.finite(nll))
+  expect_lt(nll, 1e10)  # would be exactly 1e15 (the overflow-guard plateau) if not stable
+  expect_lt(abs(nll), 1e-6)
+
+  # Opposite sign: f_obs very negative, f_int very positive -> both terms
+  # should plateau near the guard value since sigma(f_obs) ~ 0 and
+  # 1 - sigma(f_int) ~ 0, but must still be finite (not NaN/Inf).
+  z_obs2 <- rep(-800, 5)
+  z_int2 <- rep(800, 5)
+  nll2 <- fam$negloglik_fn(
+    theta = c(0, 1),
+    z_obs = z_obs2, z_int = z_int2,
+    int_weights = rep(1, 5), obs_weights = rep(1, 5)
+  )
+  expect_true(is.finite(nll2))
+  # Analytic value: log_sigmoid(-800) ~= -800 for both terms, so
+  # negll ~= -(5*(-800) + 500*5*(-800)) = 2,004,000 -- large but not the
+  # 1e15 overflow-guard plateau the naive form would hit.
+  expect_equal(nll2, 2004000, tolerance = 1e-3)
+})
+
 test_that("family_clogit() without strata degenerates to family_rsf()", {
   fam_clogit <- family_clogit()
   fam_rsf    <- family_rsf()
