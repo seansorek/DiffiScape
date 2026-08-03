@@ -213,7 +213,83 @@ class TestRunParametricOptimization:
         # With zero LR, loss never improves after initial eval,
         # so should stop at exactly patience epochs
         assert result["n_epochs_run"] <= patience + 1
+        # converged means "the loss plateaued" (the early-stop condition
+        # itself firing), which is exactly what happened here (issue #92).
+        assert result["converged"] is True
+
+    def test_adam_not_converged_when_epochs_exhausted_while_improving(self, small_problem):
+        """converged must be False when the epoch budget runs out before
+        the loss ever plateaus -- the inverse of test_adam_early_stopping,
+        and the case the old `stall < patience` semantics got backwards."""
+        result = run_parametric_optimization(
+            small_problem["basis_values"],
+            small_problem["obs_counts"],
+            small_problem["valid_mask"],
+            small_problem["n_rows"],
+            small_problem["n_cols"],
+            cell_area=1.0,
+            init_params=small_problem["init_params"],
+            link_fn="exp",
+            radius=3,
+            block_size=2,
+            parameterization="resistance",
+            method="adam",
+            lr=0.05,
+            n_epochs=5,
+            patience=1000,  # far larger than n_epochs -> never plateaus out
+            verbose=False,
+        )
+
+        assert result["n_epochs_run"] == 5
         assert result["converged"] is False
+
+    def test_adam_best_params_matches_best_loglik(self, small_problem):
+        """best_params must be the exact params that were scored to produce
+        best_loglik (issue #92) -- not the params one optimizer step later,
+        which optax.apply_updates would have produced under the old
+        snapshot-after-update ordering. Recomputing the objective at
+        best_params independently, via the same function the optimizer
+        itself minimizes, must reproduce best_loglik exactly."""
+        from diffiscape_jax.core import _connectivity_objective
+
+        result = run_parametric_optimization(
+            small_problem["basis_values"],
+            small_problem["obs_counts"],
+            small_problem["valid_mask"],
+            small_problem["n_rows"],
+            small_problem["n_cols"],
+            cell_area=1.0,
+            init_params=small_problem["init_params"],
+            link_fn="exp",
+            radius=3,
+            block_size=2,
+            parameterization="resistance",
+            method="adam",
+            lr=0.05,
+            n_epochs=25,
+            patience=25,  # large enough that it never early-stops
+            verbose=False,
+        )
+
+        full_params = jax.numpy.concatenate([
+            jax.numpy.asarray(result["best_params"]),
+            jax.numpy.array([result["alpha"], result["gamma"]]),
+        ])
+        recomputed_loglik = float(_connectivity_objective(
+            full_params,
+            jax.numpy.array(small_problem["basis_values"]),
+            jax.numpy.array(small_problem["valid_mask"]),
+            small_problem["n_rows"],
+            small_problem["n_cols"],
+            1.0,
+            "exp",
+            3,
+            2,
+            "resistance",
+            jax.numpy.array(small_problem["obs_counts"]),
+        ))
+
+        assert recomputed_loglik == pytest.approx(result["best_loglik"], rel=1e-6)
 
     def test_invalid_method_raises(self, small_problem):
         """Test that an invalid method name raises ValueError."""
