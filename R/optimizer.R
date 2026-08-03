@@ -999,6 +999,29 @@ predict_surrogate <- function(surrogate, newdata) {
 }
 
 
+# --------------- Failure-penalty scratch value for surrogate fitting -------
+
+# `y_eval` is a negative log-likelihood being minimised, so a failed
+# evaluation must be replaced with a value strictly *worse* (larger) than
+# every valid observation. A multiplicative bump (`worst * 1.1`) only does
+# that when `worst` is positive: when valid scores are negative (as they can
+# be for a continuous/point-process log-likelihood, where loglik > 0), it
+# instead pulls the placeholder *below* the worst value -- and potentially
+# below every valid value -- letting a failed row masquerade as the optimum.
+# An additive, range-scaled margin is worse in the same direction regardless
+# of sign.
+#' @keywords internal
+.failure_penalty <- function(valid) {
+  if (length(valid) == 0) {
+    return(1e10)
+  }
+  worst  <- max(valid)
+  spread <- diff(range(valid))
+  margin <- if (spread > 0) 0.1 * spread else max(0.1 * abs(worst), 1e-6)
+  worst + margin
+}
+
+
 # --------------- Hessian-based dimension scaling ----------------------------
 
 # We use different scales for each parameter in the local search to account for different sensitivities. 
@@ -1169,8 +1192,7 @@ optimize_resistance <- function(basis_stack,
     y_fit <- y_eval
     bad   <- !is.finite(y_fit)
     if (any(bad)) {
-      penalty <- if (any(!bad)) max(y_fit[!bad]) * 1.1 else 1e10
-      y_fit[bad] <- penalty
+      y_fit[bad] <- .failure_penalty(y_fit[!bad])
     }
 
     surrogate <- fit_surrogate(X_eval, y_fit, type = surrogate_type,
@@ -1270,8 +1292,7 @@ optimize_resistance <- function(basis_stack,
   y_final_fit <- y_eval
   bad_final   <- !is.finite(y_final_fit)
   if (any(bad_final)) {
-    penalty_final <- if (any(!bad_final)) max(y_final_fit[!bad_final]) * 1.1 else 1e10
-    y_final_fit[bad_final] <- penalty_final
+    y_final_fit[bad_final] <- .failure_penalty(y_final_fit[!bad_final])
   }
   final_surrogate <- fit_surrogate(X_eval, y_final_fit, type = surrogate_type,
                                    config = surrogate_config)

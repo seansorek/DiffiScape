@@ -316,6 +316,68 @@ test_that("optimize_resistance reports NA (not 1e10) for failed evaluations and 
 })
 
 
+# ---- failure penalty must worsen the objective regardless of sign -------
+# Codex review on #103 (discussion_r3702710257): a *multiplicative* penalty
+# (`max(valid) * 1.1`) only pushes the surrogate-fitting placeholder to a
+# worse (larger) value than the worst real evaluation when `max(valid)` is
+# positive. When valid scores are negative -- which happens whenever the
+# underlying log-likelihood is positive (continuous or point-process
+# models) -- multiplying by 1.1 pulls the placeholder *toward* zero, i.e.
+# better, so a failed evaluation could be selected as the apparent optimum
+# by which.min(). `.failure_penalty()` uses an additive, range-scaled
+# margin instead, which is worse in the same direction regardless of sign.
+
+test_that(".failure_penalty is always worse (larger) than every valid value, including when all valid values are negative", {
+  valid <- c(-50, -30, -10)
+  penalty <- .failure_penalty(valid)
+  expect_true(penalty > max(valid))
+})
+
+test_that(".failure_penalty scales with the observed range and falls back to an absolute margin for a degenerate (zero-range) set of valid values", {
+  expect_equal(.failure_penalty(numeric(0)), 1e10)
+  expect_equal(.failure_penalty(c(0, 100)), 110)
+  expect_equal(.failure_penalty(c(5, 5, 5)), 5.5)
+})
+
+test_that("optimize_resistance never lets a failed evaluation masquerade as the best when the objective is negative-valued", {
+  skip_on_cran()
+  skip_if_not_installed("terra")
+
+  set.seed(47)
+  basis <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 1,
+                       ymin = 0, ymax = 1, nlyrs = 2)
+  terra::values(basis) <- runif(50)
+  obs <- data.frame(x = runif(10, 0.1, 0.9), y = runif(10, 0.1, 0.9))
+
+  # A negative-valued objective (as if log-likelihood > 0), with every 4th
+  # evaluation failing -- the exact scenario the multiplicative penalty
+  # mishandled.
+  local_mocked_bindings(
+    .outer_objective = function(theta, basis_stack, obs_points,
+                                omniscape_settings, eval_counter,
+                                log_file, ...) {
+      eval_counter$n <- eval_counter$n + 1L
+      if (eval_counter$n %% 4 == 0) return(NA_real_)
+      -(10 + sum(theta^2)) + rnorm(1, sd = 0.01)
+    },
+    .package = "DiffiScape"
+  )
+
+  cfg <- default_optimizer_config()
+  cfg$n_init <- 8L
+  cfg$n_iter <- 4L
+  cfg$seed   <- 47L
+
+  result <- optimize_resistance(basis, obs, config = cfg,
+                                output_dir = withr::local_tempdir())
+
+  expect_true(any(is.na(result$y_evaluated)))
+  # The reported best must come from a real evaluation, never a failure.
+  expect_false(is.na(result$y_evaluated[result$best_idx]))
+  expect_true(is.finite(result$best_loglik))
+})
+
+
 # ---- evaluate_full_model ------------------------------------------------
 # Characterization tests written ahead of the Problem A/B refactor (issue #2):
 # collapsing .prepare_jax_inputs()/.prepare_torch_inputs() into
