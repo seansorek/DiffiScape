@@ -676,7 +676,7 @@ evaluate_full_model <- function(resistance_params,
     ),
     error = function(e) {
       message("  ERROR: ", conditionMessage(e))
-      list(loglik = -1e10, intensity_params = c(alpha = NA, gamma = NA),
+      list(loglik = NA_real_, intensity_params = c(alpha = NA, gamma = NA),
            intensity_se = c(alpha = NA, gamma = NA),
            convergence = 1L, total_time = NA_real_,
            distribution = distribution)
@@ -698,8 +698,14 @@ evaluate_full_model <- function(resistance_params,
                        row.names = FALSE, col.names = !exists_, sep = ",")
   }
 
+  # A failed/non-finite evaluation is reported as NA rather than a fixed
+  # sentinel value. NA is distinguishable from a genuinely bad-but-valid
+  # score and lets callers apply a *relative* penalty (scaled to the
+  # observed objective range) instead of an absolute value that can be
+  # many orders of magnitude outside that range and distort the surrogate
+  # fit (see #101).
   neg_ll <- -result$loglik
-  if (!is.finite(neg_ll) || neg_ll > 1e10) neg_ll <- 1e10
+  if (!is.finite(neg_ll)) neg_ll <- NA_real_
   neg_ll
 }
 
@@ -1134,7 +1140,7 @@ optimize_resistance <- function(basis_stack,
   xi_initial <- NULL
   decay_rate <- NULL
   if (acquisition == "EI") {
-    score_range <- max(y_eval) - min(y_eval)
+    score_range <- max(y_eval, na.rm = TRUE) - min(y_eval, na.rm = TRUE)
     xi_initial  <- score_range * (config$ei_xi_scale_factor %||% 0.1)
     decay_rate  <- (config$n_iter %||% 50L) /
       (config$ei_decay_rate_divisor %||% 5)
@@ -1148,27 +1154,32 @@ optimize_resistance <- function(basis_stack,
   dim_scales    <- rep(1, length(bounds))
   names(dim_scales) <- names(bounds)
   local_frac    <- config$local_frac_initial
-  best_so_far   <- min(y_eval)
+  best_so_far   <- min(y_eval, na.rm = TRUE)
   stall_count   <- 0L
   stalls_at_min <- 0L
   restart_count <- 0L
 
   for (iter in seq_len(config$n_iter)) {
 
-    # sanitise
-    bad <- !is.finite(y_eval)
+    # Failed evaluations (NA/non-finite) are never fed to the surrogate as
+    # a fixed absolute sentinel. Instead they are penalised *relative* to
+    # the observed objective range on a scratch copy (`y_fit`) used only
+    # for surrogate fitting and candidate selection; the true values
+    # (including NA for failures) are kept in `y_eval` for reporting.
+    y_fit <- y_eval
+    bad   <- !is.finite(y_fit)
     if (any(bad)) {
-      penalty <- if (any(!bad)) max(y_eval[!bad]) * 1.1 else 1e10
-      y_eval[bad] <- max(penalty, 1e10)
+      penalty <- if (any(!bad)) max(y_fit[!bad]) * 1.1 else 1e10
+      y_fit[bad] <- penalty
     }
 
-    surrogate <- fit_surrogate(X_eval, y_eval, type = surrogate_type,
+    surrogate <- fit_surrogate(X_eval, y_fit, type = surrogate_type,
                                config = surrogate_config)
 
-    best_idx   <- which.min(y_eval)
+    best_idx   <- which.min(y_fit)
     best_point <- as.numeric(X_eval[best_idx, ])
     names(best_point) <- names(bounds)
-    y_best <- y_eval[best_idx]
+    y_best <- y_fit[best_idx]
 
     # Hessian scaling
     if (iter > 1) {
@@ -1217,7 +1228,7 @@ optimize_resistance <- function(basis_stack,
     y_eval <- c(y_eval, y)
 
     # --- adaptive state update ---
-    if (y < best_so_far) {
+    if (is.finite(y) && y < best_so_far) {
       message(sprintf("    IMPROVEMENT: %.4f -> %.2f", best_so_far - y, -y))
       best_so_far   <- y
       stall_count   <- 0L
@@ -1256,7 +1267,13 @@ optimize_resistance <- function(basis_stack,
   message(sprintf("  Best log-likelihood: %.2f", -y_eval[best_idx]))
   message(strrep("=", 60))
 
-  final_surrogate <- fit_surrogate(X_eval, y_eval, type = surrogate_type,
+  y_final_fit <- y_eval
+  bad_final   <- !is.finite(y_final_fit)
+  if (any(bad_final)) {
+    penalty_final <- if (any(!bad_final)) max(y_final_fit[!bad_final]) * 1.1 else 1e10
+    y_final_fit[bad_final] <- penalty_final
+  }
+  final_surrogate <- fit_surrogate(X_eval, y_final_fit, type = surrogate_type,
                                    config = surrogate_config)
 
   results <- list(
