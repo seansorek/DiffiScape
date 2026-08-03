@@ -326,6 +326,36 @@ test_that("laplace_resistance nearPD warning mentions check_basis_correlations",
   )
 })
 
+test_that("laplace_resistance warns and does not silently report std_error = 0 for an indefinite Hessian (#100)", {
+  skip_on_cran()
+  skip_if_not_installed("numDeriv")
+  opt <- .make_surrogate_opt_result()
+
+  # H = diag(-1, 1) => neg_H = diag(1, -1): indefinite (eigenvalues 1 and -1),
+  # but perfectly invertible, so the old tryCatch(solve(...)) never errors
+  # and no warning fired. solve(neg_H) = diag(1, -1), so the second
+  # parameter's "variance" is negative -- pmax(..., 0) used to silently
+  # clamp that to std_error = 0 (the most *confident*-looking result the
+  # function can produce for what is actually a saddle point / a completely
+  # unidentified parameter).
+  local_mocked_bindings(
+    hessian = function(func, x, ...) matrix(c(-1, 0, 0, 1), 2, 2),
+    .package = "numDeriv"
+  )
+
+  expect_warning(
+    lap <- suppressMessages(laplace_resistance(opt, refit = FALSE)),
+    regexp = "not positive-definite"
+  )
+
+  # The parameter along the indefinite direction must NOT come back as a
+  # suspiciously confident std_error = 0; it should be NA (or otherwise
+  # clearly flagged), never a silently-clamped zero.
+  expect_true(any(is.na(lap$std_error)) || all(lap$std_error != 0))
+  expect_false(isTRUE(any(lap$std_error == 0)))
+})
+
+
 test_that("posterior_sample warns when covariance is not positive-definite", {
   skip_on_cran()
   basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)

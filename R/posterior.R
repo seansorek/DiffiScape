@@ -202,10 +202,28 @@ laplace_resistance <- function(opt_result,
   # observed Fisher information. See #94.
   neg_H <- -H
 
-  # try Cholesky; fall back to nearPD
-  cov_mat <- tryCatch({
-    solve(neg_H)
-  }, error = function(e) {
+  # Test definiteness explicitly rather than relying on solve() to throw:
+  # solve() only errors on a computationally *singular* matrix, but an
+  # *indefinite* neg_H (the saddle-point case produced by a non-identifiable
+  # MAP) is perfectly invertible -- solve() would succeed silently and hand
+  # back a "covariance" matrix with negative diagonal entries. Checking the
+  # eigenvalues up front catches that case too.
+  #
+  # Detection threshold: an eigenvalue is treated as non-positive (i.e. not
+  # safely invertible) if it is <= 1e-8 * max(|diag(neg_H)|, 1), a small
+  # *relative* tolerance scaled to the magnitude of the Hessian rather than
+  # an absolute cutoff. This intentionally also flags eigenvalues that are
+  # merely ~0 (a singular, positive-*semi*-definite Hessian): such a matrix
+  # is not invertible either, and silently proceeding would either error
+  # out of solve() with no explanation or, worse, produce a near-singular
+  # inverse with wildly inflated variances -- both deserve the same warning
+  # as a genuinely indefinite Hessian.
+  eig_tol <- 1e-8 * max(abs(diag(neg_H)), 1)
+  eig_neg <- eigen(neg_H, symmetric = TRUE)
+  ev      <- eig_neg$values
+  not_pd  <- any(ev <= eig_tol)
+
+  if (not_pd) {
     param_names <- names(opt_result$bounds)
     flat_idx    <- which(diag(neg_H) <= 0)
     param_note  <- if (length(flat_idx) > 0)
@@ -221,6 +239,26 @@ laplace_resistance <- function(opt_result,
       "before trusting these results.",
       call. = FALSE
     )
+    # Correct to the nearest positive-definite matrix (in the same
+    # eigenbasis) by flooring every eigenvalue at a small positive value.
+    # Matrix::nearPD() is not used here because it errors out entirely
+    # ("Matrix seems negative semi-definite") when neg_H has *no* positive
+    # eigenvalues at all -- a case this eigen-clipping approach still
+    # handles safely, always returning an invertible, well-conditioned
+    # positive-definite matrix.
+    floor_val <- max(1e-8 * max(abs(diag(neg_H)), 1), .Machine$double.eps)
+    ev_clipped <- pmax(ev, floor_val)
+    neg_H <- eig_neg$vectors %*% diag(ev_clipped, nrow = length(ev_clipped)) %*%
+      t(eig_neg$vectors)
+    neg_H <- 0.5 * (neg_H + t(neg_H))
+  }
+
+  # try Cholesky; fall back to nearPD (belt-and-braces guard against
+  # matrices that are numerically singular but pass the eigenvalue check
+  # above -- should not normally trigger given the clipping above)
+  cov_mat <- tryCatch({
+    solve(neg_H)
+  }, error = function(e) {
     pd <- Matrix::nearPD(neg_H, ensureSymmetry = TRUE)
     solve(as.matrix(pd$mat))
   })
@@ -228,7 +266,28 @@ laplace_resistance <- function(opt_result,
   # Make sure cov is symmetric
   cov_mat <- 0.5 * (cov_mat + t(cov_mat))
 
-  diag_var <- pmax(diag(cov_mat), 0)
+  # By construction diag(cov_mat) should now be non-negative; guard against
+  # any residual negative entries (numerical edge cases) by reporting NA
+  # rather than silently clamping to 0 -- a clamp to 0 reads as "estimated
+  # with perfect confidence", which is the opposite of what a negative
+  # variance means.
+  diag_cov     <- diag(cov_mat)
+  neg_diag_idx <- which(diag_cov < 0)
+  if (length(neg_diag_idx) > 0) {
+    param_names <- names(opt_result$bounds)
+    neg_note <- if (!is.null(param_names))
+      paste0(" (", paste(param_names[neg_diag_idx], collapse = ", "), ")")
+    else ""
+    warning(
+      "Covariance matrix from the Laplace approximation still has negative ",
+      "diagonal entries", neg_note, " after the positive-definite correction; ",
+      "the corresponding std_error values are being set to NA rather than 0. ",
+      "Treat these parameter estimates as unreliable.",
+      call. = FALSE
+    )
+  }
+  diag_var <- diag_cov
+  diag_var[neg_diag_idx] <- NA_real_
 
   list(
     mode       = best_vec,
