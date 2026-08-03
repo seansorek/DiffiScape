@@ -355,6 +355,30 @@ test_that("laplace_resistance warns and does not silently report std_error = 0 f
   expect_false(isTRUE(any(lap$std_error == 0)))
 })
 
+test_that("laplace_resistance does not flag or floor a well-conditioned small-scale Hessian as non-PD (#102 review)", {
+  skip_on_cran()
+  skip_if_not_installed("numDeriv")
+  opt <- .make_surrogate_opt_result()
+
+  # H = diag(-1e-10, -1e-10) => neg_H = diag(1e-10, 1e-10): both curvatures
+  # are tiny but strictly positive and equal, i.e. a perfectly
+  # well-conditioned (not indefinite, not singular) Hessian on a small
+  # parameter/likelihood scale. The old `max(|diag(neg_H)|, 1)` tolerance
+  # floors at an absolute 1e-8 whenever the Hessian's own scale is below 1,
+  # so it would wrongly flag this as non-PD and clip both eigenvalues up to
+  # 1e-8 -- understating std_error (1/sqrt(1e-8) ~ 1e4) by an order of
+  # magnitude relative to the true value (1/sqrt(1e-10) ~ 3.16e4).
+  k <- 1e-10
+  local_mocked_bindings(
+    hessian = function(func, x, ...) diag(-k, 2),
+    .package = "numDeriv"
+  )
+
+  lap <- expect_no_warning(suppressMessages(laplace_resistance(opt, refit = FALSE)))
+
+  expect_equal(lap$std_error, rep(1 / sqrt(k), 2), tolerance = 1e-6)
+})
+
 
 test_that("posterior_sample warns when covariance is not positive-definite", {
   skip_on_cran()

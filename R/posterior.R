@@ -210,15 +210,24 @@ laplace_resistance <- function(opt_result,
   # eigenvalues up front catches that case too.
   #
   # Detection threshold: an eigenvalue is treated as non-positive (i.e. not
-  # safely invertible) if it is <= 1e-8 * max(|diag(neg_H)|, 1), a small
-  # *relative* tolerance scaled to the magnitude of the Hessian rather than
-  # an absolute cutoff. This intentionally also flags eigenvalues that are
-  # merely ~0 (a singular, positive-*semi*-definite Hessian): such a matrix
-  # is not invertible either, and silently proceeding would either error
-  # out of solve() with no explanation or, worse, produce a near-singular
-  # inverse with wildly inflated variances -- both deserve the same warning
-  # as a genuinely indefinite Hessian.
-  eig_tol <- 1e-8 * max(abs(diag(neg_H)), 1)
+  # safely invertible) if it is <= 1e-8 * scale(neg_H), a small *relative*
+  # tolerance scaled to the magnitude of the Hessian rather than an
+  # absolute cutoff. `max(abs(diag(neg_H)), 1)` looks scale-relative but
+  # the `, 1` makes it an absolute floor of 1e-8 whenever the Hessian's own
+  # scale is below 1 -- a well-conditioned Hessian on a small parameter/
+  # likelihood scale (e.g. diag ~ 1e-10) would then have every eigenvalue
+  # flagged as non-PD and clipped up to 1e-8, inflating its variance by
+  # orders of magnitude. Scaling purely by the Hessian's own magnitude
+  # (guarded only by machine epsilon, for the all-zero case) keeps the
+  # tolerance relative regardless of how small a legitimately
+  # well-conditioned Hessian is. This intentionally also flags eigenvalues
+  # that are merely ~0 (a singular, positive-*semi*-definite Hessian): such
+  # a matrix is not invertible either, and silently proceeding would either
+  # error out of solve() with no explanation or, worse, produce a
+  # near-singular inverse with wildly inflated variances -- both deserve
+  # the same warning as a genuinely indefinite Hessian.
+  hessian_scale <- max(abs(diag(neg_H)), .Machine$double.eps)
+  eig_tol <- 1e-8 * hessian_scale
   eig_neg <- eigen(neg_H, symmetric = TRUE)
   ev      <- eig_neg$values
   not_pd  <- any(ev <= eig_tol)
@@ -246,7 +255,7 @@ laplace_resistance <- function(opt_result,
     # eigenvalues at all -- a case this eigen-clipping approach still
     # handles safely, always returning an invertible, well-conditioned
     # positive-definite matrix.
-    floor_val <- max(1e-8 * max(abs(diag(neg_H)), 1), .Machine$double.eps)
+    floor_val <- max(eig_tol, .Machine$double.eps)
     ev_clipped <- pmax(ev, floor_val)
     neg_H <- eig_neg$vectors %*% diag(ev_clipped, nrow = length(ev_clipped)) %*%
       t(eig_neg$vectors)
