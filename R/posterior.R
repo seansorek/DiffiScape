@@ -457,6 +457,13 @@ loo_cv_surrogate <- function(opt_result) {
   X <- as.matrix(opt_result$X_evaluated)
   y <- opt_result$y_evaluated
 
+  # Failed outer-loop evaluations are recorded as NA (see #101) rather than
+  # a fixed sentinel value, and are excluded here rather than fed into the
+  # LOO refits / residual calculations.
+  ok <- is.finite(y)
+  X  <- X[ok, , drop = FALSE]
+  y  <- y[ok]
+
   n <- length(y)
 
   loo_pred  <- numeric(n)
