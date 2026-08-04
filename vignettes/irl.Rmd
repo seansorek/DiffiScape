@@ -8,7 +8,7 @@ vignette: >
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, eval = FALSE, message = FALSE, warning = FALSE)
+knitr::opts_chunk$set(echo = TRUE, eval = TRUE, message = FALSE, warning = FALSE)
 ```
 
 This vignette fits an inverse-reinforcement-learning (IRL) resistance model to
@@ -23,6 +23,14 @@ High value produces low resistance. Circuit theory remains the forward model:
 IRL learns a reward and propagates its value before the circuit solve, rather
 than replacing the circuit model. This is useful when occurrence points suffice
 but movement trajectories are unavailable.
+
+## Prerequisites
+
+Evaluating this vignette requires Python 3.10 or newer with `torch`, `numpy`,
+`scipy`, and `pyamg`. Install them with `ds_install_torch_deps()`. When several
+Python installations are present, set `RETICULATE_PYTHON` to the interpreter
+that contains those packages before rendering; `ds_torch_setup()` reports any
+missing modules.
 
 ## Simulate the urban landscape and point process
 

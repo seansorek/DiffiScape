@@ -481,7 +481,7 @@ verify_irl_gradient(basis)
 
 ## Vignettes
 
-Five worked examples ship with the package and are built automatically when it is installed. Access them with:
+Six worked examples ship with the package and are built automatically when it is installed. Access them with:
 
 ```r
 browseVignettes("DiffiScape")
@@ -494,6 +494,7 @@ browseVignettes("DiffiScape")
 | `gam-profile` | GAM intensity profile workflow |
 | `torch-mlp` | PyTorch MLP resistance network |
 | `spline-gam` | Spline-GAM resistance network |
+| `irl` | PyTorch inverse-reinforcement-learning resistance network |
 
 ---
 
