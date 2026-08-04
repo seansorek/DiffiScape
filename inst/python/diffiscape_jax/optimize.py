@@ -135,13 +135,17 @@ def run_parametric_optimization(
     loss_history = []
 
     if method == "lbfgs":
-        solver = jaxopt.LBFGS(fun=neg_loglik, maxiter=n_epochs, tol=1e-6, jit=False)
+        lbfgs_tol = 1e-6
+        solver = jaxopt.LBFGS(fun=neg_loglik, maxiter=n_epochs, tol=lbfgs_tol, jit=False)
         result = solver.run(params)
         best_params = result.params
         best_loss = float(neg_loglik(best_params))
         loss_history = [best_loss]
         n_run = int(result.state.iter_num) if hasattr(result.state, "iter_num") else n_epochs
-        converged = True
+        # jaxopt reports the optimality residual (gradient norm) in
+        # state.error; the solver only actually converged if that residual
+        # is at or below its own stopping tolerance, not unconditionally.
+        converged = bool(result.state.error <= lbfgs_tol)
 
     else:  # adam
         schedule = optax.cosine_decay_schedule(init_value=lr, decay_steps=n_epochs)
@@ -155,11 +159,13 @@ def run_parametric_optimization(
 
         for epoch in range(n_epochs):
             loss_val, g = val_and_grad_fn(params)
-            updates, opt_state = optimizer.update(g, opt_state)
-            params = optax.apply_updates(params, updates)
             loss = float(loss_val)
             loss_history.append(loss)
 
+            # Snapshot best_params from the params that were actually
+            # scored as `loss` -- *before* applying this step's update --
+            # so best_params/best_loglik always describe the same point in
+            # parameter space instead of one optimizer step apart.
             if loss < best_loss:
                 best_loss = loss
                 best_params = params
@@ -167,13 +173,20 @@ def run_parametric_optimization(
             else:
                 stall += 1
 
+            updates, opt_state = optimizer.update(g, opt_state)
+            params = optax.apply_updates(params, updates)
+
             if stall >= patience:
                 if verbose:
                     print(f"  Early stopping at epoch {epoch}")
                 break
 
         n_run = len(loss_history)
-        converged = stall < patience
+        # Converged means the loss plateaued (the same condition that
+        # triggers early stopping above), not "ran out of patience budget
+        # without stopping" -- which is what the inverted `stall < patience`
+        # previously reported.
+        converged = stall >= patience
 
     elapsed = time.time() - t0
 
@@ -400,17 +413,22 @@ def run_neural_optimization(
 
     for epoch in range(n_epochs):
         loss_val, g = val_and_grad_fn(params)
-        updates, opt_state = optimizer.update(g, opt_state)
-        params = optax.apply_updates(params, updates)
         loss = float(loss_val)
         loss_history.append(loss)
 
+        # Snapshot best_params from the params that were actually scored as
+        # `loss` -- *before* applying this step's update -- so best_params/
+        # best_loglik always describe the same point in parameter space
+        # (see run_optimization's Adam branch for the same fix).
         if loss < best_loss:
             best_loss = loss
             best_params = params
             stall = 0
         else:
             stall += 1
+
+        updates, opt_state = optimizer.update(g, opt_state)
+        params = optax.apply_updates(params, updates)
 
         if verbose and epoch % 10 == 0:
             print(f"  Epoch {epoch}: loss={loss:.4f}")
