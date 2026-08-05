@@ -7,13 +7,18 @@
 family_gaussian(known_sd = NULL)
 }
 \arguments{
-\item{known_sd}{Fixed standard deviation.  If \code{NULL} (default),
-\code{log_sd} is estimated as an extra parameter.}
+\item{known_sd}{Fixed standard deviation (on the response scale).  If
+\code{NULL} (default), \code{log_sd} is estimated as an extra parameter.}
 }
 \value{
 An \link{intensity_family} object.
 }
 \description{
 For continuous response data (e.g. density estimates).  Uses a
-Gaussian likelihood with known or estimated standard deviation.
+response-scale Gaussian likelihood, \eqn{y \sim \text{Normal}(\mu, \sigma)},
+with known or estimated standard deviation \eqn{\sigma}.  \code{mu_obs} from
+\code{\link[=compute_intensity]{compute_intensity()}} is the fitted mean response (not a log-scale
+median), and residuals are computed on the response scale
+(\code{mu_obs - y_obs}), so finite negative or zero responses are valid
+observations -- they are not clamped or otherwise transformed.
 }
