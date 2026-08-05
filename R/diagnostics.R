@@ -1,13 +1,18 @@
 
-# fit_intensity_nb() renames the first extra parameter for negbin/zinb
-# families to "size" in the estimates vector, but family$extra_param_names
-# still reports the optimizer-scale name (e.g. "log_nb_theta"). Mirror that
-# rename when looking up extra params on a fit, otherwise the family-aware
-# deviance-residual path silently gets NA and falls back to k=1.
+# fit_intensity_nb() renames extra parameters for reporting -- the first
+# extra param for negbin/zinb families becomes "size", and a zinb family's
+# "logit_pi" becomes "pi" (transformed via plogis(), not exp(); see #109) --
+# but family$extra_param_names still reports the raw optimizer-scale names
+# (e.g. "log_nb_theta", "logit_pi"). Mirror those renames when looking up
+# extra params on a fit, otherwise the family-aware deviance-residual path
+# silently gets NA and falls back to k=1.
 .fit_extra_param_names <- function(family) {
   ep <- family$extra_param_names
   if (length(ep) > 0 && isTRUE(family$name %in% c("negbin", "zinb"))) {
     ep[1L] <- "size"
+  }
+  if (length(ep) > 0) {
+    ep[ep == "logit_pi"] <- "pi"
   }
   ep
 }
@@ -613,8 +618,12 @@ ds_ppc <- function(posterior_samples,
   }
   map_mu <- exp(map_log_lambda) * cell_area
 
-  if (family_name == "zinb" && "logit_pi" %in% names(params_vec)) {
-    pi_map <- 1 / (1 + exp(-params_vec[["logit_pi"]]))
+  if (family_name == "zinb" && "pi" %in% names(params_vec)) {
+    # params_vec$pi is already on the natural (0, 1) probability scale --
+    # fit_intensity_nb() transforms the optimizer-scale logit_pi via
+    # plogis() at extraction time, so it must NOT be re-transformed here
+    # (see #109).
+    pi_map <- params_vec[["pi"]]
     map_mu <- map_mu * (1 - pi_map)
   }
 
@@ -654,8 +663,12 @@ ds_ppc <- function(posterior_samples,
     }
     mu_cells_i <- exp(log_lambda_i) * cell_area
 
-    pi_val_i <- if (family_name == "zinb" && "logit_pi" %in% names(row)) {
-      1 / (1 + exp(-row[["logit_pi"]]))
+    # row$pi comes from posterior_sample(), which draws directly from the
+    # fit's natural-scale estimates (see fit_intensity_nb() in intensity.R),
+    # so it is already a probability on (0, 1) and must NOT be re-transformed
+    # via plogis()/inverse-logit here (see #109).
+    pi_val_i <- if (family_name == "zinb" && "pi" %in% names(row)) {
+      row[["pi"]]
     } else {
       NULL
     }
