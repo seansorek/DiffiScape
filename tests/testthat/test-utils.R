@@ -197,6 +197,8 @@ test_that(".prepare_backend_inputs returns expected structure", {
 test_that(".prepare_backend_inputs drops obs outside valid cells with message", {
   skip_if_not_installed("reticulate")
   skip_if_not_installed("terra")
+  skip_if_not(reticulate::py_module_available("numpy"),
+              "numpy not installed in active Python env")
 
   r <- terra::rast(nrows = 5, ncols = 5, xmin = 0, xmax = 5,
                    ymin = 0, ymax = 5)
@@ -220,6 +222,8 @@ test_that(".prepare_backend_inputs drops obs outside valid cells with message", 
 test_that(".prepare_backend_inputs computes cell_area correctly", {
   skip_if_not_installed("reticulate")
   skip_if_not_installed("terra")
+  skip_if_not(reticulate::py_module_available("numpy"),
+              "numpy not installed in active Python env")
 
   r <- terra::rast(nrows = 4, ncols = 4, xmin = 0, xmax = 2,
                    ymin = 0, ymax = 2)
@@ -236,6 +240,8 @@ test_that(".prepare_backend_inputs computes cell_area correctly", {
 test_that(".prepare_backend_inputs returns correct grid dimensions", {
   skip_if_not_installed("reticulate")
   skip_if_not_installed("terra")
+  skip_if_not(reticulate::py_module_available("numpy"),
+              "numpy not installed in active Python env")
 
   r <- terra::rast(nrows = 6, ncols = 8, xmin = 0, xmax = 8,
                    ymin = 0, ymax = 6)
