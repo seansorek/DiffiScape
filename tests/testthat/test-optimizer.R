@@ -656,3 +656,126 @@ test_that("evaluate_full_model still drops out-of-mask obs_points for non-strata
     )
   )
 })
+
+
+# ---- GH #105: gradient objective radius/block_size threading -----------
+# The Python gradient objective (_connectivity_objective) previously
+# accepted radius/block_size but silently ignored them -- tuning the
+# moving-window solve had no effect on the fit, even though the same
+# radius/block_size changed every downstream connectivity surface. These
+# tests lock in that optimize_resistance_gradient() and the neural
+# dispatch (.optimize_neural()) both resolve radius/block_size from
+# config$omniscape and forward them, unmodified, into the JAX bridge
+# calls that in turn honor them in Python (core.cumulative_current_core).
+
+test_that("optimize_resistance_gradient forwards config$omniscape radius/block_size to ds_jax_optimize", {
+  skip_on_cran()
+
+  basis_stack <- terra::rast(nrows = 3, ncols = 3, nlyrs = 1, vals = 1)
+  obs_points  <- data.frame(x = 0, y = 0)
+
+  captured_radius     <- NULL
+  captured_block_size <- NULL
+
+  local_mocked_bindings(
+    ds_jax_optimize = function(basis_np, obs_np, valid_mask_np,
+                                n_rows, n_cols, cell_area,
+                                init_params = NULL, radius, block_size, ...) {
+      captured_radius     <<- radius
+      captured_block_size <<- block_size
+      list(best_params = c(0, 0), best_loglik = -1, n_epochs_run = 1L,
+           elapsed = 0.01, converged = TRUE)
+    },
+    .package = "DiffiScape"
+  )
+
+  cfg <- default_optimizer_config()
+  cfg$omniscape <- list(radius = 21L, block_size = 4L, cleanup = TRUE)
+
+  optimize_resistance_gradient(
+    basis_stack = basis_stack,
+    obs_points  = obs_points,
+    config      = cfg,
+    output_dir  = withr::local_tempdir()
+  )
+
+  expect_equal(captured_radius, 21L)
+  expect_equal(captured_block_size, 4L)
+})
+
+
+test_that("optimize_resistance_gradient uses default radius/block_size (13/5) when config$omniscape is unset", {
+  skip_on_cran()
+
+  basis_stack <- terra::rast(nrows = 3, ncols = 3, nlyrs = 1, vals = 1)
+  obs_points  <- data.frame(x = 0, y = 0)
+
+  captured_radius     <- NULL
+  captured_block_size <- NULL
+
+  local_mocked_bindings(
+    ds_jax_optimize = function(basis_np, obs_np, valid_mask_np,
+                                n_rows, n_cols, cell_area,
+                                init_params = NULL, radius, block_size, ...) {
+      captured_radius     <<- radius
+      captured_block_size <<- block_size
+      list(best_params = c(0, 0), best_loglik = -1, n_epochs_run = 1L,
+           elapsed = 0.01, converged = TRUE)
+    },
+    .package = "DiffiScape"
+  )
+
+  cfg <- default_optimizer_config()
+  cfg$omniscape <- NULL
+
+  optimize_resistance_gradient(
+    basis_stack = basis_stack,
+    obs_points  = obs_points,
+    config      = cfg,
+    output_dir  = withr::local_tempdir()
+  )
+
+  expect_equal(captured_radius, 13L)
+  expect_equal(captured_block_size, 5L)
+})
+
+
+test_that(".optimize_neural forwards config$omniscape radius/block_size to ds_jax_neural_optimize", {
+  skip_on_cran()
+
+  basis_stack <- terra::rast(nrows = 3, ncols = 3, nlyrs = 1, vals = 1)
+  obs_points  <- data.frame(x = 0, y = 0)
+
+  captured_radius     <- NULL
+  captured_block_size <- NULL
+
+  local_mocked_bindings(
+    ds_jax_neural_optimize = function(basis_np, obs_np, valid_mask_np,
+                                       n_rows, n_cols, cell_area,
+                                       model_type = "mlp",
+                                       model_config = list(),
+                                       optim_config = list(),
+                                       radius, block_size, ...) {
+      captured_radius     <<- radius
+      captured_block_size <<- block_size
+      list(resistance = rep(1, n_rows * n_cols), best_loglik = -1,
+           loss_history = list(-1), n_epochs_run = 1L, elapsed = 0.01,
+           model_type = model_type)
+    },
+    .package = "DiffiScape"
+  )
+
+  cfg <- default_optimizer_config()
+  cfg$omniscape <- list(radius = 9L, block_size = 2L, cleanup = TRUE)
+
+  optimize_resistance_gradient(
+    basis_stack = basis_stack,
+    obs_points  = obs_points,
+    config      = cfg,
+    model_type  = "mlp",
+    output_dir  = withr::local_tempdir()
+  )
+
+  expect_equal(captured_radius, 9L)
+  expect_equal(captured_block_size, 2L)
+})
