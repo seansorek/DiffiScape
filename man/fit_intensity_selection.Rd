@@ -36,7 +36,9 @@ locations (\code{NULL} to omit).}
 
 \item{response}{Optional numeric vector of observed responses.
 Required when \code{family} is \code{family_gaussian()}; ignored for count
-families such as \code{family_negbin()} and \code{family_poisson()}.}
+families such as \code{family_negbin()} and \code{family_poisson()}.
+\code{family_gaussian()} fits a response-scale Gaussian likelihood, so
+finite negative or zero values are valid observations.}
 }
 \value{
 A list matching the interface of \code{\link[=fit_intensity_nb]{fit_intensity_nb()}}.
