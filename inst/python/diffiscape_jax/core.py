@@ -11,18 +11,21 @@ except ImportError:
     jnp = None
 
 try:
-    from jaxscape import GridGraph, ResistanceDistance
+    from jaxscape import GridGraph, ResistanceDistance, WindowOperation
     from jaxscape.solvers import AMJaxCGSolver, BCOOLinearOperator, linear_solve
     from jaxscape.solvers.amjaxcgsolver import build_amjax_solver, amjax_preconditioner_operator
     from jaxscape.utils import graph_laplacian
+    from jaxscape.utils import padding as jaxscape_padding
     import lineax as lx
     from jax.experimental.sparse import BCOO
 except ImportError:
     GridGraph = None
     ResistanceDistance = None
+    WindowOperation = None
     AMJaxCGSolver = None
     BCOOLinearOperator = None
     graph_laplacian = None
+    jaxscape_padding = None
     lx = None
     BCOO = None
 
@@ -405,6 +408,82 @@ def forward_solve(
     }
 
 
+def cumulative_current_core(permeability, n_rows, n_cols, radius, block_size):
+    """Differentiable moving-window (Omniscape-style) connectivity accumulation.
+
+    This is the JAX-differentiable heart of
+    :func:`diffiscape_jax.window.cumulative_current` -- the SAME operator
+    used on the forward / evaluation path (``ds_jax_connectivity()`` ->
+    ``omni$cum_current`` in R).  It operates directly on an already-JAX
+    ``permeability`` array (no host round-trip via ``numpy``), so it can be
+    embedded inside a larger differentiable objective and passed through
+    :func:`jax.grad`.
+
+    Tiles the landscape into overlapping windows (``block_size`` core pixels
+    surrounded by a ``radius``-pixel buffer), places a single source at each
+    window's centre, solves :class:`jaxscape.ResistanceDistance` within the
+    window, and accumulates (sums) the resulting distance surfaces across all
+    overlapping windows -- exactly mirroring
+    :func:`diffiscape_jax.window.cumulative_current`.
+
+    Parameters
+    ----------
+    permeability : jax.numpy.ndarray, shape (n_rows, n_cols)
+        Permeability surface (already converted from resistance via
+        :func:`prepare_permeability`).
+    n_rows, n_cols : int
+        Grid dimensions.
+    radius : int
+        Buffer radius around each core window (must match the forward path's
+        ``radius`` for the two connectivity definitions to agree).
+    block_size : int
+        Core window size / source-block side length (must match the forward
+        path's ``block_size``).
+
+    Returns
+    -------
+    jax.numpy.ndarray, shape (n_rows, n_cols)
+        Accumulated connectivity surface, in the same units and with the
+        same sign convention as ``window.cumulative_current()``'s
+        ``"current"`` output (NOT re-normalized or negated).
+    """
+    if WindowOperation is None or jaxscape_padding is None:
+        raise ImportError("JAXScape is not installed")
+    if radius < 1:
+        raise ValueError(f"radius must be >= 1, got {radius}")
+
+    # Pad with edge values so buffer zones reflect real landscape, then pad
+    # further so dimensions satisfy WindowOperation's divisibility
+    # constraint -- identical to window.cumulative_current().
+    padded = jnp.pad(permeability, radius, mode='edge')
+    padded = jaxscape_padding(padded, buffer_size=radius, window_size=block_size)
+
+    window_op = WindowOperation(
+        shape=padded.shape,
+        window_size=block_size,
+        buffer_size=radius,
+    )
+
+    distance_solver = ResistanceDistance()
+    current_acc = jnp.zeros(padded.shape, dtype=jnp.float64)
+
+    for xy, window in window_op.lazy_iterator(padded):
+        grid = GridGraph(grid=window, fun=_mean_weight)
+        center = window.shape[0] // 2
+        source = grid.coord_to_index(
+            jnp.array([center]), jnp.array([center])
+        )
+        dist_values = distance_solver(grid, source)
+        dist_2d = grid.node_values_to_array(dist_values)
+        current_acc = window_op.update_raster_with_window(
+            xy, current_acc, dist_2d, fun=jnp.add,
+        )
+
+    # Strip padding to recover original extent. Stays a jax.Array (no numpy
+    # conversion) so this remains differentiable.
+    return current_acc[radius:radius + n_rows, radius:radius + n_cols]
+
+
 def _apply_link(params, basis_values, link_fn):
     """Map linear predictor through a link function to get resistance values.
 
@@ -444,8 +523,21 @@ def _connectivity_objective(params, basis_values, valid_mask, n_rows, n_cols,
     """Compute a scalar PPP log-likelihood for gradient-based optimization.
 
     Builds the full chain: params -> link function -> resistance surface ->
-    permeability -> GridGraph -> ResistanceDistance -> connectivity ->
-    PPP log-likelihood.
+    permeability -> GridGraph -> moving-window cumulative-current solve ->
+    connectivity -> PPP log-likelihood.
+
+    As of the fix for GH issue #105, this calls the SAME differentiable
+    moving-window operator (:func:`cumulative_current_core`) used on the
+    forward / evaluation path (``window.cumulative_current()`` ->
+    ``ds_jax_connectivity()`` -> ``omni$cum_current`` in R, consumed by
+    ``evaluate_full_model()``, ``diffiscape()`` step 6, and
+    ``ds_posterior()``).  Previously this objective placed a single source
+    at grid cell (0, 0) and used plain ``ResistanceDistance``, which (a)
+    ignored the caller's ``radius``/``block_size`` entirely and (b) fit
+    ``gamma`` against a connectivity definition with the opposite sign
+    convention and a different (single, arbitrary) source topology than
+    every downstream evaluation of the model. Sharing one operator for both
+    training and evaluation eliminates both mismatches by construction.
 
     The last two elements of *params* are the intensity parameters
     ``(alpha, gamma)`` for the PPP model
@@ -473,9 +565,14 @@ def _connectivity_objective(params, basis_values, valid_mask, n_rows, n_cols,
     link_fn : str
         Link function name: "exp", "softplus", or "identity".
     radius : int
-        Window radius for future windowed solving.
+        Moving-window buffer radius, honored and forwarded to
+        :func:`cumulative_current_core` -- must match the ``radius`` used on
+        the forward/evaluation path for the fitted ``gamma`` to be
+        meaningful there.
     block_size : int
-        Block size for future windowed solving.
+        Moving-window core / source-block size, honored and forwarded to
+        :func:`cumulative_current_core` -- must match the ``block_size``
+        used on the forward/evaluation path.
     parameterization : str
         Either "resistance" or "permeability".
     obs_counts : jax.numpy.ndarray, optional
@@ -499,10 +596,9 @@ def _connectivity_objective(params, basis_values, valid_mask, n_rows, n_cols,
     surface_2d = full_surface.reshape((n_rows, n_cols))
 
     permeability = prepare_permeability(surface_2d, parameterization)
-    grid = GridGraph(grid=permeability, fun=_mean_weight)
-    distance = ResistanceDistance()
-    source = grid.coord_to_index(jnp.array([0]), jnp.array([0]))
-    connectivity = distance(grid, source)
+    connectivity = cumulative_current_core(
+        permeability, n_rows, n_cols, radius, block_size
+    )
 
     # PPP log-likelihood on valid cells
     conn_valid = connectivity.ravel()[valid_mask]

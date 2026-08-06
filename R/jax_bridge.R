@@ -305,7 +305,11 @@ ds_jax_optimize <- function(basis_np, obs_np, valid_mask_np,
 #'   to the Flax module constructor.
 #' @param optim_config Named list with `lr`, `n_epochs`, `patience`.
 #' @param ... Additional arguments forwarded to the Python function
-#'   (e.g. `parameterization`, `seed`, `verbose`).
+#'   (e.g. `parameterization`, `radius`, `block_size`, `seed`, `verbose`).
+#'   `radius`/`block_size` are honored: they parameterize the same
+#'   moving-window `window.cumulative_current()`-based solve used on the
+#'   forward/evaluation path, so the neural loss trains against the same
+#'   connectivity definition it is later evaluated against (GH #105).
 #' @return A list (converted from the Python dict) with `resistance`,
 #'   `best_loglik`, `loss_history`, `n_epochs_run`, `elapsed`, `model_type`.
 #' @keywords internal

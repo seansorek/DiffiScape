@@ -393,6 +393,13 @@ optimize_resistance_gradient <- function(basis_stack,
 
   seed <- config$seed %||% 42L
 
+  # Solver settings -- same radius/block_size honored by the parametric
+  # (JAX gradient) path and by ds_jax_connectivity()'s forward/evaluation
+  # solve, so the neural loss trains against the same connectivity
+  # definition it will later be evaluated against (GH #105).
+  solver_radius <- config$omniscape$radius     %||% 13L
+  solver_block  <- config$omniscape$block_size %||% 5L
+
   # Fill optim_config defaults from config if not already set
   if (is.null(optim_config$n_epochs)) {
     optim_config$n_epochs <- as.integer(config$n_iter %||% 300L)
@@ -419,6 +426,8 @@ optimize_resistance_gradient <- function(basis_stack,
     model_config  = model_config,
     optim_config  = optim_config,
     parameterization = parameterization,
+    radius            = as.integer(solver_radius),
+    block_size        = as.integer(solver_block),
     seed             = as.integer(seed),
     verbose          = TRUE
   )
