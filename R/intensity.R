@@ -351,14 +351,27 @@ fit_intensity_nb <- function(connectivity_at_obs,
     }
 
     estimates <- opt$par
+    extra_idx <- if (n_extra > 0) {
+      seq(length(estimates) - n_extra + 1L, length(estimates))
+    } else {
+      integer(0)
+    }
+    extra_raw_names <- family$extra_param_names
     if (n_extra > 0) {
-      extra_idx <- seq(length(estimates) - n_extra + 1L, length(estimates))
-      for (ei in extra_idx) {
-        estimates[ei] <- exp(estimates[ei])
+      for (k in seq_along(extra_idx)) {
+        ei <- extra_idx[k]
+        estimates[ei] <- .extra_param_to_natural(extra_raw_names[k], estimates[ei])
       }
     }
     if (n_extra > 0 && family$name %in% c("negbin", "zinb")) {
       est_names[length(est_names) - n_extra + 1L] <- "size"
+    }
+    if (n_extra > 0) {
+      for (k in seq_along(extra_idx)) {
+        if (identical(extra_raw_names[k], "logit_pi")) {
+          est_names[length(est_names) - n_extra + k] <- "pi"
+        }
+      }
     }
     names(estimates) <- est_names
 
@@ -368,8 +381,9 @@ fit_intensity_nb <- function(connectivity_at_obs,
       V  <- solve(H)
       se <- sqrt(pmax(diag(V), 0))
       if (n_extra > 0) {
-        for (ei in extra_idx) {
-          se[ei] <- se[ei] * estimates[ei]
+        for (k in seq_along(extra_idx)) {
+          ei <- extra_idx[k]
+          se[ei] <- se[ei] * .extra_param_se_scale(extra_raw_names[k], estimates[ei])
         }
       }
     }, error = function(e) NULL)
@@ -504,16 +518,32 @@ fit_intensity_nb <- function(connectivity_at_obs,
   }
 
   estimates <- opt$par
-  # Transform extra params to natural scale
+  # Transform extra params to natural scale, by name (not uniformly via
+  # exp()) -- see .extra_param_to_natural() in intensity_family.R (#109).
+  extra_idx <- if (n_extra > 0) {
+    seq(length(estimates) - n_extra + 1L, length(estimates))
+  } else {
+    integer(0)
+  }
+  extra_raw_names <- family$extra_param_names
   if (n_extra > 0) {
-    extra_idx <- seq(length(estimates) - n_extra + 1L, length(estimates))
-    for (ei in extra_idx) {
-      estimates[ei] <- exp(estimates[ei])
+    for (k in seq_along(extra_idx)) {
+      ei <- extra_idx[k]
+      estimates[ei] <- .extra_param_to_natural(extra_raw_names[k], estimates[ei])
     }
   }
   # Alias: first extra param is conventionally "size" / "theta"
   if (n_extra > 0 && family$name %in% c("negbin", "zinb")) {
     est_names[length(est_names) - n_extra + 1L] <- "size"
+  }
+  # Alias: logit-scale zero-inflation parameter is reported as "pi", the
+  # natural-scale probability, not the optimizer-scale "logit_pi".
+  if (n_extra > 0) {
+    for (k in seq_along(extra_idx)) {
+      if (identical(extra_raw_names[k], "logit_pi")) {
+        est_names[length(est_names) - n_extra + k] <- "pi"
+      }
+    }
   }
   names(estimates) <- est_names
 
@@ -522,10 +552,11 @@ fit_intensity_nb <- function(connectivity_at_obs,
     H  <- opt$hessian
     V  <- solve(H)
     se <- sqrt(pmax(diag(V), 0))
-    # delta-method for exp-transformed extra params
+    # delta-method for the natural-scale transform of each extra param
     if (n_extra > 0) {
-      for (ei in extra_idx) {
-        se[ei] <- se[ei] * estimates[ei]
+      for (k in seq_along(extra_idx)) {
+        ei <- extra_idx[k]
+        se[ei] <- se[ei] * .extra_param_se_scale(extra_raw_names[k], estimates[ei])
       }
     }
   }, error = function(e) NULL)

@@ -15,6 +15,44 @@
 #   extra_param_names  character vector
 # ============================================================================
 
+# ---- extra-parameter scale transforms --------------------------------------
+#
+# "Extra" distributional parameters (e.g. log_nb_theta, logit_pi) are
+# estimated on an unconstrained optimizer scale and must be mapped to a
+# natural/reporting scale BY NAME, not uniformly via exp(). Exponentiation
+# is only correct for log-scale parameters (log_nb_theta -> size); a
+# logit-scale parameter (logit_pi -> pi) must go through plogis(), or the
+# stored value is silently squashed into (0, Inf) instead of (0, 1) and any
+# downstream consumer that re-applies plogis() sees a nonsensical value
+# (always > 0.5, since exp() of anything is positive). See #109.
+
+#' @keywords internal
+#' @noRd
+.extra_param_to_natural <- function(raw_name, raw_value) {
+  if (identical(raw_name, "logit_pi")) {
+    stats::plogis(raw_value)
+  } else {
+    exp(raw_value)
+  }
+}
+
+# Delta-method scale factor mapping an optimizer-scale SE to a natural-scale
+# SE: se_natural = se_raw * scale_factor. `natural_value` is the
+# already-transformed (natural-scale) point estimate -- for logit_pi this is
+# d(plogis)/dx = plogis(x) * (1 - plogis(x)) = pi * (1 - pi); for a
+# log-scale parameter this is d(exp)/dx = exp(x), i.e. the natural value
+# itself.
+#' @keywords internal
+#' @noRd
+.extra_param_se_scale <- function(raw_name, natural_value) {
+  if (identical(raw_name, "logit_pi")) {
+    natural_value * (1 - natural_value)
+  } else {
+    natural_value
+  }
+}
+
+
 # ---- constructor -----------------------------------------------------------
 
 #' Create an intensity family object
