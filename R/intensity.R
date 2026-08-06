@@ -236,6 +236,8 @@ compute_intensity <- function(z, alpha, gamma,
 #' @param response Optional numeric vector of observed responses.
 #'   Required when `family` is `family_gaussian()`; ignored for count
 #'   families such as `family_negbin()` and `family_poisson()`.
+#'   `family_gaussian()` fits a response-scale Gaussian likelihood, so
+#'   finite negative or zero values are valid observations.
 #' @return A list with `estimates`, `se`, `loglik`, `convergence`,
 #'   `c_scale`, `log_conn_mean`, `log_conn_sd`,
 #'   `residualisation_info`.
@@ -891,6 +893,8 @@ predict_intensity <- function(fit,
 #' @param response Optional numeric vector of observed responses.
 #'   Required when `family` is `family_gaussian()`; ignored for count
 #'   families such as `family_negbin()` and `family_poisson()`.
+#'   `family_gaussian()` fits a response-scale Gaussian likelihood, so
+#'   finite negative or zero values are valid observations.
 #' @return A list matching the interface of [fit_intensity_nb()].
 #' @export
 fit_intensity_selection <- function(connectivity_at_obs,
