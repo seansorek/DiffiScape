@@ -779,3 +779,73 @@ test_that(".optimize_neural forwards config$omniscape radius/block_size to ds_ja
   expect_equal(captured_radius, 9L)
   expect_equal(captured_block_size, 2L)
 })
+
+
+# ---- GH #107: neural optimizer must not hardcode convergence -----------
+# .optimize_neural() previously returned the literal `convergence = 0L`
+# regardless of what the Python training loop reported, so a run that hit
+# the epoch cap without plateauing was indistinguishable from one that
+# actually converged. These tests lock in that .optimize_neural() maps
+# result$converged from ds_jax_neural_optimize() the same way the
+# parametric Adam branch does.
+
+test_that(".optimize_neural reports convergence = 0L when the Python result says converged", {
+  skip_on_cran()
+
+  basis_stack <- terra::rast(nrows = 3, ncols = 3, nlyrs = 1, vals = 1)
+  obs_points  <- data.frame(x = 0, y = 0)
+
+  local_mocked_bindings(
+    ds_jax_neural_optimize = function(basis_np, obs_np, valid_mask_np,
+                                       n_rows, n_cols, cell_area,
+                                       model_type = "mlp",
+                                       model_config = list(),
+                                       optim_config = list(),
+                                       radius, block_size, ...) {
+      list(resistance = rep(1, n_rows * n_cols), best_loglik = -1,
+           loss_history = list(-1), n_epochs_run = 1L, elapsed = 0.01,
+           model_type = model_type, converged = TRUE)
+    },
+    .package = "DiffiScape"
+  )
+
+  result <- optimize_resistance_gradient(
+    basis_stack = basis_stack,
+    obs_points  = obs_points,
+    model_type  = "mlp",
+    output_dir  = withr::local_tempdir()
+  )
+
+  expect_equal(result$convergence, 0L)
+})
+
+
+test_that(".optimize_neural reports convergence = 1L when the epoch budget was exhausted", {
+  skip_on_cran()
+
+  basis_stack <- terra::rast(nrows = 3, ncols = 3, nlyrs = 1, vals = 1)
+  obs_points  <- data.frame(x = 0, y = 0)
+
+  local_mocked_bindings(
+    ds_jax_neural_optimize = function(basis_np, obs_np, valid_mask_np,
+                                       n_rows, n_cols, cell_area,
+                                       model_type = "mlp",
+                                       model_config = list(),
+                                       optim_config = list(),
+                                       radius, block_size, ...) {
+      list(resistance = rep(1, n_rows * n_cols), best_loglik = -1,
+           loss_history = list(-1), n_epochs_run = 1L, elapsed = 0.01,
+           model_type = model_type, converged = FALSE)
+    },
+    .package = "DiffiScape"
+  )
+
+  result <- optimize_resistance_gradient(
+    basis_stack = basis_stack,
+    obs_points  = obs_points,
+    model_type  = "mlp",
+    output_dir  = withr::local_tempdir()
+  )
+
+  expect_equal(result$convergence, 1L)
+})
