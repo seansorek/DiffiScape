@@ -202,6 +202,24 @@ optimize_resistance_gradient <- function(basis_stack,
   model_type <- match.arg(model_type,
     c("parametric", "mlp", "conv", "spline_gam", "irl"))
 
+  # The JAX gradient/neural objective is a covariate-free Poisson PPP
+  # (log lambda = alpha + gamma * log1p(C)) -- it has no negative-binomial,
+  # ZINB, GAM, RSF, or conditional-logit path, and no way for a covariate
+  # to enter. optimize_resistance() and run_torch_pipeline() do honor these
+  # arguments, so silently dropping them here would let switching solvers
+  # change the model being fit without any indication (GH #106).
+  if (!is.null(covariates_obs) || !is.null(covariates_rasters) ||
+      !is.null(available_points) || !is.null(available_covariates) ||
+      isTRUE(residualise)) {
+    stop(
+      "optimize_resistance_gradient() (solver = \"gradient\") fits a ",
+      "covariate-free Poisson PPP and does not support covariates_obs, ",
+      "covariates_rasters, available_points, available_covariates, or ",
+      "residualise = TRUE. Use solver = \"ei\" or solver = \"torch\" instead.",
+      call. = FALSE
+    )
+  }
+
   # --- Neural path: dispatch to Flax optimizer ----------------------------
   if (model_type != "parametric") {
     return(.optimize_neural(
@@ -279,7 +297,10 @@ optimize_resistance_gradient <- function(basis_stack,
     "exp"
   }
 
-  distribution <- config$distribution %||% "negbin"
+  # The gradient objective always fits a Poisson PPP -- report that instead
+  # of echoing config$distribution, which would otherwise misreport the
+  # fitted model whenever a non-default distribution was requested.
+  distribution <- "poisson"
 
   message("\n", strrep("=", 60))
   message(sprintf("JAX gradient optimiser (%s, %s parameterization)",
@@ -405,7 +426,10 @@ optimize_resistance_gradient <- function(basis_stack,
     optim_config$n_epochs <- as.integer(config$n_iter %||% 300L)
   }
 
-  distribution <- config$distribution %||% "negbin"
+  # Same covariate-free Poisson PPP objective as the parametric gradient
+  # path (see GH #106) -- report the model actually fit, not the requested
+  # config$distribution.
+  distribution <- "poisson"
 
   message("\n", strrep("=", 60))
   message(sprintf("JAX neural optimizer (%s, %s parameterization)",
