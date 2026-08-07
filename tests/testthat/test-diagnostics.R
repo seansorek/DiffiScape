@@ -555,3 +555,104 @@ test_that("ds_ppc messages when n_sim > available draws", {
     "Only 20 posterior draws available"
   )
 })
+
+
+# ---------------------------------------------------------------------------
+# ZINB pi is consumed directly, not re-transformed (#109)
+# ---------------------------------------------------------------------------
+#
+# fit_intensity_nb() now reports the ZINB zero-inflation parameter as "pi"
+# on the natural (0, 1) probability scale (via plogis()), not as "logit_pi"
+# exponentiated. ds_ppc() must consume fit_obj$estimates[["pi"]] and
+# posterior_samples$pi directly -- re-applying plogis()/inverse-logit to an
+# already-natural-scale value would corrupt it.
+
+.make_ppc_inputs_zinb <- function(seed = 109, logit_pi_fixed = -5) {
+  set.seed(seed)
+  r <- terra::rast(nrows = 10, ncols = 10, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(100, mean = 4))
+
+  n_obs   <- 40
+  obs_pts <- data.frame(x = runif(n_obs, 0.05, 0.95),
+                        y = runif(n_obs, 0.05, 0.95))
+
+  # Pin the optimizer-scale logit_pi at a fixed negative value so the fit
+  # is deterministic: L-BFGS-B cannot move a parameter whose lower and
+  # upper bounds are equal.
+  fam <- family_zinb()
+  fam$init_fn <- function(n_cov) {
+    list(
+      start = c(0, 1, rep(0, n_cov), log(1), logit_pi_fixed),
+      # A tight interval (not an exact point) around logit_pi_fixed:
+      # L-BFGS-B's internal finite-difference gradient divides by
+      # (upper - lower) for a bounded parameter, so exactly-equal
+      # lower/upper produces a non-finite gradient. A 2e-6-wide interval
+      # keeps the fitted logit_pi effectively pinned.
+      lower = c(-10, -10, rep(-10, n_cov), log(0.01), logit_pi_fixed - 1e-6),
+      upper = c( 10,  10, rep( 10, n_cov), log(1e6),  logit_pi_fixed + 1e-6)
+    )
+  }
+
+  zinb_fit <- fit_intensity_nb(
+    connectivity_at_obs = abs(rnorm(n_obs, mean = 4)),
+    connectivity_raster = r,
+    obs_coords          = obs_pts,
+    family               = fam
+  )
+
+  true_pi <- 1 / (1 + exp(-logit_pi_fixed))  # ~= 0.0067
+
+  n_draws <- 20
+  samples <- data.frame(
+    r_0    = rnorm(n_draws, 0.5, 0.1),
+    z_1    = rnorm(n_draws, 0.3, 0.1),
+    alpha  = rnorm(n_draws, zinb_fit$estimates[["alpha"]], 0.05),
+    gamma  = rnorm(n_draws, zinb_fit$estimates[["gamma"]], 0.05),
+    size   = pmax(rnorm(n_draws, zinb_fit$estimates[["size"]], 0.2), 0.1),
+    pi     = pmin(pmax(rnorm(n_draws, true_pi, 0.001), 0), 0.02),
+    loglik = rnorm(n_draws, -50, 5)
+  )
+
+  list(raster = r, obs_pts = obs_pts, zinb_fit = zinb_fit, samples = samples,
+       true_pi = true_pi)
+}
+
+
+test_that("fit_intensity_nb reports ZINB pi small (not > 0.5) for a negative fitted logit, feeding ds_ppc correctly (#109)", {
+  skip_on_cran()
+  p <- .make_ppc_inputs_zinb(seed = 109, logit_pi_fixed = -5)
+
+  expect_true("pi" %in% names(p$zinb_fit$estimates))
+  expect_false("logit_pi" %in% names(p$zinb_fit$estimates))
+  expect_equal(unname(p$zinb_fit$estimates[["pi"]]), p$true_pi, tolerance = 1e-4)
+  expect_true(p$zinb_fit$estimates[["pi"]] < 0.05)
+})
+
+
+test_that("ds_ppc simulated total counts are not deflated by ~50% when the true ZINB pi is small (#109)", {
+  skip_on_cran()
+  p <- .make_ppc_inputs_zinb(seed = 109, logit_pi_fixed = -5)
+
+  result <- suppressMessages(
+    ds_ppc(p$samples, p$zinb_fit, p$obs_pts, p$raster,
+           family = family_zinb(), n_sim = 30, plot = FALSE, seed = 5,
+           test_quantities = "total_count")
+  )
+
+  observed_total <- result$observed[["total_count"]]
+  sim_mean_total <- mean(result$simulated$total_count)
+
+  # With pi ~= 0.0067 (near-zero structural-zero probability), simulated
+  # total counts should track the observed count within a wide band. Before
+  # the #109 fix, the stored value was exp(-5) ~= 0.0067, which ds_ppc then
+  # re-passed through plogis() to get pi_map = plogis(0.0067) ~= 0.502 --
+  # i.e. roughly half of all cells would be forced to a structural zero,
+  # systematically deflating the simulated total count to well under half
+  # of what a near-zero pi would produce.
+  info_msg <- sprintf(
+    "sim_mean_total = %.2f, observed_total = %.2f -- simulated counts look implausibly low, consistent with pi being incorrectly computed as > 0.5",
+    sim_mean_total, observed_total
+  )
+  expect_true(sim_mean_total > 0.5 * observed_total, info = info_msg)
+})

@@ -294,7 +294,7 @@ test_that("family_gaussian errors without y_obs", {
   )
 })
 
-test_that("family_gaussian recovers known parameters", {
+test_that("family_gaussian recovers known parameters (response-scale)", {
   set.seed(42)
   n <- 500
   z_obs <- rnorm(n)
@@ -304,8 +304,10 @@ test_that("family_gaussian recovers known parameters", {
   true_gamma <- 0.5
   true_sd    <- 0.3
 
-  log_mu <- true_alpha + true_gamma * z_obs
-  y_obs  <- exp(rnorm(n, mean = log_mu, sd = true_sd))
+  # Response-scale Gaussian: y_obs ~ Normal(mu_obs, true_sd), where
+  # mu_obs = exp(alpha + gamma * z) is the fitted MEAN response (#110).
+  mu_obs <- exp(true_alpha + true_gamma * z_obs)
+  y_obs  <- rnorm(n, mean = mu_obs, sd = true_sd)
 
   fam   <- family_gaussian()
   inits <- fam$init_fn(0)
@@ -325,6 +327,82 @@ test_that("family_gaussian recovers known parameters", {
   expect_equal(opt$par[1], true_alpha, tolerance = 0.15)
   expect_equal(opt$par[2], true_gamma, tolerance = 0.15)
   expect_equal(exp(opt$par[3]), true_sd, tolerance = 0.1)
+})
+
+test_that("family_gaussian negloglik uses response-scale residuals, not log-scale", {
+  # For mu_obs == y_obs everywhere, the response-scale residual is exactly
+  # zero (regardless of the response's magnitude), so the negloglik should
+  # equal the pure normalising-constant term. A log-scale (lognormal)
+  # residual would NOT be zero except when mu_obs == y_obs on the log
+  # scale too -- this test also implicitly distinguishes the two by using
+  # values where mu_obs == y_obs exactly on the response scale.
+  fam <- family_gaussian(known_sd = 1)
+  z_obs <- c(0, 0, 0)
+  # alpha = 0, gamma = 0 -> mu_obs = exp(0) = 1 for all obs
+  y_obs <- c(1, 1, 1)
+  nll <- fam$negloglik_fn(
+    theta       = c(0, 0),
+    z_obs       = z_obs,
+    z_int       = rnorm(10),
+    int_weights = rep(0.01, 10),
+    obs_weights = rep(1, 3),
+    y_obs       = y_obs
+  )
+  expected <- 3 * (log(1) + 0.5 * log(2 * pi))  # resid = 0 for all obs
+  expect_equal(nll, expected, tolerance = 1e-8)
+})
+
+test_that("family_gaussian accepts zero and negative responses without clamping", {
+  # A lognormal model would clamp non-positive responses to 1e-300 (or
+  # reject them outright); the response-scale Gaussian must treat them as
+  # ordinary finite observations (#110).
+  fam <- family_gaussian(known_sd = 1)
+  z_obs <- c(0, 0, 0)
+  y_obs <- c(-5, 0, 3)  # negative, zero, and positive responses
+
+  nll <- fam$negloglik_fn(
+    theta       = c(0, 0),
+    z_obs       = z_obs,
+    z_int       = rnorm(10),
+    int_weights = rep(0.01, 10),
+    obs_weights = rep(1, 3),
+    y_obs       = y_obs
+  )
+  expect_true(is.finite(nll))
+
+  # mu_obs = exp(0) = 1 for all three observations; residuals are
+  # (mu_obs - y_obs) = (6, 1, -2), matching an ordinary Gaussian on the
+  # response scale -- not the huge values a naive log(pmax(y, 1e-300))
+  # transform would produce for the non-positive entries.
+  mu_obs <- 1
+  resid  <- mu_obs - y_obs
+  expected <- 0.5 * sum(resid^2) + 3 * (log(1) + 0.5 * log(2 * pi))
+  expect_equal(nll, expected, tolerance = 1e-8)
+})
+
+test_that("family_gaussian negloglik differs from a lognormal-style computation", {
+  # Sanity check that the implemented likelihood is NOT the lognormal
+  # residual formula from the pre-fix implementation (#110).
+  fam <- family_gaussian(known_sd = 1)
+  z_obs <- c(0.5, -0.3, 1.2)
+  y_obs <- c(2, 4, 1.5)
+
+  theta <- c(0.2, 0.7)
+  nll_response <- fam$negloglik_fn(
+    theta       = theta,
+    z_obs       = z_obs,
+    z_int       = rnorm(10),
+    int_weights = rep(0.01, 10),
+    obs_weights = rep(1, 3),
+    y_obs       = y_obs
+  )
+
+  # Reconstruct what the old lognormal-residual formula would have given.
+  mu_obs   <- exp(theta[1] + theta[2] * z_obs)
+  resid_ln <- log(pmax(mu_obs, 1e-300)) - log(pmax(y_obs, 1e-300))
+  nll_lognormal <- 0.5 * sum((resid_ln / 1)^2) + 3 * log(1) + 3 * 0.5 * log(2 * pi)
+
+  expect_false(isTRUE(all.equal(nll_response, nll_lognormal)))
 })
 
 test_that("family_gaussian init_fn includes log_sd when estimating SD", {
@@ -348,6 +426,18 @@ test_that("family_gaussian deviance_residuals preserve sign", {
   dr  <- fam$deviance_residuals_fn(y, mu, extra_params = list())
   expect_true(dr[1] < 0)   # y < fitted -> negative
   expect_true(dr[2] > 0)   # y > fitted -> positive
+})
+
+test_that("family_gaussian deviance_residuals are response-scale (observed - fitted)", {
+  # A lognormal-style deviance residual would be log(observed) - log(fitted),
+  # which is undefined/clamped for non-positive observed values. The
+  # response-scale residual must handle zero/negative observations exactly
+  # like an ordinary Gaussian (#110).
+  fam <- family_gaussian()
+  y   <- c(-3, 0, 4)
+  mu  <- c(1, 1, 1)
+  dr  <- fam$deviance_residuals_fn(y, mu, extra_params = list())
+  expect_equal(dr, y - mu)
 })
 
 

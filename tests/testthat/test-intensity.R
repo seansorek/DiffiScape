@@ -807,3 +807,113 @@ test_that("predict_intensity_gam applies residualisation when fit used residuali
   expect_false(isTRUE(all.equal(vals_resid, vals_no_resid)),
                info = "Residualised GAM predictions should differ from non-residualised")
 })
+
+
+# ---- ZINB logit_pi extraction (#109) ----------------------------------------
+#
+# fit_intensity_nb() must transform the ZINB family's extra "logit_pi"
+# parameter via plogis() at extraction time, not exp() -- exponentiating a
+# negative logit always yields a value > 0 which, if later re-passed through
+# plogis() by a downstream consumer, always comes out > 0.5 regardless of
+# the true fitted probability. We pin the optimizer-scale logit_pi at a
+# fixed negative value (-5, so the true pi = plogis(-5) ~= 0.0067) via a
+# custom family whose init_fn collapses the logit_pi bound to a point, so
+# L-BFGS-B cannot move it and the test is deterministic.
+
+.zinb_family_pinned_logit_pi <- function(logit_pi_fixed) {
+  fam <- family_zinb()
+  fam$init_fn <- function(n_cov) {
+    # Bounds are a tight interval (not an exact point) around
+    # logit_pi_fixed: L-BFGS-B's internal finite-difference gradient
+    # computation divides by (upper - lower) for a bounded parameter, so an
+    # exactly-equal lower/upper produces a non-finite gradient. A 2e-6-wide
+    # interval keeps the fitted logit_pi effectively pinned (well within
+    # the tolerance used by the assertions below) while avoiding that.
+    list(
+      start = c(0, 1, rep(0, n_cov), log(1), logit_pi_fixed),
+      lower = c(-10, -10, rep(-10, n_cov), log(0.01), logit_pi_fixed - 1e-6),
+      upper = c( 10,  10, rep( 10, n_cov), log(1e6),  logit_pi_fixed + 1e-6)
+    )
+  }
+  fam
+}
+
+test_that("fit_intensity_nb (raster path) transforms logit_pi via plogis, not exp, for a negative fitted logit (#109)", {
+  skip_on_cran()
+  skip_if_not_installed("terra")
+  set.seed(109)
+
+  r <- terra::rast(nrows = 10, ncols = 10, xmin = 0, xmax = 1,
+                   ymin = 0, ymax = 1)
+  terra::values(r) <- abs(rnorm(100, mean = 5))
+
+  n_obs <- 25
+  obs_x <- runif(n_obs, 0.05, 0.95)
+  obs_y <- runif(n_obs, 0.05, 0.95)
+  conn_at_obs <- abs(rnorm(n_obs, mean = 5))
+
+  logit_pi_fixed <- -5
+  true_pi <- 1 / (1 + exp(-logit_pi_fixed))  # ~= 0.0067
+
+  fit <- fit_intensity_nb(
+    connectivity_at_obs = conn_at_obs,
+    connectivity_raster = r,
+    obs_coords          = data.frame(x = obs_x, y = obs_y),
+    family               = .zinb_family_pinned_logit_pi(logit_pi_fixed)
+  )
+
+  expect_true("pi" %in% names(fit$estimates))
+  expect_false("logit_pi" %in% names(fit$estimates))
+
+  # The reported pi must equal plogis(-5) ~= 0.0067, NOT exp(-5) ~= 0.0067
+  # re-plogis'd to ~0.502 (the bug), nor exp(-5) itself reported unnamed.
+  expect_equal(unname(fit$estimates[["pi"]]), true_pi, tolerance = 1e-4)
+  expect_true(fit$estimates[["pi"]] < 0.5)
+  expect_true(fit$estimates[["pi"]] < 0.05)
+
+  # size (log_nb_theta) must still be exponentiated as before
+  expect_true("size" %in% names(fit$estimates))
+  expect_true(fit$estimates[["size"]] > 0)
+
+  # SE for pi must use the plogis delta-method derivative pi*(1-pi), not exp
+  if (!is.na(fit$se[["pi"]])) {
+    expect_true(fit$se[["pi"]] >= 0)
+    # A derivative of pi*(1-pi) on a probability near 0 is small (<< 1);
+    # the buggy exp() derivative would instead scale the SE by
+    # exp(raw_logit_pi) ~= true_pi, which happens to coincide numerically
+    # here, so the primary regression protection is the point-estimate
+    # checks above together with the "not > 0.5" check on the transformed
+    # pi_map used downstream (covered in test-diagnostics.R / #109).
+    expect_true(is.finite(fit$se[["pi"]]))
+  }
+})
+
+test_that("fit_intensity_nb (selection path) transforms logit_pi via plogis, not exp, for a negative fitted logit (#109)", {
+  skip_on_cran()
+  set.seed(1091)
+
+  n_obs   <- 25
+  n_avail <- 100
+  obs_conn   <- abs(rnorm(n_obs, mean = 5))
+  avail_conn <- abs(rnorm(n_avail, mean = 5))
+  obs_pts    <- data.frame(x = runif(n_obs), y = runif(n_obs))
+
+  logit_pi_fixed <- -5
+  true_pi <- 1 / (1 + exp(-logit_pi_fixed))  # ~= 0.0067
+
+  fit <- fit_intensity_nb(
+    connectivity_at_obs     = obs_conn,
+    connectivity_raster     = NULL,
+    obs_coords              = obs_pts,
+    available_connectivity  = avail_conn,
+    family                  = .zinb_family_pinned_logit_pi(logit_pi_fixed)
+  )
+
+  expect_true("pi" %in% names(fit$estimates))
+  expect_false("logit_pi" %in% names(fit$estimates))
+  expect_equal(unname(fit$estimates[["pi"]]), true_pi, tolerance = 1e-4)
+  expect_true(fit$estimates[["pi"]] < 0.5)
+  expect_true(fit$estimates[["pi"]] < 0.05)
+  expect_true("size" %in% names(fit$estimates))
+  expect_true(fit$estimates[["size"]] > 0)
+})

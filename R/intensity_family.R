@@ -15,6 +15,44 @@
 #   extra_param_names  character vector
 # ============================================================================
 
+# ---- extra-parameter scale transforms --------------------------------------
+#
+# "Extra" distributional parameters (e.g. log_nb_theta, logit_pi) are
+# estimated on an unconstrained optimizer scale and must be mapped to a
+# natural/reporting scale BY NAME, not uniformly via exp(). Exponentiation
+# is only correct for log-scale parameters (log_nb_theta -> size); a
+# logit-scale parameter (logit_pi -> pi) must go through plogis(), or the
+# stored value is silently squashed into (0, Inf) instead of (0, 1) and any
+# downstream consumer that re-applies plogis() sees a nonsensical value
+# (always > 0.5, since exp() of anything is positive). See #109.
+
+#' @keywords internal
+#' @noRd
+.extra_param_to_natural <- function(raw_name, raw_value) {
+  if (identical(raw_name, "logit_pi")) {
+    stats::plogis(raw_value)
+  } else {
+    exp(raw_value)
+  }
+}
+
+# Delta-method scale factor mapping an optimizer-scale SE to a natural-scale
+# SE: se_natural = se_raw * scale_factor. `natural_value` is the
+# already-transformed (natural-scale) point estimate -- for logit_pi this is
+# d(plogis)/dx = plogis(x) * (1 - plogis(x)) = pi * (1 - pi); for a
+# log-scale parameter this is d(exp)/dx = exp(x), i.e. the natural value
+# itself.
+#' @keywords internal
+#' @noRd
+.extra_param_se_scale <- function(raw_name, natural_value) {
+  if (identical(raw_name, "logit_pi")) {
+    natural_value * (1 - natural_value)
+  } else {
+    natural_value
+  }
+}
+
+
 # ---- constructor -----------------------------------------------------------
 
 #' Create an intensity family object
@@ -228,10 +266,15 @@ family_poisson <- function() {
 #' Gaussian intensity family
 #'
 #' For continuous response data (e.g. density estimates).  Uses a
-#' Gaussian likelihood with known or estimated standard deviation.
+#' response-scale Gaussian likelihood, \eqn{y \sim \text{Normal}(\mu, \sigma)},
+#' with known or estimated standard deviation \eqn{\sigma}.  `mu_obs` from
+#' [compute_intensity()] is the fitted mean response (not a log-scale
+#' median), and residuals are computed on the response scale
+#' (`mu_obs - y_obs`), so finite negative or zero responses are valid
+#' observations -- they are not clamped or otherwise transformed.
 #'
-#' @param known_sd Fixed standard deviation.  If `NULL` (default),
-#'   `log_sd` is estimated as an extra parameter.
+#' @param known_sd Fixed standard deviation (on the response scale).  If
+#'   `NULL` (default), `log_sd` is estimated as an extra parameter.
 #' @return An [intensity_family] object.
 #' @export
 family_gaussian <- function(known_sd = NULL) {
@@ -269,8 +312,12 @@ family_gaussian <- function(known_sd = NULL) {
         sd_val <- known_sd
       }
 
+      # Response-scale Gaussian: y_obs ~ Normal(mu_obs, sd_val). mu_obs is
+      # the fitted mean response directly (not a log-scale median), and
+      # finite nonpositive responses are valid observations -- no clamping
+      # or log-transform is applied to either mu_obs or y_obs (#110).
       mu_obs <- compute_intensity(z_obs, alpha, gamma, cov_obs, betas)
-      resid <- log(pmax(mu_obs, 1e-300)) - log(pmax(y_obs, 1e-300))
+      resid <- mu_obs - y_obs
       negll <- 0.5 * sum(obs_weights * (resid / sd_val)^2) +
                sum(obs_weights) * log(sd_val) +
                0.5 * sum(obs_weights) * log(2 * pi)
@@ -280,9 +327,9 @@ family_gaussian <- function(known_sd = NULL) {
     },
 
     deviance_residuals_fn = function(observed, fitted, extra_params) {
-      log_obs <- log(pmax(observed, 1e-300))
-      log_fit <- log(pmax(fitted,   1e-300))
-      log_obs - log_fit
+      # Response-scale residuals, consistent with the response-scale
+      # Gaussian likelihood used in negloglik_fn (#110).
+      observed - fitted
     },
 
     init_fn = function(n_cov) {

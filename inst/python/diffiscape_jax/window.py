@@ -25,7 +25,7 @@ except ImportError:
     AMJaxCGSolver = None
     jaxscape_padding = None
 
-from .core import prepare_permeability, _mean_weight
+from .core import prepare_permeability, _mean_weight, cumulative_current_core
 
 
 def cumulative_current(
@@ -102,36 +102,15 @@ def cumulative_current(
     surface = jnp.array(resistance_matrix, dtype=jnp.float64)
     permeability = prepare_permeability(surface, parameterization)
 
-    # Pad with edge values so buffer zones reflect real landscape
-    padded = jnp.pad(permeability, radius, mode='edge')
-    # Ensure dimensions satisfy WindowOperation divisibility constraint
-    padded = jaxscape_padding(padded, buffer_size=radius, window_size=block_size)
-
-    window_op = WindowOperation(
-        shape=padded.shape,
-        window_size=block_size,
-        buffer_size=radius,
+    # Delegates to the differentiable core (also used, with the caller's
+    # radius/block_size, by the gradient-solver objective in core.py --
+    # see GH #105) so the forward/evaluation path and the training
+    # objective always compute the exact same connectivity definition.
+    current_acc = cumulative_current_core(
+        permeability, n_rows, n_cols, radius, block_size
     )
 
-    distance_solver = ResistanceDistance()
-    current_acc = jnp.zeros(padded.shape, dtype=jnp.float64)
-
-    for xy, window in window_op.lazy_iterator(padded):
-        grid = GridGraph(grid=window, fun=_mean_weight)
-        center = window.shape[0] // 2
-        source = grid.coord_to_index(
-            jnp.array([center]), jnp.array([center])
-        )
-        dist_values = distance_solver(grid, source)
-        dist_2d = grid.node_values_to_array(dist_values)
-        current_acc = window_op.update_raster_with_window(
-            xy, current_acc, dist_2d, fun=jnp.add,
-        )
-
-    # Strip padding to recover original extent
-    result_current = np.array(
-        current_acc[radius:radius + n_rows, radius:radius + n_cols]
-    )
+    result_current = np.array(current_acc)
 
     elapsed = time.time() - t0
 

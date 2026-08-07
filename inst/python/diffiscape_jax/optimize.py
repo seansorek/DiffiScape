@@ -218,6 +218,8 @@ def run_neural_optimization(
     model_config=None,
     optim_config=None,
     parameterization="resistance",
+    radius=13,
+    block_size=5,
     seed=42,
     verbose=True,
 ):
@@ -265,6 +267,15 @@ def run_neural_optimization(
     parameterization : str, optional
         Either ``"resistance"`` or ``"permeability"`` (default:
         ``"resistance"``).
+    radius : int, optional
+        Moving-window buffer radius, forwarded to the same
+        ``window.cumulative_current()``-based operator used on the
+        forward/evaluation path (default: 13). Must match the radius used
+        downstream (e.g. in ``ds_jax_connectivity()``) for the fitted
+        ``gamma`` to be meaningful there -- see GH #105.
+    block_size : int, optional
+        Moving-window core / source-block size, forwarded to the same
+        operator as *radius* above (default: 5).
     seed : int, optional
         Random seed for JAX PRNG (default: 42).
     verbose : bool, optional
@@ -314,9 +325,7 @@ def run_neural_optimization(
         ResistanceSpline,
         ResistanceIRL,
     )
-    from .core import prepare_permeability, _mean_weight, ppp_loglik
-
-    from jaxscape import GridGraph, ResistanceDistance
+    from .core import prepare_permeability, ppp_loglik, cumulative_current_core
 
     rng = jax.random.PRNGKey(seed)
 
@@ -368,8 +377,12 @@ def run_neural_optimization(
     # PPP negative log-likelihood with learnable alpha/gamma:
     #   log lambda = alpha + gamma * log(1 + C)
     # The Flax model outputs log-resistance; we exponentiate to get
-    # resistance, embed into the full grid, convert to permeability, solve
-    # for resistance distance, then evaluate the PPP objective.
+    # resistance, embed into the full grid, convert to permeability, and
+    # solve via the SAME differentiable moving-window operator used on the
+    # forward/evaluation path (window.cumulative_current(), honoring the
+    # caller's radius/block_size) before evaluating the PPP objective --
+    # see GH #105 for why this must match the forward path exactly rather
+    # than a single-source ResistanceDistance call.
 
     is_conv = model_type == "conv"
 
@@ -388,12 +401,11 @@ def run_neural_optimization(
             full_surface = full_surface.at[mask_jnp].set(resistance)
             surface_2d = full_surface.reshape((n_rows, n_cols))
 
-        # Permeability conversion and circuit solve
+        # Permeability conversion and moving-window circuit solve
         perm = prepare_permeability(surface_2d, parameterization)
-        grid = GridGraph(grid=perm, fun=_mean_weight)
-        dist_solver = ResistanceDistance()
-        source = grid.coord_to_index(jnp.array([0]), jnp.array([0]))
-        connectivity = dist_solver(grid, source)
+        connectivity = cumulative_current_core(
+            perm, n_rows, n_cols, radius, block_size
+        )
 
         # PPP log-likelihood on valid cells
         conn_valid = connectivity.ravel()[mask_jnp]

@@ -367,6 +367,15 @@ test_that("run_bayesian_sampling calls ds_torch_setup when not initialized", {
   terra::values(basis) <- runif(25)
   obs <- data.frame(x = 0.5, y = 0.5)
 
+  # Force the "not initialized" precondition explicitly rather than assuming
+  # it: torch_initialized is a session-global flag, and other real (unmocked)
+  # code — e.g. the irl.Rmd vignette, evaluated during the same R CMD check
+  # session — may have already set it TRUE before this test runs.
+  ds_env  <- get(".ds_env", envir = environment(run_bayesian_sampling))
+  old_val <- ds_env$torch_initialized
+  withr::defer(ds_env$torch_initialized <- old_val)
+  ds_env$torch_initialized <- FALSE
+
   setup_called <- FALSE
   mock_result <- list(summary = NULL, elapsed_time = 0.1)
 

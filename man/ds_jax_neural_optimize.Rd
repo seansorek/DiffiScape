@@ -37,7 +37,11 @@ to the Flax module constructor.}
 \item{optim_config}{Named list with \code{lr}, \code{n_epochs}, \code{patience}.}
 
 \item{...}{Additional arguments forwarded to the Python function
-(e.g. \code{parameterization}, \code{seed}, \code{verbose}).}
+(e.g. \code{parameterization}, \code{radius}, \code{block_size}, \code{seed}, \code{verbose}).
+\code{radius}/\code{block_size} are honored: they parameterize the same
+moving-window \code{window.cumulative_current()}-based solve used on the
+forward/evaluation path, so the neural loss trains against the same
+connectivity definition it is later evaluated against (GH #105).}
 }
 \value{
 A list (converted from the Python dict) with \code{resistance},
