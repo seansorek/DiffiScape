@@ -21,6 +21,8 @@ def run_parametric_optimization(
     n_cols,
     cell_area=1.0,
     init_params=None,
+    lower_bounds=None,
+    upper_bounds=None,
     link_fn="exp",
     radius=13,
     block_size=5,
@@ -60,6 +62,12 @@ def run_parametric_optimization(
     init_params : array-like, optional
         Initial resistance parameter vector (intercept + basis coefficients).
         If None, defaults to zeros of length n_basis + 1.
+    lower_bounds, upper_bounds : array-like, optional
+        Per-resistance-parameter bounds (intercept + basis coefficients,
+        same length as *init_params*). If either is None, the resistance
+        parameters are left unconstrained. ``alpha``/``gamma`` (the
+        intensity params appended internally) are always unconstrained
+        regardless of these bounds.
     link_fn : str, optional
         Link function name: "exp", "softplus", or "identity" (default: "exp").
     radius : int, optional
@@ -127,6 +135,25 @@ def run_parametric_optimization(
     # Append intensity params: alpha=0 (intercept), gamma=1 (coefficient)
     params = jnp.concatenate([resistance_params, jnp.array([0.0, 1.0])])
 
+    # Pad bounds to the full [resistance..., alpha, gamma] layout, with
+    # alpha/gamma always left unconstrained (+/-inf). Bounds are enforced
+    # (LBFGSB / per-step clipping below) rather than just used to pick the
+    # starting point, so a caller-supplied box actually constrains the fit
+    # the way optimize_resistance()'s surrogate path does (GH #118).
+    n_resistance = resistance_params.shape[0]
+    if lower_bounds is not None and upper_bounds is not None:
+        lo = jnp.concatenate([
+            jnp.array(lower_bounds, dtype=jnp.float64),
+            jnp.array([-jnp.inf, -jnp.inf]),
+        ])
+        hi = jnp.concatenate([
+            jnp.array(upper_bounds, dtype=jnp.float64),
+            jnp.array([jnp.inf, jnp.inf]),
+        ])
+    else:
+        lo = jnp.full(n_resistance + 2, -jnp.inf, dtype=jnp.float64)
+        hi = jnp.full(n_resistance + 2, jnp.inf, dtype=jnp.float64)
+
     def neg_loglik(p):
         return -_connectivity_objective(
             p, basis_jnp, mask_jnp, n_rows, n_cols,
@@ -139,8 +166,8 @@ def run_parametric_optimization(
 
     if method == "lbfgs":
         lbfgs_tol = 1e-6
-        solver = jaxopt.LBFGS(fun=neg_loglik, maxiter=n_epochs, tol=lbfgs_tol, jit=False)
-        result = solver.run(params)
+        solver = jaxopt.LBFGSB(fun=neg_loglik, maxiter=n_epochs, tol=lbfgs_tol, jit=False)
+        result = solver.run(params, bounds=(lo, hi))
         best_params = result.params
         best_loss = float(neg_loglik(best_params))
         loss_history = [best_loss]
@@ -151,6 +178,7 @@ def run_parametric_optimization(
         converged = bool(result.state.error <= lbfgs_tol)
 
     else:  # adam
+        params = jnp.clip(params, lo, hi)
         schedule = optax.cosine_decay_schedule(init_value=lr, decay_steps=n_epochs)
         optimizer = optax.adam(learning_rate=schedule)
         opt_state = optimizer.init(params)
@@ -177,7 +205,7 @@ def run_parametric_optimization(
                 stall += 1
 
             updates, opt_state = optimizer.update(g, opt_state)
-            params = optax.apply_updates(params, updates)
+            params = jnp.clip(optax.apply_updates(params, updates), lo, hi)
 
             if stall >= patience:
                 if verbose:
