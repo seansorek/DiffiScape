@@ -9,6 +9,69 @@ test_that("optimize_resistance_gradient requires reticulate", {
 })
 
 
+# ---- GH #106: unsupported arguments must error, not be silently dropped ----
+# The JAX gradient objective is a covariate-free Poisson PPP. covariates_obs,
+# covariates_rasters, available_points, available_covariates, and
+# residualise = TRUE were previously accepted and silently ignored, letting
+# `solver = "gradient"` fit a different model than requested with no
+# indication. These should now error before any Python call is attempted.
+
+test_that("optimize_resistance_gradient errors when covariates_obs is supplied", {
+  expect_error(
+    optimize_resistance_gradient(
+      NULL, NULL, covariates_obs = data.frame(x = 1)
+    ),
+    "does not support"
+  )
+})
+
+test_that("optimize_resistance_gradient errors when covariates_rasters is supplied", {
+  expect_error(
+    optimize_resistance_gradient(
+      NULL, NULL, covariates_rasters = terra::rast(nrows = 2, ncols = 2, vals = 1)
+    ),
+    "does not support"
+  )
+})
+
+test_that("optimize_resistance_gradient errors when residualise = TRUE", {
+  expect_error(
+    optimize_resistance_gradient(NULL, NULL, residualise = TRUE),
+    "does not support"
+  )
+})
+
+test_that("optimize_resistance_gradient errors when available_points is supplied", {
+  expect_error(
+    optimize_resistance_gradient(
+      NULL, NULL, available_points = data.frame(x = 1)
+    ),
+    "does not support"
+  )
+})
+
+test_that("optimize_resistance_gradient errors when available_covariates is supplied", {
+  expect_error(
+    optimize_resistance_gradient(
+      NULL, NULL, available_covariates = data.frame(x = 1)
+    ),
+    "does not support"
+  )
+})
+
+test_that("optimize_resistance_gradient's unsupported-argument check does not false-positive on defaults", {
+  # NULL inputs should still fail (existing "requires reticulate" test),
+  # but NOT with the "does not support" message -- the validation itself
+  # must not fire when covariates_obs/residualise/etc. are left at their
+  # defaults.
+  err <- tryCatch(
+    optimize_resistance_gradient(NULL, NULL),
+    error = function(e) e
+  )
+  expect_false(grepl("does not support", conditionMessage(err)))
+})
+
+
 test_that("ds_optimize dispatches 'gradient' solver", {
   # Match should succeed without error
   solver <- match.arg("gradient",
@@ -117,6 +180,36 @@ test_that("optimize_resistance_gradient works with adam method", {
   expect_type(result, "list")
   expect_true("best_params" %in% names(result))
   expect_true(is.numeric(result$best_loglik))
+})
+
+
+test_that("optimize_resistance_gradient always reports distribution = 'poisson', regardless of config$distribution", {
+  skip_on_cran()
+
+  basis_stack <- terra::rast(nrows = 3, ncols = 3, nlyrs = 1, vals = 1)
+  obs_points  <- data.frame(x = 0, y = 0)
+
+  local_mocked_bindings(
+    ds_jax_optimize = function(basis_np, obs_np, valid_mask_np,
+                                n_rows, n_cols, cell_area,
+                                init_params = NULL, radius, block_size, ...) {
+      list(best_params = c(0, 0), best_loglik = -1, n_epochs_run = 1L,
+           elapsed = 0.01, converged = TRUE)
+    },
+    .package = "DiffiScape"
+  )
+
+  cfg <- default_optimizer_config()
+  cfg$distribution <- "negbin"
+
+  result <- optimize_resistance_gradient(
+    basis_stack = basis_stack,
+    obs_points  = obs_points,
+    config      = cfg,
+    output_dir  = withr::local_tempdir()
+  )
+
+  expect_equal(result$distribution, "poisson")
 })
 
 

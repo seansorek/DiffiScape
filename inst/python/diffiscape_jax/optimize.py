@@ -116,8 +116,11 @@ def run_parametric_optimization(
         )
 
     # Convert inputs to JAX arrays.
-    resistance_params = jnp.array(init_params, dtype=jnp.float64)
     basis_jnp = jnp.array(basis_values, dtype=jnp.float64)
+    if init_params is None:
+        resistance_params = jnp.zeros(basis_jnp.shape[1] + 1, dtype=jnp.float64)
+    else:
+        resistance_params = jnp.array(init_params, dtype=jnp.float64)
     mask_jnp = jnp.array(valid_mask)
     obs_jnp = jnp.array(obs_counts, dtype=jnp.float64)
 
@@ -466,4 +469,5 @@ def run_neural_optimization(
         "n_epochs_run": len(loss_history),
         "elapsed": elapsed,
         "model_type": model_type,
+        "converged": stall >= patience,
     }

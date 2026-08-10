@@ -49,7 +49,7 @@ class TestRunNeuralOptimization:
 
         expected_keys = {
             "resistance", "alpha", "gamma", "best_loglik", "loss_history",
-            "n_epochs_run", "elapsed", "model_type",
+            "n_epochs_run", "elapsed", "model_type", "converged",
         }
         assert expected_keys == set(result.keys())
         assert isinstance(result["alpha"], float)
@@ -110,6 +110,26 @@ class TestRunNeuralOptimization:
 
         # Zero LR -> no progress -> early stop
         assert result["n_epochs_run"] <= patience + 1
+        assert result["converged"] is True
+
+    def test_not_converged_when_epochs_exhausted_while_improving(self, small_problem):
+        """Test that converged is False when the epoch budget runs out first."""
+        result = run_neural_optimization(
+            small_problem["basis_values"],
+            small_problem["obs_counts"],
+            small_problem["valid_mask"],
+            small_problem["n_rows"],
+            small_problem["n_cols"],
+            cell_area=1.0,
+            model_type="mlp",
+            model_config={"hidden_dim": 16, "n_hidden_layers": 1},
+            optim_config={"lr": 0.01, "n_epochs": 5, "patience": 1000},
+            seed=42,
+            verbose=False,
+        )
+
+        assert result["n_epochs_run"] == 5
+        assert result["converged"] is False
 
     def test_model_type_echoed(self, small_problem):
         """Test that model_type is echoed in the result."""
