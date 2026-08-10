@@ -127,6 +127,18 @@ test_that("ds_jax_connectivity rejects unimplemented output modes without a back
 })
 
 
+test_that("ds_jax_connectivity rejects source_from_resistance = FALSE without a backend", {
+  # The moving-window solver always places a unit source at each window
+  # centre and never reads source_from_resistance (GH #119), so FALSE must
+  # be rejected before ds_jax_setup() is reached, same as output = "voltage".
+  r <- terra::rast(nrows = 5, ncols = 5, vals = runif(25, 1, 100))
+  expect_error(
+    ds_jax_connectivity(r, source_from_resistance = FALSE),
+    "not yet implemented"
+  )
+})
+
+
 test_that("JAX backend runs in 64-bit (x64) precision", {
   skip_on_cran()
   skip_if_not_installed("reticulate")

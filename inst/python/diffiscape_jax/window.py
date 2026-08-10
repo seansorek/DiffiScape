@@ -61,7 +61,11 @@ def cumulative_current(
         Smaller values produce denser source placement (block_size=1
         places a source at every cell).
     source_from_resistance : bool, optional
-        Reserved for future use (default: True).
+        Must be True (default: True). ``cumulative_current_core`` always
+        places a unit source at each window centre regardless of the centre
+        cell's permeability, so ``False`` is not honoured; passing it raises
+        ``NotImplementedError`` rather than silently returning the
+        ``True``-weighted result.
     parameterization : str, optional
         Either "resistance" or "permeability" (default: "resistance").
     output : str, optional
@@ -95,6 +99,12 @@ def cumulative_current(
         raise NotImplementedError(
             f"output='{output}' is not yet implemented. "
             "Only output='current' is supported."
+        )
+    if not source_from_resistance:
+        raise NotImplementedError(
+            "source_from_resistance=False is not yet implemented. "
+            "cumulative_current_core() always places a unit source at each "
+            "window centre; only source_from_resistance=True is supported."
         )
 
     t0 = time.time()
