@@ -234,3 +234,20 @@ class TestRunParametricOptimization:
                 method="invalid_method",
                 verbose=False,
             )
+
+    def test_none_init_params_defaults_to_zeros(self, small_problem):
+        """init_params=None should default to zeros of length n_basis + 1."""
+        result = run_parametric_optimization(
+            small_problem["basis_values"],
+            small_problem["obs_counts"],
+            small_problem["valid_mask"],
+            small_problem["n_rows"],
+            small_problem["n_cols"],
+            cell_area=1.0,
+            init_params=None,
+            radius=3, block_size=2,
+            method="lbfgs", n_epochs=5, verbose=False,
+        )
+
+        n_basis = small_problem["basis_values"].shape[1]
+        assert len(result["best_params"]) == n_basis + 1
