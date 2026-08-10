@@ -81,7 +81,15 @@ test_that("run_cumulative_current works with JAX backend", {
   expect_true(is.numeric(result$elapsed_seconds))
 })
 
-test_that("run_cumulative_current JAX backend returns voltage", {
+test_that("run_cumulative_current JAX backend errors on output = 'both' (not yet implemented)", {
+  # output = "voltage"/"both" is documented as not-yet-implemented
+  # (ds_jax_connectivity() stop()s on it -- see R/jax_bridge.R) and has been
+  # since the JAX migration (#73). This test previously asserted the
+  # opposite -- that "both" returns a flow_potential SpatRaster -- and so
+  # has been failing locally against every commit since it was added in
+  # #88; CI never caught it because the auto-merge workflow's token does
+  # not trigger the push-triggered Tests/R-CMD-check runs that would have
+  # run it against main.
   skip_on_cran()
   skip_if_not_installed("reticulate")
   skip_if(!reticulate::py_module_available("jaxscape"),
@@ -90,9 +98,8 @@ test_that("run_cumulative_current JAX backend returns voltage", {
 
   r <- terra::rast(nrows = 15, ncols = 15,
                    vals = runif(225, 1, 100))
-  result <- run_cumulative_current(r, radius = 5L, block_size = 3L,
-                                   output = "both")
-  expect_type(result, "list")
-  expect_s4_class(result$cum_current, "SpatRaster")
-  expect_s4_class(result$flow_potential, "SpatRaster")
+  expect_error(
+    run_cumulative_current(r, radius = 5L, block_size = 3L, output = "both"),
+    "not yet implemented"
+  )
 })
