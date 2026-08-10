@@ -471,7 +471,7 @@ optimize_resistance_gradient <- function(basis_stack,
     bounds        = NULL,
     n_evaluations = result$n_epochs_run,
     distribution  = distribution,
-    convergence   = 0L,
+    convergence   = if (isTRUE(result$converged)) 0L else 1L,
     loss_history  = result$loss_history,
     model_type    = result$model_type
   )

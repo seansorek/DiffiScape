@@ -466,4 +466,5 @@ def run_neural_optimization(
         "n_epochs_run": len(loss_history),
         "elapsed": elapsed,
         "model_type": model_type,
+        "converged": stall >= patience,
     }
