@@ -57,6 +57,19 @@ def test_cumulative_current_output_modes():
                           radius=5, block_size=3, output="both")
 
 
+def test_cumulative_current_rejects_source_from_resistance_false():
+    """cumulative_current_core always places a unit source at each window
+    centre (GH #119); source_from_resistance=False is not honoured and must
+    raise rather than silently returning the True-weighted result."""
+    n_rows, n_cols = 15, 15
+    resistance = np.ones((n_rows, n_cols)) * 10.0
+
+    with pytest.raises(NotImplementedError):
+        cumulative_current(resistance, n_rows, n_cols,
+                          radius=5, block_size=3,
+                          source_from_resistance=False)
+
+
 def test_cumulative_current_all_keys_present():
     """Test that all expected keys are present in output."""
     n_rows, n_cols = 10, 10

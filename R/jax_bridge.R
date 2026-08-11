@@ -140,7 +140,10 @@ ds_jax_call <- function(module_name, fn_name, ...) {
 #' @param resistance A single-layer [terra::SpatRaster] of resistance.
 #' @param radius Integer; moving-window radius (default 13).
 #' @param block_size Integer; source block side length (default 5).
-#' @param source_from_resistance Logical (default `TRUE`).
+#' @param source_from_resistance Logical (default `TRUE`). Must be `TRUE`;
+#'   the moving-window solver always places a unit source at each window
+#'   centre, so `FALSE` is not honored and raises an error rather than
+#'   silently returning the `TRUE`-weighted result.
 #' @param parameterization Character; `"resistance"` (default) or
 #'   `"permeability"`.
 #' @param output Character; `"current"`, `"voltage"`, or `"both"`.
@@ -167,6 +170,13 @@ ds_jax_connectivity <- function(resistance,
   if (output %in% c("voltage", "both")) {
     stop("output = '", output, "' is not yet implemented; ",
          "only output = 'current' is supported.", call. = FALSE)
+  }
+
+  if (!isTRUE(source_from_resistance)) {
+    stop("source_from_resistance = FALSE is not yet implemented; ",
+         "the moving-window solver always places a unit source at each ",
+         "window centre, so only source_from_resistance = TRUE is supported.",
+         call. = FALSE)
   }
 
   if (!ds_jax_check()) ds_jax_setup()

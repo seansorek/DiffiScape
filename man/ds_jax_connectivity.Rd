@@ -20,7 +20,10 @@ ds_jax_connectivity(
 
 \item{block_size}{Integer; source block side length (default 5).}
 
-\item{source_from_resistance}{Logical (default \code{TRUE}).}
+\item{source_from_resistance}{Logical (default \code{TRUE}). Must be \code{TRUE};
+the moving-window solver always places a unit source at each window
+centre, so \code{FALSE} is not honored and raises an error rather than
+silently returning the \code{TRUE}-weighted result.}
 
 \item{parameterization}{Character; \code{"resistance"} (default) or
 \code{"permeability"}.}
