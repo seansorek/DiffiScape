@@ -31,7 +31,10 @@ basis coefficients).  If \code{NULL}, defaults to zeros.}
 
 \item{...}{Additional arguments forwarded to the Python function
 (e.g. \code{method}, \code{lr}, \code{n_epochs}, \code{patience}, \code{parameterization},
-\code{link_fn}, \code{radius}, \code{block_size}, \code{seed}, \code{verbose}).}
+\code{link_fn}, \code{radius}, \code{block_size}, \code{seed}, \code{verbose},
+\code{lower_bounds}/\code{upper_bounds} -- per-resistance-parameter box
+constraints, same length as \code{init_params}; enforced via \code{LBFGSB} or
+per-step clipping, not just used to pick the starting point).}
 }
 \value{
 A list (converted from the Python dict) with \code{best_params},

@@ -251,3 +251,87 @@ class TestRunParametricOptimization:
 
         n_basis = small_problem["basis_values"].shape[1]
         assert len(result["best_params"]) == n_basis + 1
+
+
+class TestBoundsEnforcement:
+    """GH #118: bounds must actually constrain the fit, not just seed the
+    starting point -- the JAX solvers used to be fully unconstrained."""
+
+    @pytest.fixture(scope="class")
+    def small_problem(self):
+        n_rows, n_cols = 10, 10
+        n_basis = 2
+        rng = np.random.default_rng(7)
+        basis = rng.standard_normal((n_rows * n_cols, n_basis))
+        obs = rng.poisson(5, n_rows * n_cols).astype(float)
+        valid = np.ones(n_rows * n_cols, dtype=bool)
+        # Tight box placed away from init_params, so the unconstrained
+        # optimum (which the pre-fix solvers would happily wander to)
+        # lies outside it: enforcement is only observable if the box
+        # actually forces the fit off its unconstrained trajectory.
+        init_params = np.array([3.0, 0.0, 0.0])
+        lower_bounds = np.array([2.9, -0.1, -0.1])
+        upper_bounds = np.array([3.1, 0.1, 0.1])
+        return {
+            "basis_values": basis,
+            "obs_counts": obs,
+            "valid_mask": valid,
+            "n_rows": n_rows,
+            "n_cols": n_cols,
+            "init_params": init_params,
+            "lower_bounds": lower_bounds,
+            "upper_bounds": upper_bounds,
+        }
+
+    @pytest.mark.parametrize("method", ["lbfgs", "adam"])
+    def test_resistance_params_stay_within_bounds(self, small_problem, method):
+        result = run_parametric_optimization(
+            small_problem["basis_values"], small_problem["obs_counts"],
+            small_problem["valid_mask"], small_problem["n_rows"],
+            small_problem["n_cols"], cell_area=1.0,
+            init_params=small_problem["init_params"],
+            lower_bounds=small_problem["lower_bounds"],
+            upper_bounds=small_problem["upper_bounds"],
+            radius=3, block_size=2, parameterization="resistance",
+            method=method, lr=0.05, n_epochs=50, patience=50,
+            verbose=False,
+        )
+
+        best_params = np.asarray(result["best_params"])
+        assert np.all(best_params >= small_problem["lower_bounds"] - 1e-6)
+        assert np.all(best_params <= small_problem["upper_bounds"] + 1e-6)
+
+    @pytest.mark.parametrize("method", ["lbfgs", "adam"])
+    def test_alpha_gamma_remain_unconstrained(self, small_problem, method):
+        """alpha/gamma are appended internally and must not be clipped by
+        resistance-parameter bounds."""
+        result = run_parametric_optimization(
+            small_problem["basis_values"], small_problem["obs_counts"],
+            small_problem["valid_mask"], small_problem["n_rows"],
+            small_problem["n_cols"], cell_area=1.0,
+            init_params=small_problem["init_params"],
+            lower_bounds=small_problem["lower_bounds"],
+            upper_bounds=small_problem["upper_bounds"],
+            radius=3, block_size=2, parameterization="resistance",
+            method=method, lr=0.05, n_epochs=50, patience=50,
+            verbose=False,
+        )
+
+        # alpha/gamma start at 0.0/1.0, well outside the tight resistance
+        # box; if they were accidentally included in the clip they would be
+        # pinned there instead of moving with the fit.
+        assert result["alpha"] != pytest.approx(0.0, abs=1e-9) or \
+            result["gamma"] != pytest.approx(1.0, abs=1e-9)
+
+    def test_no_bounds_remains_unconstrained(self, small_problem):
+        """lower_bounds/upper_bounds=None (the default) must not change
+        behavior for existing callers that don't pass bounds."""
+        result = run_parametric_optimization(
+            small_problem["basis_values"], small_problem["obs_counts"],
+            small_problem["valid_mask"], small_problem["n_rows"],
+            small_problem["n_cols"], cell_area=1.0,
+            init_params=small_problem["init_params"],
+            radius=3, block_size=2, parameterization="resistance",
+            method="lbfgs", n_epochs=50, verbose=False,
+        )
+        assert np.isfinite(result["best_params"]).all()

@@ -261,7 +261,10 @@ ds_jax_connectivity <- function(resistance,
 #'   basis coefficients).  If `NULL`, defaults to zeros.
 #' @param ... Additional arguments forwarded to the Python function
 #'   (e.g. `method`, `lr`, `n_epochs`, `patience`, `parameterization`,
-#'   `link_fn`, `radius`, `block_size`, `seed`, `verbose`).
+#'   `link_fn`, `radius`, `block_size`, `seed`, `verbose`,
+#'   `lower_bounds`/`upper_bounds` -- per-resistance-parameter box
+#'   constraints, same length as `init_params`; enforced via `LBFGSB` or
+#'   per-step clipping, not just used to pick the starting point).
 #' @return A list (converted from the Python dict) with `best_params`,
 #'   `best_loglik`, `loss_history`, `n_epochs_run`, `elapsed`, `converged`.
 #' @keywords internal
