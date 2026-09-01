@@ -186,6 +186,90 @@ class TestCumulativeCurrentCore:
         assert np.any(np.array(grad) != 0)
 
 
+class TestCachedSolverStateHonorsPermeability:
+    """Regression tests for GH #125: circuit_solve()/circuit_solve_absorption()
+    with a cached solver_state must actually solve for the permeability
+    passed to the call, not the surface used to build the cache."""
+
+    def test_circuit_solve_cached_state_matches_uncached(self):
+        """A cached state built on one surface, then reused for a
+        different surface, must give the same result as solving that
+        second surface fresh (no cache) -- before the fix it silently
+        returned the FIRST surface's answer for every subsequent call."""
+        pytest.importorskip("jaxscape")
+        pytest.importorskip("amjax")
+        from diffiscape_jax.core import (
+            circuit_solve, circuit_solve_init, prepare_permeability,
+        )
+
+        n_rows, n_cols = 8, 8
+        rng = np.random.default_rng(0)
+        r1 = rng.uniform(1, 100, (n_rows, n_cols))
+        r2 = r1 * 5.0  # clearly different surface, same geometry
+
+        p1 = prepare_permeability(jnp.array(r1), "resistance")
+        p2 = prepare_permeability(jnp.array(r2), "resistance")
+
+        solver_state = circuit_solve_init(p1, n_rows, n_cols, absorption=0.01)
+
+        cd_cached, v_cached = circuit_solve(
+            p2, n_rows, n_cols, solver_state=solver_state
+        )
+        cd_fresh, v_fresh = circuit_solve(p2, n_rows, n_cols)
+        cd_stale, v_stale = circuit_solve(
+            p1, n_rows, n_cols, solver_state=solver_state
+        )
+
+        np.testing.assert_allclose(
+            np.array(cd_cached), np.array(cd_fresh), rtol=1e-3, atol=1e-6
+        )
+        np.testing.assert_allclose(
+            np.array(v_cached), np.array(v_fresh), rtol=1e-3, atol=1e-6
+        )
+        # And it must differ from the surface used to build the cache --
+        # this is exactly the bug: pre-fix, cd_cached == cd_stale always.
+        assert not np.allclose(np.array(cd_cached), np.array(cd_stale))
+
+    def test_circuit_solve_absorption_cached_state_matches_uncached(self):
+        """Same regression as above, for the uniform-absorption solve."""
+        pytest.importorskip("jaxscape")
+        pytest.importorskip("amjax")
+        from diffiscape_jax.core import (
+            circuit_solve_absorption, circuit_solve_absorption_init,
+            prepare_permeability,
+        )
+
+        n_rows, n_cols = 8, 8
+        rng = np.random.default_rng(1)
+        r1 = rng.uniform(1, 100, (n_rows, n_cols))
+        r2 = r1 * 5.0
+
+        p1 = prepare_permeability(jnp.array(r1), "resistance")
+        p2 = prepare_permeability(jnp.array(r2), "resistance")
+
+        solver_state = circuit_solve_absorption_init(
+            p1, n_rows, n_cols, absorption=0.01
+        )
+
+        cd_cached, v_cached = circuit_solve_absorption(
+            p2, n_rows, n_cols, solver_state=solver_state
+        )
+        cd_fresh, v_fresh = circuit_solve_absorption(p2, n_rows, n_cols)
+        cd_stale, _ = circuit_solve_absorption(
+            p1, n_rows, n_cols, solver_state=solver_state
+        )
+
+        # Both solves use the same iterative CG rtol/atol (1e-6), so allow a
+        # small numerical slack on top of that for the comparison.
+        np.testing.assert_allclose(
+            np.array(cd_cached), np.array(cd_fresh), rtol=1e-3, atol=1e-6
+        )
+        np.testing.assert_allclose(
+            np.array(v_cached), np.array(v_fresh), rtol=1e-3, atol=1e-6
+        )
+        assert not np.allclose(np.array(cd_cached), np.array(cd_stale))
+
+
 class TestConnectivityObjectiveMatchesForwardPath:
     """Regression tests for GH #105: the gradient objective's connectivity
     definition, sign convention, and radius/block_size handling must match

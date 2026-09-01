@@ -154,6 +154,20 @@ def _boundary_mask(n_rows, n_cols):
     return mask
 
 
+def _grounded_laplacian(permeability, n_rows, n_cols, absorption, boundary):
+    """Build the boundary-grounded Laplacian (and adjacency) for *permeability*."""
+    grid = GridGraph(grid=permeability, fun=_mean_weight)
+    A = grid.get_adjacency_matrix()
+    L = graph_laplacian(A)
+
+    boundary_idx = jnp.where(boundary)[0].astype(L.indices.dtype)
+    abs_indices = jnp.stack([boundary_idx, boundary_idx], axis=-1)
+    abs_data = jnp.full(boundary_idx.shape, absorption, dtype=L.data.dtype)
+    absorption_diag = BCOO((abs_data, abs_indices), shape=L.shape)
+    L_grounded = L + absorption_diag
+    return A, L_grounded
+
+
 def circuit_solve_init(permeability, n_rows, n_cols, absorption=0.01):
     """Build AMJax-preconditioned solver state for boundary absorption.
 
@@ -161,34 +175,35 @@ def circuit_solve_init(permeability, n_rows, n_cols, absorption=0.01):
     Call once per grid geometry, then pass the returned state to
     :func:`circuit_solve` for each permeability update.
 
+    Only the AMJax multigrid *preconditioner* built here is reused across
+    calls -- it depends on the sparsity structure (grid geometry), not the
+    permeability values. :func:`circuit_solve` rebuilds the Laplacian/operator
+    from whatever permeability it is given and materializes a fresh
+    operator-specific CG state against the reused preconditioner, so the
+    cached state can legitimately be reused across a sequence of different
+    permeability surfaces on the same geometry.
+
     Returns
     -------
-    dict with keys 'operator', 'solver', 'state', 'A', 'boundary', 'interior'
+    dict with keys 'solver', 'state', 'boundary', 'interior', 'n', 'n_rows',
+    'n_cols', 'absorption'
     """
-    grid = GridGraph(grid=permeability, fun=_mean_weight)
-    A = grid.get_adjacency_matrix()
-    L = graph_laplacian(A)
-
     boundary = _boundary_mask(n_rows, n_cols)
-
-    boundary_idx = jnp.where(boundary)[0].astype(L.indices.dtype)
-    abs_indices = jnp.stack([boundary_idx, boundary_idx], axis=-1)
-    abs_data = jnp.full(boundary_idx.shape, absorption, dtype=L.data.dtype)
-    absorption_diag = BCOO((abs_data, abs_indices), shape=L.shape)
-    L_grounded = L + absorption_diag
+    A, L_grounded = _grounded_laplacian(permeability, n_rows, n_cols, absorption, boundary)
 
     solver = AMJaxCGSolver(rtol=1e-6, atol=1e-6)
     operator = BCOOLinearOperator(L_grounded)
-    state = solver.init(operator, {})
+    state = solver.init_preconditioner(operator, {})
 
     return {
-        "operator": operator,
         "solver": solver,
         "state": state,
-        "A": A,
         "boundary": boundary,
         "interior": ~boundary,
         "n": n_rows * n_cols,
+        "n_rows": n_rows,
+        "n_cols": n_cols,
+        "absorption": absorption,
     }
 
 
@@ -199,31 +214,30 @@ def circuit_solve_absorption_init(permeability, n_rows, n_cols, absorption=0.01)
     Call once per grid geometry, then pass the returned state to
     :func:`circuit_solve_absorption` for each permeability update.
 
+    As with :func:`circuit_solve_init`, only the AMJax preconditioner is
+    cached here; :func:`circuit_solve_absorption` rebuilds the Laplacian from
+    whatever permeability it receives and materializes a fresh CG state
+    against the reused preconditioner.
+
     Returns
     -------
-    dict with keys 'operator', 'solver', 'state', 'A', 'n'
+    dict with keys 'solver', 'state', 'n', 'n_rows', 'n_cols', 'absorption'
     """
-    grid = GridGraph(grid=permeability, fun=_mean_weight)
-    A = grid.get_adjacency_matrix()
-    L = graph_laplacian(A)
-
     n = n_rows * n_cols
-    idx = jnp.arange(n, dtype=L.indices.dtype)
-    abs_indices = jnp.stack([idx, idx], axis=-1)
-    abs_data = jnp.full(n, absorption, dtype=L.data.dtype)
-    absorption_diag = BCOO((abs_data, abs_indices), shape=L.shape)
-    L_abs = L + absorption_diag
+    all_nodes = jnp.ones(n, dtype=bool)
+    A, L_abs = _grounded_laplacian(permeability, n_rows, n_cols, absorption, all_nodes)
 
     solver = AMJaxCGSolver(rtol=1e-6, atol=1e-6)
     operator = BCOOLinearOperator(L_abs)
-    state = solver.init(operator, {})
+    state = solver.init_preconditioner(operator, {})
 
     return {
-        "operator": operator,
         "solver": solver,
         "state": state,
-        "A": A,
         "n": n,
+        "n_rows": n_rows,
+        "n_cols": n_cols,
+        "absorption": absorption,
     }
 
 
@@ -252,7 +266,11 @@ def circuit_solve(
         Diagonal absorption added to boundary nodes for grounding.
     solver_state : dict, optional
         Pre-computed solver state from :func:`circuit_solve_init`.  When
-        provided, skips AMG hierarchy construction (much faster).
+        provided, skips AMG hierarchy construction (much faster) but the
+        Laplacian/operator are still rebuilt from *this call's*
+        ``permeability`` -- the cached state only supplies the reusable AMJax
+        multigrid preconditioner, which depends on grid geometry, not on the
+        permeability values.
 
     Returns
     -------
@@ -266,12 +284,16 @@ def circuit_solve(
             permeability, n_rows, n_cols, absorption
         )
 
-    operator = solver_state["operator"]
     solver = solver_state["solver"]
-    state = solver_state["state"]
-    A = solver_state["A"]
+    boundary = solver_state["boundary"]
     interior = solver_state["interior"]
     n = solver_state["n"]
+
+    A, L_grounded = _grounded_laplacian(
+        permeability, n_rows, n_cols, absorption, boundary
+    )
+    operator = BCOOLinearOperator(L_grounded)
+    state = solver.materialize_state(operator, {}, solver_state["state"])
 
     b = jnp.where(interior, 1.0, 0.0)
     if source_from_resistance:
@@ -312,6 +334,9 @@ def circuit_solve_absorption(
         Diagonal absorption added uniformly to all nodes.
     solver_state : dict, optional
         Pre-computed solver state from :func:`circuit_solve_absorption_init`.
+        As with :func:`circuit_solve`, only the AMJax preconditioner is
+        reused from this state -- the Laplacian/operator are rebuilt from
+        this call's ``permeability``.
 
     Returns
     -------
@@ -323,11 +348,13 @@ def circuit_solve_absorption(
             permeability, n_rows, n_cols, absorption
         )
 
-    operator = solver_state["operator"]
     solver = solver_state["solver"]
-    state = solver_state["state"]
-    A = solver_state["A"]
     n = solver_state["n"]
+
+    all_nodes = jnp.ones(n, dtype=bool)
+    A, L_abs = _grounded_laplacian(permeability, n_rows, n_cols, absorption, all_nodes)
+    operator = BCOOLinearOperator(L_abs)
+    state = solver.materialize_state(operator, {}, solver_state["state"])
 
     b = jnp.ones(n, dtype=jnp.float64)
     if source_from_resistance:
