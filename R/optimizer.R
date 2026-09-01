@@ -410,7 +410,36 @@ optimize_resistance_gradient <- function(basis_stack,
   obs_counts_full[as.integer(names(obs_table))] <- as.integer(obs_table)
   obs_counts_valid <- obs_counts_full[valid_mask]
 
-  basis_np <- np$array(basis_values, dtype = np$float64)
+  # ResistanceConv (model_type == "conv") is a 2-D convolutional model: it
+  # needs the basis as a rank-3 (n_rows, n_cols, n_basis) raster, not the
+  # flattened (n_valid, n_basis) matrix every other model_type consumes.
+  # Sending the flattened matrix here made `nn.Conv` see a bogus spatial
+  # shape (n_valid, n_basis) instead of (H, W, C) and crash inside Flax
+  # initialisation on every call (GH #126). Invalid cells are filled with
+  # the per-layer mean of the valid cells, matching the fill used for
+  # invalid cells on the non-conv path (see loss_fn in
+  # diffiscape_jax.optimize.run_neural_optimization).
+  if (model_type == "conv") {
+    fill_vals  <- colMeans(basis_values)
+    basis_full <- matrix(
+      rep(fill_vals, each = nrow(basis_matrix)),
+      nrow = nrow(basis_matrix), ncol = n_basis
+    )
+    basis_full[valid_mask, ] <- basis_values
+    basis_grid <- array(0, dim = c(n_rows, n_cols, n_basis))
+    for (l in seq_len(n_basis)) {
+      # basis_full's rows follow terra's row-major cell order; byrow = TRUE
+      # reproduces that layout in the (n_rows, n_cols) matrix, matching the
+      # convention used elsewhere for raster <-> matrix conversion (see
+      # ds_jax_connectivity() in R/jax_bridge.R).
+      basis_grid[, , l] <- matrix(
+        basis_full[, l], nrow = n_rows, ncol = n_cols, byrow = TRUE
+      )
+    }
+    basis_np <- np$array(basis_grid, dtype = np$float64)
+  } else {
+    basis_np <- np$array(basis_values, dtype = np$float64)
+  }
   obs_np   <- np$array(as.double(obs_counts_valid), dtype = np$float64)
   vmask_np <- np$array(valid_mask, dtype = np$bool_)
 

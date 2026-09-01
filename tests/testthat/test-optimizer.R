@@ -781,6 +781,138 @@ test_that(".optimize_neural forwards config$omniscape radius/block_size to ds_ja
 })
 
 
+# ---- GH #126: model_type = "conv" needs a rank-3 (H, W, C) basis -------
+# ResistanceConv (the Flax module behind model_type = "conv") requires a
+# (n_rows, n_cols, n_basis) raster, not the flattened (n_valid, n_basis)
+# matrix .optimize_neural() sends for every other model_type. Sending the
+# flattened matrix crashed inside Flax's Conv layer on every call. These
+# tests lock in that .optimize_neural() sends a proper 3-D grid (with NA
+# cells filled by the per-layer mean) only for model_type = "conv", while
+# leaving every other model_type on the pre-existing flattened matrix.
+
+test_that(".optimize_neural sends a rank-3 (n_rows, n_cols, n_basis) basis array for model_type = 'conv'", {
+  skip_if_not_installed("reticulate")
+  skip_if(!reticulate::py_module_available("numpy"), "numpy not installed")
+  skip_on_cran()
+
+  n_rows <- 4L
+  n_cols <- 3L
+  basis_stack <- terra::rast(nrows = n_rows, ncols = n_cols, nlyrs = 2, vals = 1)
+  obs_points  <- data.frame(x = 0, y = 0)
+
+  captured_basis_np <- NULL
+
+  local_mocked_bindings(
+    ds_jax_neural_optimize = function(basis_np, obs_np, valid_mask_np,
+                                       n_rows, n_cols, cell_area,
+                                       model_type = "mlp",
+                                       model_config = list(),
+                                       optim_config = list(),
+                                       radius, block_size, ...) {
+      captured_basis_np <<- basis_np
+      list(resistance = rep(1, n_rows * n_cols), best_loglik = -1,
+           loss_history = list(-1), n_epochs_run = 1L, elapsed = 0.01,
+           model_type = model_type)
+    },
+    .package = "DiffiScape"
+  )
+
+  optimize_resistance_gradient(
+    basis_stack = basis_stack,
+    obs_points  = obs_points,
+    model_type  = "conv",
+    output_dir  = withr::local_tempdir()
+  )
+
+  shape <- reticulate::py_to_r(captured_basis_np$shape)
+  expect_equal(as.integer(shape), c(n_rows, n_cols, 2L))
+})
+
+
+test_that(".optimize_neural still sends a flattened (n_valid, n_basis) basis for model_type = 'mlp'", {
+  skip_if_not_installed("reticulate")
+  skip_if(!reticulate::py_module_available("numpy"), "numpy not installed")
+  skip_on_cran()
+
+  n_rows <- 4L
+  n_cols <- 3L
+  basis_stack <- terra::rast(nrows = n_rows, ncols = n_cols, nlyrs = 2, vals = 1)
+  obs_points  <- data.frame(x = 0, y = 0)
+
+  captured_basis_np <- NULL
+
+  local_mocked_bindings(
+    ds_jax_neural_optimize = function(basis_np, obs_np, valid_mask_np,
+                                       n_rows, n_cols, cell_area,
+                                       model_type = "mlp",
+                                       model_config = list(),
+                                       optim_config = list(),
+                                       radius, block_size, ...) {
+      captured_basis_np <<- basis_np
+      list(resistance = rep(1, n_rows * n_cols), best_loglik = -1,
+           loss_history = list(-1), n_epochs_run = 1L, elapsed = 0.01,
+           model_type = model_type)
+    },
+    .package = "DiffiScape"
+  )
+
+  optimize_resistance_gradient(
+    basis_stack = basis_stack,
+    obs_points  = obs_points,
+    model_type  = "mlp",
+    output_dir  = withr::local_tempdir()
+  )
+
+  shape <- reticulate::py_to_r(captured_basis_np$shape)
+  expect_equal(as.integer(shape), c(n_rows * n_cols, 2L))
+})
+
+
+test_that(".optimize_neural fills invalid (NA) cells with the per-layer mean in the conv grid", {
+  skip_if_not_installed("reticulate")
+  skip_if(!reticulate::py_module_available("numpy"), "numpy not installed")
+  skip_on_cran()
+
+  n_rows <- 3L
+  n_cols <- 3L
+  vals <- as.double(seq_len(n_rows * n_cols))
+  vals[5] <- NA_real_  # one invalid (NA) cell, row-major cell index 5
+  basis_stack <- terra::rast(nrows = n_rows, ncols = n_cols, nlyrs = 1, vals = vals)
+  obs_points  <- data.frame(x = 0, y = 0)
+
+  captured_basis_np <- NULL
+
+  local_mocked_bindings(
+    ds_jax_neural_optimize = function(basis_np, obs_np, valid_mask_np,
+                                       n_rows, n_cols, cell_area,
+                                       model_type = "mlp",
+                                       model_config = list(),
+                                       optim_config = list(),
+                                       radius, block_size, ...) {
+      captured_basis_np <<- basis_np
+      list(resistance = rep(1, n_rows * n_cols), best_loglik = -1,
+           loss_history = list(-1), n_epochs_run = 1L, elapsed = 0.01,
+           model_type = model_type)
+    },
+    .package = "DiffiScape"
+  )
+
+  optimize_resistance_gradient(
+    basis_stack = basis_stack,
+    obs_points  = obs_points,
+    model_type  = "conv",
+    output_dir  = withr::local_tempdir()
+  )
+
+  grid <- reticulate::py_to_r(captured_basis_np)
+  expect_false(anyNA(grid))
+  # Cell 5 (1-based, row-major) is grid position (row 2, col 2) on a 3x3
+  # raster; it should hold the mean of the 8 remaining valid values
+  # (1..9 excluding 5), i.e. 5.
+  expect_equal(grid[2, 2, 1], mean(c(1:4, 6:9)))
+})
+
+
 # ---- GH #107: neural optimizer must not hardcode convergence -----------
 # .optimize_neural() previously returned the literal `convergence = 0L`
 # regardless of what the Python training loop reported, so a run that hit
