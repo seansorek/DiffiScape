@@ -291,7 +291,13 @@ def run_neural_optimization(
           ``n_conv_layers`` (int, default 3).
         - **spline_gam**: ``n_knots`` (int, default 10).
         - **irl**: ``hidden_dim`` (int, default 32),
-          ``n_hidden_layers`` (int, default 2).
+          ``n_hidden_layers`` (int, default 2), ``beta`` (float,
+          default 1.0), ``gamma_d`` (float, default 0.9), and
+          ``n_value_iter`` (int, default 60) -- the soft value-iteration
+          temperature, discount factor, and sweep count.  A 4-neighbour
+          grid adjacency is built internally and passed to the model so
+          value iteration actually runs (see GH #127); without it these
+          three keys would be silently dead.
     optim_config : dict, optional
         Optimizer settings: ``lr`` (float, default 0.01),
         ``n_epochs`` (int, default 300), ``patience`` (int, default 30).
@@ -349,6 +355,7 @@ def run_neural_optimization(
     import jax
     import jax.numpy as jnp
     import optax
+    from jax.experimental.sparse import BCOO
 
     from .resistance import (
         ResistanceMLP,
@@ -356,7 +363,10 @@ def run_neural_optimization(
         ResistanceSpline,
         ResistanceIRL,
     )
-    from .core import prepare_permeability, ppp_loglik, cumulative_current_core
+    from .core import (
+        prepare_permeability, ppp_loglik, cumulative_current_core,
+        GridGraph, _mean_weight,
+    )
 
     rng = jax.random.PRNGKey(seed)
 
@@ -364,6 +374,48 @@ def run_neural_optimization(
     basis_jnp = jnp.array(basis_values, dtype=jnp.float64)
     obs_jnp = jnp.array(obs_counts, dtype=jnp.float64)
     mask_jnp = jnp.array(valid_mask)
+
+    # IRL's soft value iteration needs a reward defined at every grid node
+    # (not just valid cells) so it can propagate value across neighbours,
+    # plus the 4-neighbour grid adjacency describing that neighbourhood
+    # structure. Neither of these existed before GH #127: model.init /
+    # model.apply were called with the valid-cells-only basis and no
+    # adjacency at all, so ResistanceIRL's `adjacency is None` branch
+    # always fired and value iteration never ran. Invalid cells are filled
+    # with the per-covariate mean of the valid cells (same convention used
+    # for the non-conv resistance embedding below).
+    adjacency = None
+    if model_type == "irl":
+        n_cov = basis_jnp.shape[1] if basis_jnp.ndim > 1 else 1
+        basis_2d = basis_jnp.reshape(basis_jnp.shape[0], n_cov)
+        fill_val = jnp.mean(basis_2d, axis=0, keepdims=True)
+        basis_full = jnp.tile(fill_val, (n_rows * n_cols, 1))
+        basis_full = basis_full.at[mask_jnp].set(basis_2d)
+        model_input = basis_full
+        # 4-neighbour (rook contiguity) lattice adjacency -- structural
+        # only, so a uniform grid is used regardless of the (not-yet-fit)
+        # resistance surface. Row-normalised to a stochastic transition
+        # matrix (each row sums to 1) so `adjacency @ value` in
+        # ResistanceIRL's value iteration is an AVERAGE over neighbours,
+        # matching the single "move to a neighbour" transition the model's
+        # Bellman update assumes. An unnormalised 0/1 adjacency instead
+        # sums 2-4 neighbour values per step, which combined with
+        # `gamma_d` close to 1 diverges within a handful of sweeps.
+        raw_adjacency = GridGraph(
+            grid=jnp.ones((n_rows, n_cols)), fun=_mean_weight
+        ).get_adjacency_matrix()
+        degree = jnp.zeros(n_rows * n_cols).at[raw_adjacency.indices[:, 0]].add(
+            raw_adjacency.data
+        )
+        degree = jnp.where(degree > 0, degree, 1.0)
+        normalized_data = raw_adjacency.data / degree[raw_adjacency.indices[:, 0]]
+        adjacency = BCOO(
+            (normalized_data, raw_adjacency.indices), shape=raw_adjacency.shape
+        )
+    else:
+        model_input = basis_jnp
+
+    model_args = (adjacency,) if model_type == "irl" else ()
 
     # --- Build Flax model -----------------------------------------------
     if model_type == "mlp":
@@ -386,10 +438,13 @@ def run_neural_optimization(
         model = ResistanceIRL(
             hidden_dim=model_config.get("hidden_dim", 32),
             n_hidden=model_config.get("n_hidden_layers", 2),
+            beta=model_config.get("beta", 1.0),
+            gamma_d=model_config.get("gamma_d", 0.9),
+            n_value_iter=model_config.get("n_value_iter", 60),
         )
 
     # Initialise model parameters
-    flax_params = model.init(rng, basis_jnp)
+    flax_params = model.init(rng, model_input, *model_args)
 
     # Intensity parameters: alpha (intercept), gamma (connectivity coeff)
     intensity_params = {"alpha": jnp.array(0.0), "gamma": jnp.array(1.0)}
@@ -415,15 +470,20 @@ def run_neural_optimization(
     # see GH #105 for why this must match the forward path exactly rather
     # than a single-source ResistanceDistance call.
 
-    is_conv = model_type == "conv"
+    # Conv operates on a full-grid (H, W, C) input and IRL needs reward
+    # defined at every node for value iteration to propagate across
+    # neighbours (see model_input/adjacency setup above) -- both therefore
+    # output one value per grid cell already, unlike mlp/spline_gam which
+    # output one value per *valid* cell only.
+    is_full_grid = model_type in ("conv", "irl")
 
     def loss_fn(all_params):
         flax_p, int_p = all_params
-        log_r = model.apply(flax_p, basis_jnp)
+        log_r = model.apply(flax_p, model_input, *model_args)
         resistance = jnp.exp(log_r)
 
-        if is_conv:
-            # Conv model outputs all cells (H*W,) from full-grid input
+        if is_full_grid:
+            # Conv/IRL output all cells (H*W,) from full-grid input
             surface_2d = resistance.reshape((n_rows, n_cols))
         else:
             # Other models output valid cells only; embed into full grid
@@ -485,7 +545,7 @@ def run_neural_optimization(
 
     # --- Extract final resistance surface -------------------------------
     best_flax_params, best_intensity = best_params
-    final_log_r = np.array(model.apply(best_flax_params, basis_jnp))
+    final_log_r = np.array(model.apply(best_flax_params, model_input, *model_args))
     resistance = np.exp(final_log_r)
 
     return {
