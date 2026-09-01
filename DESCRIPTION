@@ -4,13 +4,14 @@ Version: 0.1.0
 Authors@R: 
     person("Sean", "Sorek", , "sssorek1@gmail.com", role = c("aut", "cre"))
 Description: Gradient-based and surrogate-based optimization of landscape
-    connectivity surfaces. Uses JAX-based differentiable circuit-theory
-    connectivity computation (via JAXScape) with automatic differentiation
-    to fit Poisson Point Process models of animal movement. Users supply
-    environmental rasters and GPS locations; DiffiScape estimates resistance
-    parameters that best explain observed spatial intensity. Supports
+    connectivity surfaces. Supports PyTorch (default) and JAX backends for
+    differentiable circuit-theory connectivity computation, with automatic
+    differentiation to fit Poisson Point Process models of animal movement.
+    Users supply environmental rasters and GPS locations; DiffiScape estimates
+    resistance parameters that best explain observed spatial intensity. Supports
     negative binomial and GAM-based intensity models via 'mgcv'. Requires
-    Python with jax, jaxscape, flax, and numpyro (via 'reticulate').
+    Python via 'reticulate'; PyTorch is required for the default backend, JAX
+    (via JAXScape, Flax, NumPyro) for JAX solver modes.
 License: GPL (>= 3)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
