@@ -154,6 +154,31 @@ class TestRunNutsSampling:
         assert isinstance(result["n_divergences"], int)
         assert result["n_divergences"] >= 0
 
+    def test_nuts_requests_diverging_extra_field(self, tiny_problem, monkeypatch):
+        """Regression test for GH #124: mcmc.run() must be called with
+        extra_fields=("diverging",), or numpyro never records divergences
+        and n_divergences is hardcoded 0 regardless of what actually
+        happened during sampling."""
+        from numpyro.infer import MCMC
+
+        captured = {}
+        original_run = MCMC.run
+
+        def spy_run(self, *args, **kwargs):
+            captured["extra_fields"] = kwargs.get("extra_fields")
+            return original_run(self, *args, **kwargs)
+
+        monkeypatch.setattr(MCMC, "run", spy_run)
+
+        run_nuts_sampling(
+            tiny_problem["model"], tiny_problem["init_params"],
+            tiny_problem["basis"], tiny_problem["obs"], tiny_problem["valid"],
+            tiny_problem["n_rows"], tiny_problem["n_cols"], cell_area=1.0,
+            parameterization="resistance", n_samples=5, warmup=2, seed=0,
+        )
+
+        assert captured["extra_fields"] == ("diverging",)
+
     def test_nuts_elapsed_positive(self, nuts_result):
         """Test that elapsed time is positive."""
         result = nuts_result
