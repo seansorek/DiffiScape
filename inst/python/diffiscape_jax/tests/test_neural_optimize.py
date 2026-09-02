@@ -335,11 +335,15 @@ class TestIRLUsesAdjacency:
             result_default["resistance"], result_changed["resistance"]
         )
 
-    def test_irl_resistance_covers_full_grid(self, small_problem):
+    def test_irl_resistance_computed_over_full_grid(self, small_problem):
         """IRL's reward/value must be defined over every grid node (so
         value can propagate across neighbours through the adjacency
-        matrix), so the fitted resistance surface -- like conv's -- covers
-        the full grid, not just the valid cells."""
+        matrix) -- like conv's, its model_input/model.apply operate on the
+        full grid internally, not just the valid cells. On this fixture
+        every cell is valid, so this only exercises that the full-grid
+        forward pass itself runs without error; the invalid-cells case
+        below is what actually distinguishes the internal full-grid
+        computation from the returned array's shape."""
         result = run_neural_optimization(
             small_problem["basis_values"],
             small_problem["obs_counts"],
@@ -354,3 +358,38 @@ class TestIRLUsesAdjacency:
             verbose=False,
         )
         assert result["resistance"].shape == (small_problem["n_cells"],)
+
+    def test_irl_resistance_is_masked_to_valid_cells_only(self):
+        """Regression test: model_input/model.apply cover the full grid
+        (needed internally so value iteration can propagate across
+        invalid cells too), but the returned `resistance` must be shaped
+        (n_valid_cells,) like every other model_type -- not (n_rows*n_cols,).
+        The `small_problem` fixture above has zero invalid cells, so the two
+        shapes coincide there and can't catch a regression; this uses a grid
+        with some invalid cells so the shapes actually differ.
+        """
+        n_rows, n_cols, n_basis = 6, 6, 2
+        n_cells = n_rows * n_cols
+        rng = np.random.default_rng(11)
+        valid = np.ones(n_cells, dtype=bool)
+        valid[[0, 5, 17]] = False   # a handful of NA/masked-out cells
+        n_valid = int(valid.sum())
+        assert n_valid < n_cells
+
+        # basis_values/obs_counts are valid-cells-only per the documented
+        # contract (see the R side's basis_matrix[valid_mask,] /
+        # obs_counts_full[valid_mask] in .optimize_neural) -- NOT the full
+        # (n_cells,) grid.
+        basis = rng.standard_normal((n_cells, n_basis))[valid]
+        obs = rng.poisson(3, n_cells).astype(float)[valid]
+
+        result = run_neural_optimization(
+            basis, obs, valid, n_rows, n_cols,
+            cell_area=1.0,
+            model_type="irl",
+            model_config={"hidden_dim": 8, "n_hidden_layers": 1},
+            optim_config={"lr": 0.01, "n_epochs": 2, "patience": 10},
+            seed=42,
+            verbose=False,
+        )
+        assert result["resistance"].shape == (n_valid,)
