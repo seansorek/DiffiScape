@@ -179,6 +179,39 @@ class TestRunNutsSampling:
 
         assert captured["extra_fields"] == ("diverging",)
 
+    def test_diverging_is_collected_by_numpyro_without_extra_fields(self, tiny_problem):
+        """Documents the actual mechanism behind GH #124, per review on #132:
+        NUTS/HMC's `default_fields` is `("z", "diverging")` (see numpyro's
+        `infer.hmc.HMC.default_fields`), so `mcmc.get_extra_fields()` already
+        contains "diverging" for every NUTS run whether or not `extra_fields=`
+        is passed to `mcmc.run()` -- passing `extra_fields=("diverging",)`
+        (#132's fix) is harmless but not what makes `n_divergences` real; it
+        always was. This runs the same model-building path run_nuts_sampling
+        uses, deliberately WITHOUT extra_fields=, so a future numpyro release
+        that ever stopped collecting "diverging" by default -- the actual
+        failure mode #124 described -- would fail this test instead of
+        silently falling back to run_nuts_sampling's n_divergences=0."""
+        from numpyro.infer import MCMC, NUTS
+
+        numpyro_model, flat_init, _ = _build_numpyro_model(
+            tiny_problem["model"], jnp.array(tiny_problem["basis"]),
+            jnp.array(tiny_problem["obs"]), jnp.array(tiny_problem["valid"]),
+            tiny_problem["n_rows"], tiny_problem["n_cols"], 1.0,
+            "resistance", tiny_problem["init_params"],
+        )
+        kernel = NUTS(numpyro_model)
+        mcmc = MCMC(kernel, num_warmup=2, num_samples=5, progress_bar=False)
+        with jax.disable_jit():
+            mcmc.run(jax.random.PRNGKey(0), init_params={
+                "params": flat_init,
+                "alpha": jnp.array(0.0),
+                "gamma": jnp.array(1.0),
+            })
+
+        extra = mcmc.get_extra_fields()
+        assert "diverging" in extra
+        assert np.array(extra["diverging"]).shape == (5,)
+
     def test_nuts_elapsed_positive(self, nuts_result):
         """Test that elapsed time is positive."""
         result = nuts_result
