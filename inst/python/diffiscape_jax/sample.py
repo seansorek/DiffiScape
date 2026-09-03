@@ -263,7 +263,7 @@ def run_nuts_sampling(
             "params": flat_init,
             "alpha": jnp.array(0.0),
             "gamma": jnp.array(1.0),
-        })
+        }, extra_fields=("diverging",))
     elapsed = time.time() - t0
 
     samples = mcmc.get_samples()
