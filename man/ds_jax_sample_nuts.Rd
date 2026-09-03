@@ -11,6 +11,8 @@ ds_jax_sample_nuts(
   warmup = 1000L,
   max_treedepth = 10L,
   target_accept = 0.8,
+  radius = 13L,
+  block_size = 5L,
   parameterization = "resistance",
   model_type = "mlp",
   model_config = list(),
@@ -31,6 +33,15 @@ ds_jax_sample_nuts(
 \item{max_treedepth}{Integer; NUTS maximum tree depth (default 10).}
 
 \item{target_accept}{Numeric; target acceptance probability (default 0.80).}
+
+\item{radius}{Integer; moving-window buffer radius for the connectivity
+operator (default 13). Must match the \code{radius} used on the
+forward/evaluation path (e.g. \code{ds_jax_connectivity()}) for the fitted
+\code{gamma} to be meaningful there.}
+
+\item{block_size}{Integer; moving-window core / source-block size for the
+connectivity operator (default 5). Must match the forward path's
+\code{block_size}.}
 
 \item{parameterization}{Character; \code{"resistance"} (default) or
 \code{"permeability"}.}

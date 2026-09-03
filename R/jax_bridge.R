@@ -471,6 +471,13 @@ ds_install_jax_deps <- function(method  = "auto",
 #' @param warmup Integer; warm-up / adaptation steps (default 1000).
 #' @param max_treedepth Integer; NUTS maximum tree depth (default 10).
 #' @param target_accept Numeric; target acceptance probability (default 0.80).
+#' @param radius Integer; moving-window buffer radius for the connectivity
+#'   operator (default 13). Must match the `radius` used on the
+#'   forward/evaluation path (e.g. `ds_jax_connectivity()`) for the fitted
+#'   `gamma` to be meaningful there.
+#' @param block_size Integer; moving-window core / source-block size for the
+#'   connectivity operator (default 5). Must match the forward path's
+#'   `block_size`.
 #' @param parameterization Character; `"resistance"` (default) or
 #'   `"permeability"`.
 #' @param model_type Character; Flax model architecture -- `"mlp"` (default),
@@ -501,6 +508,8 @@ ds_jax_sample_nuts <- function(basis_stack,
                                 warmup          = 1000L,
                                 max_treedepth   = 10L,
                                 target_accept   = 0.80,
+                                radius          = 13L,
+                                block_size      = 5L,
                                 parameterization = "resistance",
                                 model_type      = "mlp",
                                 model_config    = list(),
@@ -553,6 +562,8 @@ ds_jax_sample_nuts <- function(basis_stack,
     warmup           = as.integer(warmup),
     max_treedepth    = as.integer(max_treedepth),
     target_accept    = as.double(target_accept),
+    radius           = as.integer(radius),
+    block_size       = as.integer(block_size),
     seed             = as.integer(seed)
   )
 
@@ -621,6 +632,8 @@ ds_jax_sample_advi <- function(basis_stack,
                                 n_samples       = 2000L,
                                 max_iter        = 2000L,
                                 lr              = 0.01,
+                                radius          = 13L,
+                                block_size      = 5L,
                                 parameterization = "resistance",
                                 model_type      = "mlp",
                                 model_config    = list(),
@@ -670,6 +683,8 @@ ds_jax_sample_advi <- function(basis_stack,
     n_samples        = as.integer(n_samples),
     max_iter         = as.integer(max_iter),
     lr               = as.double(lr),
+    radius           = as.integer(radius),
+    block_size       = as.integer(block_size),
     seed             = as.integer(seed)
   )
 

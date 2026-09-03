@@ -4,8 +4,12 @@ Provides NUTS (via NumPyro MCMC) and ADVI (via NumPyro SVI) samplers that
 draw posterior samples for Flax neural-network resistance-surface parameters.
 Both samplers build a NumPyro model whose likelihood chains:
 
-    Flax model -> exp(log_r) -> permeability -> GridGraph ->
-    ResistanceDistance -> PPP log-likelihood
+    Flax model -> exp(log_r) -> permeability ->
+    cumulative_current_core (moving-window) -> PPP log-likelihood
+
+using the same moving-window connectivity operator as the point-estimate
+optimizer (see GH #105, #123), so the posterior is fit to the same
+quantity ``evaluate_full_model()`` / ``ds_jax_connectivity()`` evaluate.
 
 NumPyro is an optional dependency; all public functions raise ``ImportError``
 with a helpful message when it is absent.
@@ -29,13 +33,7 @@ try:
 except ImportError:
     numpyro = None
 
-from .core import prepare_permeability, _mean_weight, ppp_loglik
-
-try:
-    from jaxscape import GridGraph, ResistanceDistance
-except ImportError:
-    GridGraph = None
-    ResistanceDistance = None
+from .core import prepare_permeability, cumulative_current_core, ppp_loglik
 
 
 def _check_deps():
@@ -47,13 +45,11 @@ def _check_deps():
             "NumPyro is required for Bayesian sampling. "
             "Install with: pip install numpyro"
         )
-    if GridGraph is None or ResistanceDistance is None:
-        raise ImportError("JAXScape is required. Install with: pip install jaxscape")
 
 
 def _build_numpyro_model(flax_model, basis_jnp, obs_jnp, valid_mask,
                          n_rows, n_cols, cell_area, parameterization,
-                         init_params):
+                         init_params, radius=13, block_size=5):
     """Build a NumPyro model function from a Flax resistance model.
 
     Parameters
@@ -76,6 +72,15 @@ def _build_numpyro_model(flax_model, basis_jnp, obs_jnp, valid_mask,
         Either "resistance" or "permeability".
     init_params : pytree
         Initial Flax parameter pytree (used to determine flattened shape).
+    radius : int, optional
+        Moving-window buffer radius forwarded to :func:`cumulative_current_core`
+        -- must match the ``radius`` used on the forward/evaluation path for
+        the fitted ``gamma`` to be meaningful there (default 13, matching
+        ``optimize_resistance_gradient``'s default).
+    block_size : int, optional
+        Moving-window core / source-block size forwarded to
+        :func:`cumulative_current_core` (default 5, matching
+        ``optimize_resistance_gradient``'s default).
 
     Returns
     -------
@@ -107,12 +112,14 @@ def _build_numpyro_model(flax_model, basis_jnp, obs_jnp, valid_mask,
         full_surface = full_surface.at[valid_mask].set(resistance)
         surface_2d = full_surface.reshape((n_rows, n_cols))
 
-        # Permeability conversion and circuit solve
+        # Permeability conversion and moving-window cumulative-current solve
+        # (same operator as the point-estimate optimizer, see GH #105/#123 --
+        # a single-source ResistanceDistance here would fit a different,
+        # roughly inversely-related quantity than evaluate_full_model()).
         perm = prepare_permeability(surface_2d, parameterization)
-        grid = GridGraph(grid=perm, fun=_mean_weight)
-        dist_solver = ResistanceDistance()
-        source = grid.coord_to_index(jnp.array([0]), jnp.array([0]))
-        connectivity = dist_solver(grid, source)
+        connectivity = cumulative_current_core(
+            perm, n_rows, n_cols, radius, block_size
+        )
 
         # PPP log-likelihood on valid cells with learnable alpha/gamma
         conn_valid = connectivity.ravel()[valid_mask]
@@ -175,6 +182,8 @@ def run_nuts_sampling(
     warmup=1000,
     max_treedepth=10,
     target_accept=0.80,
+    radius=13,
+    block_size=5,
     seed=42,
 ):
     """Run NUTS (No-U-Turn Sampler) via NumPyro MCMC.
@@ -212,6 +221,13 @@ def run_nuts_sampling(
         Maximum tree depth for NUTS (default: 10).
     target_accept : float, optional
         Target acceptance probability (default: 0.80).
+    radius : int, optional
+        Moving-window buffer radius forwarded to the connectivity operator --
+        must match the ``radius`` used on the forward/evaluation path
+        (default 13, matching ``optimize_resistance_gradient``).
+    block_size : int, optional
+        Moving-window core / source-block size forwarded to the connectivity
+        operator (default 5, matching ``optimize_resistance_gradient``).
     seed : int, optional
         Random seed (default: 42).
 
@@ -239,6 +255,7 @@ def run_nuts_sampling(
     numpyro_model, flat_init, unflatten = _build_numpyro_model(
         flax_model, basis_jnp, obs_jnp, mask_jnp,
         n_rows, n_cols, cell_area, parameterization, init_params,
+        radius=radius, block_size=block_size,
     )
 
     kernel = NUTS(
@@ -255,9 +272,10 @@ def run_nuts_sampling(
 
     rng = jax.random.PRNGKey(seed)
     t0 = time.time()
-    # GridGraph/ResistanceDistance use Python-level control flow incompatible
-    # with jax.lax.cond branch-type checks inside NUTS; disable JIT so they
-    # run eagerly.
+    # cumulative_current_core's windowed solve uses Python-level control flow
+    # incompatible with jax.lax.cond branch-type checks inside NUTS; disable
+    # JIT so it runs eagerly (mirrors optimize.py's jit=False for the same
+    # operator).
     with jax.disable_jit():
         mcmc.run(rng, init_params={
             "params": flat_init,
@@ -297,6 +315,8 @@ def run_advi_sampling(
     n_samples=2000,
     max_iter=2000,
     lr=0.01,
+    radius=13,
+    block_size=5,
     seed=42,
 ):
     """Run Automatic Differentiation Variational Inference (ADVI) via NumPyro.
@@ -331,6 +351,13 @@ def run_advi_sampling(
         Maximum number of SVI iterations (default: 2000).
     lr : float, optional
         Adam learning rate (default: 0.01).
+    radius : int, optional
+        Moving-window buffer radius forwarded to the connectivity operator --
+        must match the ``radius`` used on the forward/evaluation path
+        (default 13, matching ``optimize_resistance_gradient``).
+    block_size : int, optional
+        Moving-window core / source-block size forwarded to the connectivity
+        operator (default 5, matching ``optimize_resistance_gradient``).
     seed : int, optional
         Random seed (default: 42).
 
@@ -359,6 +386,7 @@ def run_advi_sampling(
     numpyro_model, flat_init, unflatten = _build_numpyro_model(
         flax_model, basis_jnp, obs_jnp, mask_jnp,
         n_rows, n_cols, cell_area, parameterization, init_params,
+        radius=radius, block_size=block_size,
     )
 
     guide = AutoLowRankMultivariateNormal(numpyro_model)

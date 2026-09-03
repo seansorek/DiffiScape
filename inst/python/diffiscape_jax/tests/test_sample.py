@@ -9,6 +9,8 @@ pytest.importorskip("flax")
 pytest.importorskip("numpyro")
 pytest.importorskip("jaxscape")
 
+import numpyro
+
 from diffiscape_jax.sample import (
     _build_numpyro_model,
     _summarize_samples,
@@ -40,7 +42,8 @@ def nuts_result(tiny_problem):
         tiny_problem["model"], tiny_problem["init_params"],
         tiny_problem["basis"], tiny_problem["obs"], tiny_problem["valid"],
         tiny_problem["n_rows"], tiny_problem["n_cols"], cell_area=1.0,
-        parameterization="resistance", n_samples=10, warmup=5, seed=42,
+        parameterization="resistance", n_samples=10, warmup=5,
+        radius=3, block_size=2, seed=42,
     )
 
 
@@ -50,7 +53,8 @@ def advi_result(tiny_problem):
         tiny_problem["model"], tiny_problem["init_params"],
         tiny_problem["basis"], tiny_problem["obs"], tiny_problem["valid"],
         tiny_problem["n_rows"], tiny_problem["n_cols"], cell_area=1.0,
-        parameterization="resistance", n_samples=10, max_iter=20, seed=42,
+        parameterization="resistance", n_samples=10, max_iter=20,
+        radius=3, block_size=2, seed=42,
     )
 
 
@@ -69,6 +73,7 @@ class TestBuildNumpyroModel:
             cell_area=1.0,
             parameterization="resistance",
             init_params=tiny_problem["init_params"],
+            radius=3, block_size=2,
         )
         assert len(result) == 3
         model_fn, flat_init, unflatten_fn = result
@@ -88,6 +93,7 @@ class TestBuildNumpyroModel:
             cell_area=1.0,
             parameterization="resistance",
             init_params=tiny_problem["init_params"],
+            radius=3, block_size=2,
         )
         rebuilt = unflatten_fn(flat_init)
         orig_leaves = jax.tree.leaves(tiny_problem["init_params"])
@@ -95,6 +101,72 @@ class TestBuildNumpyroModel:
         assert len(orig_leaves) == len(rebuilt_leaves)
         for o, r in zip(orig_leaves, rebuilt_leaves):
             np.testing.assert_array_equal(np.array(o), np.array(r))
+
+    def test_uses_moving_window_connectivity_not_corner_source(self, tiny_problem):
+        """Regression test for GH #123.
+
+        The NumPyro likelihood must use the same moving-window
+        ``cumulative_current_core`` operator as the point-estimate optimizer
+        (core.py's ``_connectivity_objective``), not a single-source
+        ``ResistanceDistance`` map rooted at grid cell (0, 0). Evaluates the
+        model's connectivity at a fixed parameter draw and checks it equals
+        ``cumulative_current_core`` computed independently on the same
+        resistance surface.
+        """
+        from diffiscape_jax.core import prepare_permeability, cumulative_current_core
+
+        model_fn, flat_init, unflatten = _build_numpyro_model(
+            tiny_problem["model"],
+            jnp.array(tiny_problem["basis"]),
+            jnp.array(tiny_problem["obs"]),
+            jnp.array(tiny_problem["valid"]),
+            tiny_problem["n_rows"],
+            tiny_problem["n_cols"],
+            cell_area=1.0,
+            parameterization="resistance",
+            init_params=tiny_problem["init_params"],
+            radius=3, block_size=2,
+        )
+
+        params_tree = unflatten(flat_init)
+        log_r = tiny_problem["model"].apply(params_tree, jnp.array(tiny_problem["basis"]))
+        resistance = jnp.exp(log_r)
+        valid_mask = jnp.array(tiny_problem["valid"])
+        n_rows, n_cols = tiny_problem["n_rows"], tiny_problem["n_cols"]
+
+        fill_val = jnp.mean(resistance)
+        full_surface = jnp.ones(n_rows * n_cols) * fill_val
+        full_surface = full_surface.at[valid_mask].set(resistance)
+        surface_2d = full_surface.reshape((n_rows, n_cols))
+        perm = prepare_permeability(surface_2d, "resistance")
+
+        expected = cumulative_current_core(perm, n_rows, n_cols, radius=3, block_size=2)
+
+        with numpyro.handlers.seed(rng_seed=0), \
+             numpyro.handlers.substitute(data={
+                 "params": flat_init,
+                 "alpha": jnp.array(0.0),
+                 "gamma": jnp.array(1.0),
+             }), \
+             numpyro.handlers.trace() as tr:
+            model_fn()
+
+        # No node is directly the connectivity surface (it feeds a
+        # `numpyro.factor`, not a `sample`/`deterministic`), so recompute it
+        # via the loglik factor's dependency on the same inputs is indirect;
+        # instead assert the model is internally consistent with the
+        # independently-computed moving-window surface by checking the
+        # factor log-likelihood matches ppp_loglik on `expected`.
+        from diffiscape_jax.core import ppp_loglik
+        conn_valid = expected.ravel()[valid_mask]
+        expected_loglik = ppp_loglik(
+            conn_valid, jnp.array(tiny_problem["obs"]), 1.0,
+            jnp.array(0.0), jnp.array(1.0),
+        )
+        actual_loglik = tr["loglik"]["fn"].log_factor
+        np.testing.assert_allclose(
+            np.array(actual_loglik), np.array(expected_loglik), rtol=1e-5,
+        )
 
 
 class TestSummarizeSamples:

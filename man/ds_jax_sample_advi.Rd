@@ -10,6 +10,8 @@ ds_jax_sample_advi(
   n_samples = 2000L,
   max_iter = 2000L,
   lr = 0.01,
+  radius = 13L,
+  block_size = 5L,
   parameterization = "resistance",
   model_type = "mlp",
   model_config = list(),
@@ -28,6 +30,15 @@ ds_jax_sample_advi(
 \item{max_iter}{Integer; maximum SVI iterations (default 2000).}
 
 \item{lr}{Numeric; Adam learning rate for the ELBO (default 0.01).}
+
+\item{radius}{Integer; moving-window buffer radius for the connectivity
+operator (default 13). Must match the \code{radius} used on the
+forward/evaluation path (e.g. \code{ds_jax_connectivity()}) for the fitted
+\code{gamma} to be meaningful there.}
+
+\item{block_size}{Integer; moving-window core / source-block size for the
+connectivity operator (default 5). Must match the forward path's
+\code{block_size}.}
 
 \item{parameterization}{Character; \code{"resistance"} (default) or
 \code{"permeability"}.}
