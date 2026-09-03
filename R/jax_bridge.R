@@ -471,13 +471,6 @@ ds_install_jax_deps <- function(method  = "auto",
 #' @param warmup Integer; warm-up / adaptation steps (default 1000).
 #' @param max_treedepth Integer; NUTS maximum tree depth (default 10).
 #' @param target_accept Numeric; target acceptance probability (default 0.80).
-#' @param radius Integer; moving-window buffer radius for the connectivity
-#'   operator (default 13). Must match the `radius` used on the
-#'   forward/evaluation path (e.g. `ds_jax_connectivity()`) for the fitted
-#'   `gamma` to be meaningful there.
-#' @param block_size Integer; moving-window core / source-block size for the
-#'   connectivity operator (default 5). Must match the forward path's
-#'   `block_size`.
 #' @param parameterization Character; `"resistance"` (default) or
 #'   `"permeability"`.
 #' @param model_type Character; Flax model architecture -- `"mlp"` (default),
@@ -488,6 +481,14 @@ ds_install_jax_deps <- function(method  = "auto",
 #' @param verbose Logical; print progress messages (default `TRUE`).
 #' @param output_dir Character; directory for saving MCMC artifacts.
 #'   Defaults to `tempdir()`.
+#' @param radius Integer; moving-window buffer radius for the connectivity
+#'   operator (default 13). Must match the `radius` used on the
+#'   forward/evaluation path (e.g. `ds_jax_connectivity()`) for the fitted
+#'   `gamma` to be meaningful there. Placed after the pre-existing arguments
+#'   so old positional calls keep their original meaning.
+#' @param block_size Integer; moving-window core / source-block size for the
+#'   connectivity operator (default 5). Must match the forward path's
+#'   `block_size`.
 #' @return A list with:
 #'   \describe{
 #'     \item{samples_effective_loglinear}{Matrix of posterior samples (or
@@ -508,14 +509,14 @@ ds_jax_sample_nuts <- function(basis_stack,
                                 warmup          = 1000L,
                                 max_treedepth   = 10L,
                                 target_accept   = 0.80,
-                                radius          = 13L,
-                                block_size      = 5L,
                                 parameterization = "resistance",
                                 model_type      = "mlp",
                                 model_config    = list(),
                                 seed            = 42L,
                                 verbose         = TRUE,
-                                output_dir      = NULL) {
+                                output_dir      = NULL,
+                                radius          = 13L,
+                                block_size      = 5L) {
 
   if (!ds_jax_check()) ds_jax_setup()
 
@@ -632,14 +633,14 @@ ds_jax_sample_advi <- function(basis_stack,
                                 n_samples       = 2000L,
                                 max_iter        = 2000L,
                                 lr              = 0.01,
-                                radius          = 13L,
-                                block_size      = 5L,
                                 parameterization = "resistance",
                                 model_type      = "mlp",
                                 model_config    = list(),
                                 seed            = 42L,
                                 verbose         = TRUE,
-                                output_dir      = NULL) {
+                                output_dir      = NULL,
+                                radius          = 13L,
+                                block_size      = 5L) {
 
   if (!ds_jax_check()) ds_jax_setup()
 

@@ -182,9 +182,9 @@ def run_nuts_sampling(
     warmup=1000,
     max_treedepth=10,
     target_accept=0.80,
+    seed=42,
     radius=13,
     block_size=5,
-    seed=42,
 ):
     """Run NUTS (No-U-Turn Sampler) via NumPyro MCMC.
 
@@ -221,15 +221,17 @@ def run_nuts_sampling(
         Maximum tree depth for NUTS (default: 10).
     target_accept : float, optional
         Target acceptance probability (default: 0.80).
+    seed : int, optional
+        Random seed (default: 42).
     radius : int, optional
         Moving-window buffer radius forwarded to the connectivity operator --
         must match the ``radius`` used on the forward/evaluation path
-        (default 13, matching ``optimize_resistance_gradient``).
+        (default 13, matching ``optimize_resistance_gradient``). Placed after
+        the pre-existing arguments so old positional calls keep their
+        original meaning.
     block_size : int, optional
         Moving-window core / source-block size forwarded to the connectivity
         operator (default 5, matching ``optimize_resistance_gradient``).
-    seed : int, optional
-        Random seed (default: 42).
 
     Returns
     -------
@@ -315,9 +317,9 @@ def run_advi_sampling(
     n_samples=2000,
     max_iter=2000,
     lr=0.01,
+    seed=42,
     radius=13,
     block_size=5,
-    seed=42,
 ):
     """Run Automatic Differentiation Variational Inference (ADVI) via NumPyro.
 
@@ -351,15 +353,17 @@ def run_advi_sampling(
         Maximum number of SVI iterations (default: 2000).
     lr : float, optional
         Adam learning rate (default: 0.01).
+    seed : int, optional
+        Random seed (default: 42).
     radius : int, optional
         Moving-window buffer radius forwarded to the connectivity operator --
         must match the ``radius`` used on the forward/evaluation path
-        (default 13, matching ``optimize_resistance_gradient``).
+        (default 13, matching ``optimize_resistance_gradient``). Placed after
+        the pre-existing arguments so old positional calls keep their
+        original meaning.
     block_size : int, optional
         Moving-window core / source-block size forwarded to the connectivity
         operator (default 5, matching ``optimize_resistance_gradient``).
-    seed : int, optional
-        Random seed (default: 42).
 
     Returns
     -------
