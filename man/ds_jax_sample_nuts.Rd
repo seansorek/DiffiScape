@@ -16,7 +16,9 @@ ds_jax_sample_nuts(
   model_config = list(),
   seed = 42L,
   verbose = TRUE,
-  output_dir = NULL
+  output_dir = NULL,
+  radius = 13L,
+  block_size = 5L
 )
 }
 \arguments{
@@ -47,6 +49,16 @@ Flax module constructor (e.g., \code{list(hidden_dim = 32L)}).}
 
 \item{output_dir}{Character; directory for saving MCMC artifacts.
 Defaults to \code{tempdir()}.}
+
+\item{radius}{Integer; moving-window buffer radius for the connectivity
+operator (default 13). Must match the \code{radius} used on the
+forward/evaluation path (e.g. \code{ds_jax_connectivity()}) for the fitted
+\code{gamma} to be meaningful there. Placed after the pre-existing arguments
+so old positional calls keep their original meaning.}
+
+\item{block_size}{Integer; moving-window core / source-block size for the
+connectivity operator (default 5). Must match the forward path's
+\code{block_size}.}
 }
 \value{
 A list with:
