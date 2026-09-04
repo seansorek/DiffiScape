@@ -548,6 +548,17 @@ def run_neural_optimization(
     final_log_r = np.array(model.apply(best_flax_params, model_input, *model_args))
     resistance = np.exp(final_log_r)
 
+    if model_type == "irl":
+        # model_input/model.apply cover the full grid (GH #127 -- value
+        # iteration needs reward defined at every node to propagate across
+        # neighbours), but the documented return contract is
+        # (n_valid_cells,), matching every other model_type and the R side's
+        # `R_full[valid_mask] <- resistance`-style embedding (see
+        # R/torch_pipeline.R). The full-grid array was only needed
+        # internally, for the loss computation above -- mask it down to
+        # valid cells before returning.
+        resistance = resistance[np.asarray(valid_mask)]
+
     return {
         "resistance": resistance,
         "alpha": float(best_intensity["alpha"]),
