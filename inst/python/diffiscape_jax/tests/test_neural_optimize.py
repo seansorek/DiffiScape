@@ -393,3 +393,64 @@ class TestIRLUsesAdjacency:
             verbose=False,
         )
         assert result["resistance"].shape == (n_valid,)
+
+    def test_irl_masked_cells_use_barrier_fill_in_loss(self, monkeypatch):
+        """Regression test for the is_full_grid follow-up to GH #134: conv/irl
+        output a value for every grid cell (see test above), but those
+        outputs at invalid/masked cells must be overwritten with the barrier
+        fill before the forward connectivity solve during fitting -- not
+        left as the model's own untrained-for output, and not silently
+        dropped by the `is_full_grid` branch the way #135 found. Spies on
+        `prepare_permeability` (the function the loss closure calls right
+        after building `surface_2d`) to inspect what actually reaches the
+        forward solve.
+        """
+        import diffiscape_jax.core as core_module
+        from diffiscape_jax.core import invalid_cell_fill_value
+
+        n_rows, n_cols, n_basis = 6, 6, 2
+        n_cells = n_rows * n_cols
+        rng = np.random.default_rng(11)
+        valid = np.ones(n_cells, dtype=bool)
+        valid[[0, 5, 17]] = False
+        basis = rng.standard_normal((n_cells, n_basis))[valid]
+        obs = rng.poisson(3, n_cells).astype(float)[valid]
+
+        # run_neural_optimization does `from .core import prepare_permeability`
+        # inside its body, so patching the name on the core module (rather
+        # than on `optimize`, which never binds it at module scope) is what
+        # the local import picks up on the next call.
+        captured = {}
+        real_prepare_permeability = core_module.prepare_permeability
+
+        def _capture(arr):
+            # Only keep the first call -- loss_fn runs once per epoch, and
+            # every epoch's masked cells should equal the fill value.
+            captured.setdefault("surface_2d", np.asarray(arr))
+
+        def spy_prepare_permeability(surface_2d, parameterization):
+            # loss_fn runs under jax.value_and_grad, so surface_2d is a
+            # tracer here -- np.asarray() on it raises. jax.debug.callback
+            # defers the numpy conversion to when concrete values are
+            # actually available, without disturbing the autodiff trace.
+            jax.debug.callback(_capture, surface_2d)
+            return real_prepare_permeability(surface_2d, parameterization)
+
+        monkeypatch.setattr(
+            core_module, "prepare_permeability", spy_prepare_permeability
+        )
+
+        run_neural_optimization(
+            basis, obs, valid, n_rows, n_cols,
+            cell_area=1.0,
+            model_type="irl",
+            model_config={"hidden_dim": 8, "n_hidden_layers": 1},
+            optim_config={"lr": 0.01, "n_epochs": 2, "patience": 10},
+            seed=42,
+            verbose=False,
+        )
+
+        assert "surface_2d" in captured
+        masked_values = captured["surface_2d"].reshape(-1)[~valid]
+        expected_fill = invalid_cell_fill_value("resistance")
+        assert np.allclose(masked_values, expected_fill)

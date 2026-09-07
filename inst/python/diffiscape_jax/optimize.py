@@ -484,8 +484,13 @@ def run_neural_optimization(
         resistance = jnp.exp(log_r)
 
         if is_full_grid:
-            # Conv/IRL output all cells (H*W,) from full-grid input
-            surface_2d = resistance.reshape((n_rows, n_cols))
+            # Conv/IRL output all cells (H*W,) from full-grid input.
+            # Invalid cells get the barrier fill (GH #134), matching the
+            # forward path's no-data convention -- not the model's learned
+            # resistance for those cells.
+            fill_val = invalid_cell_fill_value(parameterization)
+            full_surface = jnp.where(mask_jnp, resistance, fill_val)
+            surface_2d = full_surface.reshape((n_rows, n_cols))
         else:
             # Other models output valid cells only; embed into full grid.
             # Invalid cells get the barrier fill (GH #134), matching the
