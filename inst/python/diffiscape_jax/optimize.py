@@ -365,6 +365,7 @@ def run_neural_optimization(
     )
     from .core import (
         prepare_permeability, ppp_loglik, cumulative_current_core,
+        invalid_cell_fill_value,
         GridGraph, _mean_weight,
     )
 
@@ -486,8 +487,10 @@ def run_neural_optimization(
             # Conv/IRL output all cells (H*W,) from full-grid input
             surface_2d = resistance.reshape((n_rows, n_cols))
         else:
-            # Other models output valid cells only; embed into full grid
-            fill_val = jnp.mean(resistance)
+            # Other models output valid cells only; embed into full grid.
+            # Invalid cells get the barrier fill (GH #134), matching the
+            # forward path's no-data convention -- not the mean.
+            fill_val = invalid_cell_fill_value(parameterization)
             full_surface = jnp.ones(n_rows * n_cols) * fill_val
             full_surface = full_surface.at[mask_jnp].set(resistance)
             surface_2d = full_surface.reshape((n_rows, n_cols))
