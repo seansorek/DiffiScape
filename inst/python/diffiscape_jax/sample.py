@@ -33,7 +33,10 @@ try:
 except ImportError:
     numpyro = None
 
-from .core import prepare_permeability, cumulative_current_core, ppp_loglik
+from .core import (
+    prepare_permeability, cumulative_current_core, ppp_loglik,
+    invalid_cell_fill_value,
+)
 
 
 def _check_deps():
@@ -106,8 +109,10 @@ def _build_numpyro_model(flax_model, basis_jnp, obs_jnp, valid_mask,
         log_r = flax_model.apply(params_tree, basis_jnp)
         resistance = jnp.exp(log_r)
 
-        # Embed valid-cell resistance into the full grid
-        fill_val = jnp.mean(resistance)
+        # Embed valid-cell resistance into the full grid. Invalid cells get
+        # the barrier fill (GH #134), matching the forward path's no-data
+        # convention -- not the mean of the valid cells.
+        fill_val = invalid_cell_fill_value(parameterization)
         full_surface = jnp.ones(n_rows * n_cols) * fill_val
         full_surface = full_surface.at[valid_mask].set(resistance)
         surface_2d = full_surface.reshape((n_rows, n_cols))

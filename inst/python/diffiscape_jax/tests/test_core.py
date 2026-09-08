@@ -385,3 +385,67 @@ class TestConnectivityObjectiveMatchesForwardPath:
         assert forward_direction != 0
 
 
+class TestInvalidCellFillValue:
+    """GH #134: fitting paths must fill masked cells with the barrier value,
+    matching the forward path's no-data convention, not the mean of the
+    valid cells."""
+
+    def test_resistance_mode_uses_r_max(self):
+        from diffiscape_jax.core import invalid_cell_fill_value, DEFAULT_R_MAX
+
+        assert invalid_cell_fill_value("resistance") == DEFAULT_R_MAX
+
+    def test_permeability_mode_uses_p_min(self):
+        from diffiscape_jax.core import invalid_cell_fill_value, DEFAULT_P_MIN
+
+        assert invalid_cell_fill_value("permeability") == DEFAULT_P_MIN
+
+    def test_fitting_path_fill_matches_forward_path_barrier(self):
+        """Reproduces the objective's fill logic (resistance_flat embedded
+        into the full grid via invalid_cell_fill_value) and checks the
+        resulting connectivity is identical to running the forward-path
+        operator on a surface where invalid cells were manually barred at
+        r_max=5000 -- the convention R/jax_bridge.R's ds_jax_connectivity()
+        uses for no-data cells. Before the fix, the objective's fill was
+        jnp.mean(resistance_flat), which diverges from this."""
+        pytest.importorskip("jaxscape")
+        from diffiscape_jax.core import (
+            cumulative_current_core, prepare_permeability,
+            invalid_cell_fill_value,
+        )
+
+        n_rows, n_cols = 8, 8
+        n = n_rows * n_cols
+        rng = np.random.default_rng(7)
+        valid_mask = np.ones(n, dtype=bool)
+        valid_mask[[0, 5, 17, 40]] = False  # a few masked cells
+        resistance_valid = rng.uniform(1, 20, valid_mask.sum())
+
+        # Fitting-path style fill (what _connectivity_objective now does).
+        fill_val = invalid_cell_fill_value("resistance")
+        full_surface = jnp.ones(n) * fill_val
+        full_surface = full_surface.at[jnp.array(valid_mask)].set(
+            jnp.array(resistance_valid)
+        )
+        fitting_surface = full_surface.reshape((n_rows, n_cols))
+
+        # Forward-path style surface: same layout, invalid cells hardcoded
+        # to r_max=5000 the way R_mat[is.na(R_mat)] <- 1e9 (clamped to 5000
+        # downstream) does in R/jax_bridge.R.
+        forward_surface = np.full(n, 5000.0)
+        forward_surface[valid_mask] = resistance_valid
+        forward_surface = forward_surface.reshape((n_rows, n_cols))
+
+        perm_fitting = prepare_permeability(fitting_surface, "resistance")
+        perm_forward = prepare_permeability(jnp.array(forward_surface), "resistance")
+
+        conn_fitting = np.array(
+            cumulative_current_core(perm_fitting, n_rows, n_cols, 2, 2)
+        )
+        conn_forward = np.array(
+            cumulative_current_core(perm_forward, n_rows, n_cols, 2, 2)
+        )
+
+        np.testing.assert_allclose(conn_fitting, conn_forward)
+
+

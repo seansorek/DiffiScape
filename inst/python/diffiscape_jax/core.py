@@ -119,6 +119,34 @@ def prepare_permeability(
         )
 
 
+def invalid_cell_fill_value(parameterization, r_max=DEFAULT_R_MAX, p_min=DEFAULT_P_MIN):
+    """Fill value for masked/invalid cells, matching the forward path's barrier convention.
+
+    ``ds_jax_connectivity()`` (R/jax_bridge.R) treats no-data cells as a
+    barrier: maximum resistance in resistance mode, minimum permeability in
+    permeability mode. Every fitting path must embed valid-cell values into
+    the full grid using the same convention -- filling with the mean of the
+    valid cells instead (as all three fitting paths did before GH #134)
+    fits the model on a landscape where masked cells conduct at average
+    permeability, then evaluates it on one where they are impassable.
+
+    Parameters
+    ----------
+    parameterization : str
+        Either "resistance" or "permeability".
+    r_max : float, optional
+        Barrier value in resistance mode (default: 5000.0).
+    p_min : float, optional
+        Barrier value in permeability mode (default: 1/5000).
+
+    Returns
+    -------
+    float
+        The barrier fill value.
+    """
+    return r_max if parameterization == "resistance" else p_min
+
+
 def _mean_weight(x, y):
     """Compute mean edge weight from two node permeabilities.
 
@@ -617,8 +645,11 @@ def _connectivity_objective(params, basis_values, valid_mask, n_rows, n_cols,
 
     resistance_flat = _apply_link(resistance_params, basis_values, link_fn)
 
-    # Build the full resistance surface from valid cells
-    full_surface = jnp.ones(n_rows * n_cols) * jnp.mean(resistance_flat)
+    # Build the full resistance surface from valid cells. Invalid cells are
+    # filled with the barrier value (matching the forward path's no-data
+    # convention, see GH #134), not the mean of the valid cells.
+    fill_val = invalid_cell_fill_value(parameterization)
+    full_surface = jnp.ones(n_rows * n_cols) * fill_val
     full_surface = full_surface.at[valid_mask].set(resistance_flat)
     surface_2d = full_surface.reshape((n_rows, n_cols))
 
