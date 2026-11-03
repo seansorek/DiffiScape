@@ -2,13 +2,13 @@
 % Please edit documentation in R/optimizer.R
 \name{predict_surrogate}
 \alias{predict_surrogate}
-\title{Predict from a surrogate model}
+\title{Predict from a GP surrogate model}
 \usage{
 predict_surrogate(surrogate, newdata)
 }
 \arguments{
-\item{surrogate}{A \code{"ds_surrogate"} object from \code{\link[=fit_surrogate]{fit_surrogate()}}, or a
-raw \code{km} object.}
+\item{surrogate}{A \code{"ds_surrogate"} object from \code{\link[=fit_surrogate]{fit_surrogate()}}, or a raw
+\code{\link[DiceKriging:km]{DiceKriging::km()}} object.}
 
 \item{newdata}{Numeric matrix or data.frame of query points.}
 }
@@ -16,13 +16,5 @@ raw \code{km} object.}
 A list with \code{mean} and \code{sd}, one value per row of \code{newdata}.
 }
 \description{
-Uniform prediction interface across surrogate backends, returning a mean
-and predictive standard deviation regardless of whether the surrogate is
-a GP (\code{\link[DiceKriging:km]{DiceKriging::km()}}) or a Random Forest (\code{\link[ranger:ranger]{ranger::ranger()}}).
-}
-\details{
-For backward compatibility, \code{surrogate} may also be a raw
-\code{\link[DiceKriging:km]{DiceKriging::km()}} object (as returned by the legacy internal
-\code{.fit_surrogate()} helper) in addition to a \code{"ds_surrogate"} object from
-\code{\link[=fit_surrogate]{fit_surrogate()}}.
+Predict from a GP surrogate model
 }

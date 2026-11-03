@@ -9,7 +9,7 @@ actual code:
   - torch_pipeline/constants.py            numerical defaults, GPU flags
   - torch_pipeline/_module_loaders.py       lazy imports of 03_/04_ scripts
   - torch_pipeline/autograd_functions.py    differentiable circuit solves
-  - torch_pipeline/resistance_nets.py       MLP / Conv / IRL / Spline-GAM nets
+  - torch_pipeline/resistance_nets.py       MLP / Conv / Spline-GAM nets
   - torch_pipeline/verify_gradients.py      finite-difference gradient checks
   - torch_pipeline/optimization.py          run_torch_optimization (MAP/Adam)
   - torch_pipeline/samplers/                Langevin (MALA/ULA), HMC/NUTS, ADVI
@@ -68,7 +68,7 @@ from scipy.sparse.linalg import spsolve
 # importlib machinery without a real parent package) and by the test suite
 # (importlib.util.spec_from_file_location, registering the loaded module
 # under the name "torch_pipeline" in sys.modules — see inst/python/tests/
-# test_torch_pipeline.py / test_irl_resistance.py). Neither gives this file a
+# test_torch_pipeline.py). Neither gives this file a
 # package context, AND the test loaders' choice of module name collides with
 # the subpackage directory's own name, so:
 #   - "from .torch_pipeline import ..." fails ("no known parent package"),
@@ -150,7 +150,6 @@ LogLinearResistanceNet = _resistance_nets.LogLinearResistanceNet
 ResistanceNet = _resistance_nets.ResistanceNet
 _ConvResBlock = _resistance_nets._ConvResBlock
 ConvResistanceNet = _resistance_nets.ConvResistanceNet
-IRLResistanceNet = _resistance_nets.IRLResistanceNet
 _bspline_knots = _resistance_nets._bspline_knots
 _bspline_basis_matrix = _resistance_nets._bspline_basis_matrix
 _bspline_basis_matrix_torch = _resistance_nets._bspline_basis_matrix_torch
@@ -164,7 +163,6 @@ _ppp_loglik = _resistance_nets._ppp_loglik
 _verify_gradients = _tp_import("verify_gradients")
 verify_circuit_gradient = _verify_gradients.verify_circuit_gradient
 verify_conv_gradient = _verify_gradients.verify_conv_gradient
-verify_softrl_gradient = _verify_gradients.verify_softrl_gradient
 verify_spline_gradient = _verify_gradients.verify_spline_gradient
 
 # ---------------------------------------------------------------------------
@@ -198,11 +196,11 @@ __all__ = [
     "_compute_interp_weights", "_interpolate_block_grid",
     "_interpolate_backward_fast", "_local_adjoint_dl_dR",
     "_DiffOmniscapeSolveFn",
-    "LogLinearResistanceNet", "ResistanceNet", "_ConvResBlock", "ConvResistanceNet", "IRLResistanceNet",
+    "LogLinearResistanceNet", "ResistanceNet", "_ConvResBlock", "ConvResistanceNet",
     "_bspline_knots", "_bspline_basis_matrix", "_bspline_basis_matrix_torch",
     "_diff_penalty_matrix", "SplineResistanceNet", "_ppp_loglik",
     "verify_circuit_gradient", "verify_conv_gradient",
-    "verify_softrl_gradient", "verify_spline_gradient",
+    "verify_spline_gradient",
     "run_torch_optimization",
     "_compute_ess_chain", "_setup_sampling_state",
     "run_langevin_sampling", "run_hmc_sampling", "run_advi",

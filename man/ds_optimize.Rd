@@ -16,7 +16,7 @@ ds_optimize(
   residualise = FALSE,
   available_points = NULL,
   available_covariates = NULL,
-  solver = c("torch", "surrogate", "gradient", "enzyme", "irl"),
+  solver = c("torch", "surrogate", "gradient", "enzyme"),
   model_type = "parametric"
 )
 }
@@ -55,17 +55,13 @@ supplied and the intensity model includes covariates.}
 
 \item{solver}{Character; \code{"torch"} (PyTorch log-linear resistance by
 default), \code{"surrogate"} (GP + Thompson Sampling or Expected Improvement),
-\code{"gradient"} (L-BFGS / Adam via JAX auto-diff),
-\code{"enzyme"} (deprecated, alias for \code{"gradient"}), or \code{"irl"}
-(PyTorch value-shaped resistance: a reward network is turned into a
-resistance surface via soft value iteration, then run through the same
-differentiable circuit solver -- a convenience alias for \code{solver = "torch"}
-with \code{model_type = "irl"}).}
+\code{"gradient"} (L-BFGS / Adam via JAX
+auto-diff), \code{"enzyme"} (deprecated, alias for \code{"gradient"}),}
 
-\item{model_type}{Character; \code{"parametric"} (default), \code{"mlp"},
-\code{"conv"}, \code{"spline_gam"}, or \code{"irl"}.  When not \code{"parametric"},
-the gradient solver dispatches to the Flax neural-network
-optimizer instead of the parametric L-BFGS/Adam path.}
+\item{model_type}{Resistance model. For Torch: \code{"loglinear"}, \code{"mlp"},
+\code{"conv"}, or \code{"spline_gam"}; the default \code{"parametric"} leaves the nested
+Torch config's model choice unchanged. For the gradient solver:
+\code{"parametric"}, \code{"mlp"}, \code{"conv"}, \code{"spline_gam"}, or \code{"irl"}.}
 }
 \value{
 Result from \code{\link[=optimize_resistance]{optimize_resistance()}},
@@ -78,6 +74,15 @@ or Flax neural-network resistance when \code{model_type} is set), or
 \code{\link[=run_torch_pipeline]{run_torch_pipeline()}} (PyTorch neural-network resistance), depending
 on \code{solver}.
 }
+\section{Supported Torch inputs}{
+
+Torch fits a Poisson PPP jointly with resistance. Explicit non-Poisson
+families, custom resistance links, bounds, covariates, and residualisation
+are rejected. Use the surrogate solver for these modeling choices.
+The legacy outer config's default \code{distribution = "negbin"} does not change
+Torch's Poisson likelihood; select other families explicitly with \code{family}.
+}
+
 \section{Config conventions}{
 
 The three backend families are deliberately \emph{not} unified onto a common
@@ -91,7 +96,7 @@ knows how to extract the right sublist for its solver:
 for the parametric L-BFGS/Adam path, plus optional
 \code{config$model_config} / \code{config$optim_config} sublists when
 \code{model_type} selects a neural resistance model.}
-\item{\code{solver = "torch"} / \code{"irl"}}{A \code{config$torch} sublist forwarded
+\item{\code{solver = "torch"}}{A \code{config$torch} sublist forwarded
 as named arguments to \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.}
 }
 }

@@ -34,9 +34,7 @@ test_that("default_torch_config contains all documented top-level keys", {
     "lambda_min",
     # Intensity spline
     "intensity_spline", "intensity_n_knots", "intensity_degree",
-    "lambda_init_intensity", "intensity_log1p_max",
-    # IRL (value-shaped) resistance
-    "beta", "gamma_d", "n_value_iter", "value_scale_init"
+    "lambda_init_intensity", "intensity_log1p_max"
   )
   missing_keys <- setdiff(required, names(cfg))
   expect_length(missing_keys, 0L)
@@ -91,39 +89,10 @@ test_that("default_torch_config intensity_spline default is FALSE", {
 })
 
 
-# ---- IRL (value-shaped) resistance config ----------------------------------
 
-test_that("default_torch_config IRL knobs have valid defaults", {
-  cfg <- default_torch_config()
-  expect_true(cfg$beta > 0)              # soft value-iteration temperature
-  expect_true(cfg$gamma_d > 0 && cfg$gamma_d < 1)  # contraction requires < 1
-  expect_true(cfg$n_value_iter >= 1)
-  expect_true(cfg$value_scale_init > 0)
-})
 
-test_that("ds_optimize exposes the 'irl' solver option", {
-  choices <- eval(formals(ds_optimize)$solver)
-  expect_true("irl" %in% choices)
-})
 
-test_that("run_torch_pipeline accepts IRL arguments", {
-  args <- names(formals(run_torch_pipeline))
-  expect_true(all(c("beta", "gamma_d", "n_value_iter", "value_scale_init")
-                  %in% args))
-  expect_true("model_type" %in% args)
-})
 
-test_that("irl_resistance_model errors without a resistance_raster", {
-  skip_if_not_installed("terra")
-  r <- terra::rast(nrows = 4, ncols = 4, xmin = 0, xmax = 1,
-                   ymin = 0, ymax = 1)
-  terra::values(r) <- runif(16)
-  basis <- create_basis_stack(list(a = r), rescale = FALSE)
-  expect_error(
-    irl_resistance_model(list(loglik = -1), basis),
-    "resistance_raster"
-  )
-})
 
 
 # ---- .prepare_backend_inputs (formerly .prepare_torch_inputs) ---------------
@@ -369,7 +338,7 @@ test_that("run_bayesian_sampling calls ds_torch_setup when not initialized", {
 
   # Force the "not initialized" precondition explicitly rather than assuming
   # it: torch_initialized is a session-global flag, and other real (unmocked)
-  # code — e.g. the irl.Rmd vignette, evaluated during the same R CMD check
+  # code — e.g. another Torch analysis, evaluated during the same R CMD check
   # session — may have already set it TRUE before this test runs.
   ds_env  <- get(".ds_env", envir = environment(run_bayesian_sampling))
   old_val <- ds_env$torch_initialized
@@ -598,56 +567,9 @@ test_that("run_advi does not warn when converged", {
 })
 
 
-# ---- verify_irl_gradient -----------------------------------------------------
-
-test_that("verify_irl_gradient messages on pass", {
-  skip_on_cran()
-  skip_if_not_installed("reticulate")
-  skip_if_not_installed("terra")
-  skip_if_not(reticulate::py_module_available("numpy"),
-              "numpy not available")
-
-  r <- terra::rast(nrows = 25, ncols = 25, xmin = 0, xmax = 25,
-                   ymin = 0, ymax = 25, nlyrs = 2)
-  terra::values(r) <- runif(25 * 25 * 2)
-
-  local_mocked_bindings(
-    ds_torch_setup = function(...) invisible(TRUE),
-    ds_torch_call = function(...) list(pass = TRUE, max_rel_error = 1e-5),
-    .package = "DiffiScape"
-  )
-
-  expect_message(
-    result <- verify_irl_gradient(r, crop_size = 10L),
-    "PASSED"
-  )
-  expect_true(result$pass)
-})
 
 
-test_that("verify_irl_gradient warns on failure", {
-  skip_on_cran()
-  skip_if_not_installed("reticulate")
-  skip_if_not_installed("terra")
-  skip_if_not(reticulate::py_module_available("numpy"),
-              "numpy not available")
 
-  r <- terra::rast(nrows = 25, ncols = 25, xmin = 0, xmax = 25,
-                   ymin = 0, ymax = 25, nlyrs = 2)
-  terra::values(r) <- runif(25 * 25 * 2)
-
-  local_mocked_bindings(
-    ds_torch_setup = function(...) invisible(TRUE),
-    ds_torch_call = function(...) list(pass = FALSE, max_rel_error = 0.5),
-    .package = "DiffiScape"
-  )
-
-  expect_warning(
-    result <- verify_irl_gradient(r, crop_size = 10L),
-    "FAILED"
-  )
-  expect_false(result$pass)
-})
 
 
 # ---- verify_torch_gradient ---------------------------------------------------

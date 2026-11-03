@@ -15,7 +15,7 @@ ds_fit_intensity(
   residualise = FALSE,
   available_points = NULL,
   available_covariates = NULL,
-  solver = c("surrogate", "gradient", "enzyme", "torch", "irl"),
+  solver = c("surrogate", "gradient", "enzyme", "torch"),
   link = link_exp(),
   family = NULL
 )
@@ -53,14 +53,14 @@ supplied and the intensity model includes covariates.}
 deprecation message, but no longer affects this function's internal
 connectivity-computation logic: both \code{"surrogate"} and \code{"gradient"}
 route through the same \code{\link[=evaluate_full_model]{evaluate_full_model()}} call (JAX connectivity
-via \code{\link[=ds_jax_connectivity]{ds_jax_connectivity()}}).  \code{"torch"} and \code{"irl"} are accepted as
-\emph{values} (so a caller forwarding \code{\link[=ds_optimize]{ds_optimize()}}'s solver gets a
+via \code{\link[=ds_jax_connectivity]{ds_jax_connectivity()}}).  \code{"torch"} is accepted as
+a \emph{value} (so a caller forwarding \code{\link[=ds_optimize]{ds_optimize()}}'s solver gets a
 clear, actionable error instead of a generic \code{match.arg()} failure)
-but are \strong{not supported} by this function: those backends fit
+but is \strong{not supported} by this function: that backend fits
 resistance and intensity jointly inside a single \code{\link[=ds_optimize]{ds_optimize()}} /
 \code{\link[=run_torch_pipeline]{run_torch_pipeline()}} call, so there is nothing left for
-\code{ds_fit_intensity()} to do for them -- calling this function with
-\code{solver = "torch"} or \code{"irl"} raises an error directing you to the
+\code{ds_fit_intensity()} to do for it -- calling this function with
+\code{solver = "torch"} raises an error directing you to the
 already-complete result from \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.}
 
 \item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}

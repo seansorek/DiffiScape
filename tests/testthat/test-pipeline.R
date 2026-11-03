@@ -639,11 +639,11 @@ test_that("diffiscape loads obs_data from CSV file path", {
 # diffiscape) -- characterization tests written BEFORE introducing
 # solver_spec() + S3 dispatch generics, per TDD. Sections 1-2 lock in CURRENT
 # if/else behavior; sections 3-4 encode TARGET behavior not yet implemented
-# (ds_fit_intensity() torch/irl guard, diffiscape() torch/irl routing) so
+# (ds_fit_intensity() torch guard, diffiscape() torch routing) so
 # they fail red against the current code and pass once the refactor lands.
 # ============================================================================
 
-# ---- 1. ds_optimize(solver = "torch"/"irl") dispatch into run_torch_pipeline() ----
+# ---- 1. ds_optimize(solver = "torch") dispatch into run_torch_pipeline() ----
 
 test_that("ds_optimize(solver = 'torch') dispatches to run_torch_pipeline() with config$torch args", {
   skip_on_cran()
@@ -681,33 +681,6 @@ test_that("ds_optimize(solver = 'torch') dispatches to run_torch_pipeline() with
 })
 
 
-test_that("ds_optimize(solver = 'irl') dispatches to run_torch_pipeline() with model_type forced to 'irl'", {
-  skip_on_cran()
-
-  basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
-  obs_points  <- data.frame(x = 0, y = 0)
-  mock_result <- list(best_params = data.frame(r_0 = 0), best_loglik = -1)
-
-  captured_args <- NULL
-  local_mocked_bindings(
-    run_torch_pipeline = function(...) {
-      captured_args <<- list(...)
-      mock_result
-    },
-    .package = "DiffiScape"
-  )
-
-  result <- ds_optimize(
-    basis_stack, obs_points,
-    config = list(torch = list(n_epochs = 3L)),
-    solver = "irl"
-  )
-
-  expect_identical(result, mock_result)
-  expect_false(is.null(captured_args))
-  expect_equal(captured_args$model_type, "irl")
-  expect_equal(captured_args$n_epochs, 3L)
-})
 
 
 test_that("ds_optimize(solver = 'torch') errors when available_points is supplied", {
@@ -812,7 +785,7 @@ test_that("diffiscape() 'enzyme' deprecation message text is exact", {
 })
 
 
-# ---- 3. ds_fit_intensity() rejecting torch/irl (TARGET behavior) ----
+# ---- 3. ds_fit_intensity() rejecting torch (TARGET behavior) ----
 # Today these fail with R's generic match.arg error (not in the choices set).
 # These tests assert the NEW, more actionable error message that section 3
 # of the refactor introduces -- written as red tests against current code.
@@ -829,25 +802,15 @@ test_that("ds_fit_intensity(solver = 'torch') stops with an actionable message",
 })
 
 
-test_that("ds_fit_intensity(solver = 'irl') stops with an actionable message", {
-  opt_result  <- list(best_params = list(r_0 = 0), distribution = "negbin")
-  basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
-  obs_points  <- data.frame(x = 0, y = 0)
-
-  expect_error(
-    ds_fit_intensity(opt_result, basis_stack, obs_points, solver = "irl"),
-    "does not support solver"
-  )
-})
 
 
-# ---- 4. diffiscape(solver = "torch"/"irl") end-to-end routing (TARGET behavior) ----
+# ---- 4. diffiscape(solver = "torch") end-to-end routing (TARGET behavior) ----
 # diffiscape()'s match.arg currently only accepts c("surrogate", "gradient",
 # "enzyme"), so these fail today with a match.arg error. After the refactor,
-# diffiscape() should call ds_optimize(solver = "torch"/"irl", ...), skip the
-# separate ds_fit_intensity() call entirely (the torch/irl backend already
+# diffiscape() should call ds_optimize(solver = "torch", ...), skip the
+# separate ds_fit_intensity() call entirely (the torch backend already
 # fits resistance + intensity jointly), and assemble the normal return shape
-# from the torch/irl result fields.
+# from the torch result fields.
 
 test_that("diffiscape(solver = 'torch') does not call ds_fit_intensity and returns torch result fields", {
   skip_on_cran()
@@ -887,7 +850,7 @@ test_that("diffiscape(solver = 'torch') does not call ds_fit_intensity and retur
     ds_optimize = function(...) mock_torch_result,
     ds_fit_intensity = function(...) {
       fit_intensity_called <<- TRUE
-      stop("should not be called for torch/irl")
+      stop("should not be called for torch")
     },
     ds_diagnose = function(...) list(deviance_residuals = numeric(0)),
     .package = "DiffiScape"
@@ -905,66 +868,5 @@ test_that("diffiscape(solver = 'torch') does not call ds_fit_intensity and retur
                           "intensity_fit", "posterior", "diagnostics",
                           "ppc", "elapsed_min"),
                ignore.order = TRUE)
-  expect_identical(result$opt_result, mock_torch_result)
-})
-
-
-test_that("diffiscape(solver = 'irl') does not call ds_fit_intensity and routes through ds_optimize", {
-  skip_on_cran()
-  skip_if_not_installed("terra")
-
-  mock_torch_result <- list(
-    best_params         = data.frame(r_0 = 0, z_1 = 0.1),
-    best_loglik         = -5.6,
-    alpha               = 0.9,
-    gamma               = 1.8,
-    resistance_raster   = terra::rast(nrows = 2, ncols = 2, vals = 1),
-    connectivity_raster = terra::rast(nrows = 2, ncols = 2, vals = 1),
-    intensity_raster    = terra::rast(nrows = 2, ncols = 2, vals = 1),
-    loss_history        = c(1, 0.2),
-    best_epoch          = 8L,
-    n_params            = 4L,
-    n_epochs_run        = 15L,
-    total_time          = 2.1,
-    method              = "torch_irl_value_circuit",
-    distribution        = "poisson_parametric",
-    effective_loglinear = c(0, 0.05),
-    model_type          = "irl",
-    partial_effects     = NULL,
-    interaction_effects = NULL,
-    uq_results          = NULL,
-    intensity_params    = c(alpha = 0.9, gamma = 1.8),
-    intensity_se        = c(alpha = NA_real_, gamma = NA_real_),
-    convergence         = 0L,
-    convergence_message = "early_stop_epoch_8",
-    n_evaluations       = 15L,
-    solver              = "circuit_global"
-  )
-
-  fit_intensity_called <- FALSE
-  captured_solver <- NULL
-
-  local_mocked_bindings(
-    ds_optimize = function(..., solver) {
-      captured_solver <<- solver
-      mock_torch_result
-    },
-    ds_fit_intensity = function(...) {
-      fit_intensity_called <<- TRUE
-      stop("should not be called for torch/irl")
-    },
-    ds_diagnose = function(...) list(deviance_residuals = numeric(0)),
-    .package = "DiffiScape"
-  )
-
-  basis <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
-  obs   <- data.frame(x = c(0, 1), y = c(0, 1))
-
-  result <- diffiscape(obs_data = obs, rasters = list(layer1 = basis),
-                       output_dir = withr::local_tempdir(),
-                       n_posterior = 0L, plot = FALSE, solver = "irl")
-
-  expect_false(fit_intensity_called)
-  expect_equal(captured_solver, "irl")
   expect_identical(result$opt_result, mock_torch_result)
 })

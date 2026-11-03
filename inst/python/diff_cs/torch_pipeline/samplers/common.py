@@ -62,11 +62,8 @@ def _setup_sampling_state(
         raise ValueError("Either model_path or model_state must be provided")
 
     _ckpt_model_type = checkpoint.get("model_type", "spline")
-    if _ckpt_model_type == "irl":
-        raise NotImplementedError(
-            "Bayesian sampling (Langevin/HMC/ADVI) is not yet supported for "
-            "model_type='irl'. Use run_torch_optimization() for MAP inference."
-        )
+    if _ckpt_model_type not in ("spline", "spline_gam"):
+        raise ValueError("Bayesian sampling requires a spline_gam checkpoint")
 
     n_features = int(checkpoint.get(
         "n_features",

@@ -227,6 +227,7 @@ def run_hmc_sampling(
         without an extra compute_U() call.
 
         log_u_slice: log of the slice variable (log-space to avoid overflow)."""
+        nonlocal divergent
         if depth == 0:
             # Base case: single leapfrog step
             q_new, p_new, grad_new, U_new, ll_new = leapfrog(
@@ -234,10 +235,11 @@ def run_hmc_sampling(
             H_new = U_new + kinetic_energy(p_new, inv_mass)
             delta_H = H_new - H0
             # Check divergence (include NaN/inf guard)
-            divergent = (delta_H > DIVERGENCE_THRESHOLD) or \
+            energy_divergent = (delta_H > DIVERGENCE_THRESHOLD) or \
                 math.isnan(delta_H) or math.isinf(delta_H)
-            # Slice check (log-space: log_u <= -(H_new - H0) = H0 - H_new)
-            valid = (log_u_slice <= -delta_H) and (not divergent)
+            divergent = divergent or energy_divergent
+            # The slice is in absolute log-density units, not energy differences.
+            valid = (log_u_slice <= -H_new) and (not energy_divergent)
             n_valid_states = 1 if valid else 0
             # Acceptance stat for dual averaging
             log_accept = min(0.0, -delta_H)
@@ -245,7 +247,7 @@ def run_hmc_sampling(
             return (q_new, p_new, grad_new,
                     q_new, p_new, grad_new,
                     q_new, grad_new, U_new, ll_new,
-                    n_valid_states, not divergent,
+                    n_valid_states, not energy_divergent,
                     accept_prob, 1, 1)
 
         # Recursion: build left half
@@ -478,11 +480,11 @@ def run_hmc_sampling(
             keep_going = is_valid and \
                 (dq.dot(p_minus) >= 0) and (dq.dot(p_plus) >= 0)
 
-            if not is_valid:
-                divergent = True
-                n_divergences += 1
-
             depth += 1
+
+        # A normal U-turn stops the tree without being a numerical divergence.
+        if divergent:
+            n_divergences += 1
 
         # ---- Accept proposal (NUTS always accepts within tree) ----
         q_curr = q_prop.clone()

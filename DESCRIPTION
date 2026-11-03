@@ -33,7 +33,6 @@ Suggests:
     reticulate,
     ggplot2,
     spdep,
-    ranger,
     testthat (>= 3.0.0),
     knitr,
     rmarkdown

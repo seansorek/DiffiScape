@@ -1,24 +1,10 @@
-"""Characterization/smoke tests for the heavyweight entry points in
-05_torch_pipeline.py: run_torch_optimization (mlp / spline_gam model types)
-and the three Bayesian samplers (Langevin, HMC/NUTS, ADVI).
-
-These were written to close a coverage gap identified during the
-torch_pipeline package-split refactor (architecture review issue #3):
-run_torch_optimization was previously only exercised indirectly via the IRL
-path in test_irl_resistance.py, and run_langevin_sampling / run_hmc_sampling
-/ run_advi had zero test coverage at all. They are intentionally cheap
-(tiny grids, few epochs/iterations/samples) so they run fast in CI while
-still exercising the full code path: MAP optimisation -> checkpoint ->
-sampler -> posterior summary.
-
-Used both as a pre-refactor baseline and a post-refactor regression check
-(see Step A / Step B in the architecture-review plan).
-"""
+"""Optimization, checkpoint, and posterior checks for the Torch pipeline."""
 import importlib.util
 import os
 import sys
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -40,6 +26,86 @@ def _load(name, filename):
 tp = _load("torch_pipeline_samplers_under_test", "05_torch_pipeline.py")
 
 
+@pytest.mark.parametrize("submodule,function,options", [
+    ("langevin", "run_langevin_sampling", dict(
+        burn_in=500, thin=1, precondition=False, step_size=0.3, use_mala=True)),
+    ("hmc", "run_hmc_sampling", dict(warmup=500, max_treedepth=4)),
+    ("advi", "run_advi", dict(
+        max_iter=500, n_elbo_samples=8, lr=0.03, patience=500)),
+])
+def test_sampler_recovers_known_gaussian(monkeypatch, submodule, function, options):
+    """Exercise the real inference algorithm against N(2, 0.7**2)."""
+    module = tp._tp_import("samplers." + submodule)
+
+    class GaussianNet(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.intercept = torch.nn.Parameter(torch.tensor(0.0, dtype=torch.float64))
+
+        def forward_with_log_R(self, basis):
+            return self.intercept.exp().expand(1), self.intercept.expand(1)
+
+        def smoothing_penalty(self):
+            return 0.5 * ((self.intercept - 2.0) / 0.7) ** 2
+
+        def get_effective_loglinear(self):
+            return [self.intercept.item(), 0.0]
+
+        def get_partial_effects(self, n_grid, posterior_cov=None):
+            return [{"effect": [0.0] * n_grid}]
+
+    net = GaussianNet()
+    cs = SimpleNamespace(CG_RTOL=1e-6, CG_WARM_START=False,
+                         enable_gpu=lambda enabled: None)
+    state = dict(
+        net=net, alpha=torch.tensor(0.0, dtype=torch.float64),
+        raw_gamma=torch.tensor(0.0, dtype=torch.float64),
+        basis_t=torch.zeros((1, 1), dtype=torch.float64),
+        obs_t=torch.zeros(1, dtype=torch.float64), n_valid=1, n_features=1,
+        sampled_params=[net.intercept], param_names=["intercept"], n_total_scalar=1,
+        use_absorption=True, use_intensity_spline=False, use_cuda=False,
+        dev=torch.device("cpu"), cs=cs, original_rtol=1e-6,
+    )
+    monkeypatch.setattr(module, "_setup_sampling_state", lambda *args: state)
+    monkeypatch.setattr(module, "_AbsorptionCircuitSolveFn", SimpleNamespace(
+        apply=lambda resistance, *args: torch.zeros_like(resistance)))
+    monkeypatch.setattr(module, "_ppp_loglik", lambda log_lam, *args: log_lam.sum() * 0)
+    result = getattr(module, function)(
+        np.zeros((1, 1)), np.zeros(1), 1, 1, np.ones(1, dtype=bool), 1.0,
+        n_samples=2500, reg_mean=0.0, penalty_scale=1.0,
+        seed=42, verbose=False, **options,
+    )
+    draws = np.asarray(result["samples_effective_loglinear"])[:, 0]
+    assert draws.mean() == pytest.approx(2.0, abs=0.08)
+    assert draws.var() == pytest.approx(0.7 ** 2, abs=0.08)
+    if "n_divergences" in result:
+        assert result["n_divergences"] == 0
+        with torch.no_grad():
+            net.intercept.zero_()
+        monkeypatch.setattr(net, "smoothing_penalty",
+                            lambda: 0.5 * ((net.intercept - 2.0) / 0.001) ** 2)
+        unstable = module.run_hmc_sampling(
+            np.zeros((1, 1)), np.zeros(1), 1, 1, np.ones(1, dtype=bool), 1.0,
+            n_samples=3, warmup=0, init_step_size=1.0, max_treedepth=1,
+            adapt_mass_matrix=False, reg_mean=0.0, penalty_scale=1.0,
+            seed=42, verbose=False,
+        )
+        assert unstable["n_divergences"] == 3
+
+
+def test_retired_torch_irl_requests_fail_before_fitting():
+    with pytest.raises(ValueError, match="model_type"):
+        tp.run_torch_optimization(
+            np.zeros((1, 1)), np.zeros(1), 1, 1, np.ones(1, dtype=bool), 1.0,
+            model_type="irl", verbose=False,
+        )
+    with pytest.raises(ValueError, match="spline_gam checkpoint"):
+        tp.run_hmc_sampling(
+            np.zeros((1, 1)), np.zeros(1), 1, 1, np.ones(1, dtype=bool), 1.0,
+            model_state={"model_type": "irl"}, verbose=False,
+        )
+
+
 def _toy_problem(nr=10, nc=10, nf=2, seed=0, n_obs=15):
     """Small grid + sparse Poisson-ish observation counts."""
     rng = np.random.default_rng(seed)
@@ -52,16 +118,31 @@ def _toy_problem(nr=10, nc=10, nf=2, seed=0, n_obs=15):
 
 
 class TestRunTorchOptimizationModelTypes:
-    """run_torch_optimization with model_type="mlp" and "spline_gam" — the
-    existing suite only covers model_type="irl" (test_irl_resistance.py)."""
+    """Run each retained resistance model through the full training path."""
 
-    def test_mlp_model_type(self):
+    def test_single_covariate_and_best_checkpoint_match_scored_loss(self):
+        rng = np.random.default_rng(1)
+        basis = rng.random((64, 1))
+        obs = np.zeros(64)
+        obs[[9, 18, 27, 36]] = 1
+        res = tp.run_torch_optimization(
+            basis, obs, 8, 8, np.ones(64, dtype=bool), cell_area=1.0,
+            n_epochs=2, warmup_epochs=0, lr=10.0, cg_tol=1e-10,
+            reg_mean=0.0, reg_var=0.0, reg_skip=0.0, weight_decay=0.0,
+            output_dir=None, seed=1, verbose=False, device="cpu",
+        )
+        assert np.asarray(res["effective_loglinear"]).shape == (2,)
+        assert -res["loglik"] == pytest.approx(min(res["loss_history"]), rel=1e-8)
+
+    @pytest.mark.parametrize("model_type", ["mlp", "conv"])
+    def test_neural_model_type(self, model_type):
         basis, obs, valid = _toy_problem(seed=1)
         out = tempfile.mkdtemp()
         res = tp.run_torch_optimization(
             basis, obs, 10, 10, valid, cell_area=900.0,
-            model_type="mlp", solver="global_absorption", absorption=0.05,
-            n_epochs=8, patience=20, hidden_dim=8, n_hidden_layers=1,
+            model_type=model_type, solver="global_absorption", absorption=0.05,
+            n_epochs=3, patience=20, hidden_dim=8, n_hidden_layers=1,
+            conv_channels=2, n_conv_layers=1,
             lr=0.02, warmup_epochs=2, source_spacing=1,
             output_dir=out, seed=1, verbose=False,
         )
@@ -72,7 +153,7 @@ class TestRunTorchOptimizationModelTypes:
         assert np.isfinite(res["loglik"])
         assert np.isfinite(res["resistance"]).all()
         assert np.isfinite(res["connectivity"]).all()
-        assert res["model_type"] == "mlp"
+        assert res["model_type"] == model_type
         assert os.path.exists(os.path.join(out, "resistance_nn.pt"))
 
     def test_spline_gam_model_type(self):

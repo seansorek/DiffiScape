@@ -124,17 +124,19 @@ ds_create_basis <- function(rasters,
 #'   default), `"surrogate"` (GP + Thompson Sampling or Expected Improvement),
 #'   `"gradient"` (L-BFGS / Adam via JAX
 #'   auto-diff), `"enzyme"` (deprecated, alias for `"gradient"`),
-#'   `"torch"` (PyTorch neural-network resistance), or `"irl"`
-#'   (PyTorch value-shaped resistance: a reward network is turned into a
-#'   resistance surface via soft value iteration, then run through the same
-#'   differentiable circuit solver -- a convenience alias for `solver = "torch"`
-#'   with `model_type = "irl"`).
-#' @param model_type Character; `"parametric"` (default), `"mlp"`,
-#'   `"conv"`, `"spline_gam"`, or `"irl"`.  When not `"parametric"`,
-#'   the gradient solver dispatches to the Flax neural-network
-#'   optimizer instead of the parametric L-BFGS/Adam path.
+#' @param model_type Resistance model. For Torch: `"loglinear"`, `"mlp"`,
+#'   `"conv"`, or `"spline_gam"`; the default `"parametric"` leaves the nested
+#'   Torch config's model choice unchanged. For the gradient solver:
+#'   `"parametric"`, `"mlp"`, `"conv"`, `"spline_gam"`, or `"irl"`.
 #' @return Result from [optimize_resistance()],
 #'   [optimize_resistance_gradient()], or [run_torch_pipeline()].
+#' @section Supported Torch inputs:
+#' Torch fits a Poisson PPP jointly with resistance. Explicit non-Poisson
+#' families, custom resistance links, bounds, covariates, and residualisation
+#' are rejected. Use the surrogate solver for these modeling choices.
+#' The legacy outer config's default `distribution = "negbin"` does not change
+#' Torch's Poisson likelihood; select other families explicitly with `family`.
+#'
 #' @section Config conventions:
 #' The three backend families are deliberately *not* unified onto a common
 #' config shape -- each keeps its pre-existing convention, and dispatch
@@ -147,7 +149,7 @@ ds_create_basis <- function(rasters,
 #'     for the parametric L-BFGS/Adam path, plus optional
 #'     `config$model_config` / `config$optim_config` sublists when
 #'     `model_type` selects a neural resistance model.}
-#'   \item{`solver = "torch"` / `"irl"`}{A `config$torch` sublist forwarded
+#'   \item{`solver = "torch"`}{A `config$torch` sublist forwarded
 #'     as named arguments to [run_torch_pipeline()].}
 #' }
 #' @export
@@ -163,7 +165,7 @@ ds_optimize <- function(basis_stack,
                         available_points     = NULL,
                         available_covariates = NULL,
                         solver               = c("torch", "surrogate", "gradient",
-                                                 "enzyme", "irl"),
+                                                 "enzyme"),
                         model_type           = "parametric") {
 
   solver <- match.arg(solver)
@@ -240,6 +242,27 @@ ds_optimize <- function(basis_stack,
     stop("available_points is not supported with solver = '", spec$solver, "'.",
          call. = FALSE)
   }
+  if (!is.null(covariates_obs) || !is.null(covariates_rasters) ||
+      !is.null(available_covariates) || isTRUE(residualise) ||
+      !is.null(bounds)) {
+    stop("The torch solver does not support covariates_obs, covariates_rasters, ",
+         "available_covariates, residualise = TRUE, or bounds. Use solver = ",
+         "'surrogate' for these settings.", call. = FALSE)
+  }
+  # The legacy outer config defaults to negbin; Torch always fits a Poisson PPP.
+  family <- config$family %||% intensity_config$family
+  if ((!is.null(family) && (!inherits(family, "intensity_family") ||
+                            !identical(family$name, "poisson"))) ||
+      (is.null(family) && !is.null(config$distribution) &&
+       !config$distribution %in% c("negbin", "poisson"))) {
+    stop("The torch solver supports only the Poisson PPP family. ",
+         "Use solver = 'surrogate' for other intensity families.", call. = FALSE)
+  }
+  if (!is.null(config$resistance_link) &&
+      !identical(config$resistance_link$name, "exp")) {
+    stop("The torch solver does not support custom resistance links.",
+         call. = FALSE)
+  }
   torch_args <- config$torch %||% list()
   torch_args$basis_stack <- basis_stack
   torch_args$obs_points  <- obs_points
@@ -247,14 +270,11 @@ ds_optimize <- function(basis_stack,
   if (is.null(torch_args$seed) && !is.null(config$seed)) {
     torch_args$seed <- config$seed
   }
-  # "irl" is "torch" with the value-shaped resistance model.
-  if (spec$solver == "irl") torch_args$model_type <- "irl"
+  if (model_type != "parametric") {
+    torch_args$model_type <- match.arg(model_type, c("loglinear", "mlp", "conv", "spline_gam"))
+  }
   do.call(run_torch_pipeline, torch_args)
 }
-
-
-#' @keywords internal
-.ds_optimize_dispatch.ds_solver_irl <- .ds_optimize_dispatch.ds_solver_torch
 
 
 #' @keywords internal
@@ -315,14 +335,14 @@ ds_optimize <- function(basis_stack,
 #'   deprecation message, but no longer affects this function's internal
 #'   connectivity-computation logic: both `"surrogate"` and `"gradient"`
 #'   route through the same [evaluate_full_model()] call (JAX connectivity
-#'   via [ds_jax_connectivity()]).  `"torch"` and `"irl"` are accepted as
-#'   *values* (so a caller forwarding [ds_optimize()]'s solver gets a
+#'   via [ds_jax_connectivity()]).  `"torch"` is accepted as
+#'   a *value* (so a caller forwarding [ds_optimize()]'s solver gets a
 #'   clear, actionable error instead of a generic `match.arg()` failure)
-#'   but are **not supported** by this function: those backends fit
+#'   but is **not supported** by this function: that backend fits
 #'   resistance and intensity jointly inside a single [ds_optimize()] /
 #'   [run_torch_pipeline()] call, so there is nothing left for
-#'   `ds_fit_intensity()` to do for them -- calling this function with
-#'   `solver = "torch"` or `"irl"` raises an error directing you to the
+#'   `ds_fit_intensity()` to do for it -- calling this function with
+#'   `solver = "torch"` raises an error directing you to the
 #'   already-complete result from [run_torch_pipeline()].
 #' @param link A [resistance_link] object (default [link_exp()]).
 #' @param family An [intensity_family] object, or `NULL`.
@@ -339,7 +359,7 @@ ds_fit_intensity <- function(opt_result,
                               available_points     = NULL,
                               available_covariates = NULL,
                               solver               = c("surrogate", "gradient",
-                                                       "enzyme", "torch", "irl"),
+                                                       "enzyme", "torch"),
                               link                 = link_exp(),
                               family               = NULL) {
 
@@ -412,11 +432,6 @@ ds_fit_intensity <- function(opt_result,
     call. = FALSE
   )
 }
-
-
-#' @keywords internal
-.ds_fit_intensity_dispatch.ds_solver_irl <-
-  .ds_fit_intensity_dispatch.ds_solver_torch
 
 
 #' Predict intensity surface
@@ -599,8 +614,7 @@ ds_diagnose <- function(intensity_fit,
 #'   `block_size` (default `5L`), `cleanup` (default `TRUE`).
 #' @param solver Character; `"torch"` (default, PyTorch log-linear resistance),
 #'   `"surrogate"` (GP surrogate optimiser), `"gradient"` (L-BFGS / Adam via
-#'   JAX auto-diff), `"enzyme"` (deprecated, alias for `"gradient"`),
-#'   or `"irl"` (PyTorch value-shaped resistance). For `"torch"` / `"irl"`,
+#'   JAX auto-diff), or `"enzyme"` (deprecated alias for `"gradient"`). For `"torch"`,
 #'   [run_torch_pipeline()] fits resistance and intensity jointly in a
 #'   single call, so the separate intensity-fitting step is skipped and
 #'   `posterior`/`diagnostics`/`ppc` are `NULL` (those require either a
@@ -628,7 +642,7 @@ diffiscape <- function(obs_data,
                        pattern              = "*.tif",
                        omniscape_settings   = list(),
                        solver               = c("torch", "surrogate", "gradient",
-                                                "enzyme", "irl")) {
+                                                "enzyme")) {
 
   solver <- match.arg(solver)
   spec <- solver_spec(solver)
@@ -676,8 +690,8 @@ diffiscape <- function(obs_data,
     solver               = solver
   )
 
-  if (solver %in% c("torch", "irl")) {
-    # --- torch/irl: resistance + intensity are fit jointly inside
+  if (solver == "torch") {
+    # --- torch: resistance + intensity are fit jointly inside
     # ds_optimize() -> run_torch_pipeline(), so there is no separate
     # intensity-fitting step. Build the normal intensity_fit shape directly
     # from fields already present on opt_result (see run_torch_pipeline()'s
@@ -688,7 +702,7 @@ diffiscape <- function(obs_data,
       loglik             = opt_result$best_loglik,
       intensity_params   = opt_result$intensity_params,
       # No fit_intensity_nb()/fit_intensity_gam()-shaped object exists for
-      # the torch/irl path (predict_intensity() / diagnose_model() require
+      # the torch path (predict_intensity() / diagnose_model() require
       # $estimates, $c_scale, $log_conn_mean, $log_conn_sd, none of which
       # the neural-network intensity head produces) -- NULL rather than a
       # fabricated stand-in.
@@ -704,10 +718,10 @@ diffiscape <- function(obs_data,
       omniscape_time     = NULL
     )
 
-    # --- Posterior / diagnostics / PPC: not available for torch/irl -------
+    # --- Posterior / diagnostics / PPC: not available for torch -------
     # ds_posterior() (Laplace approx + MC composition) requires
     # opt_result$bounds, a parametric r_0/z_1..z_K bounds list that the
-    # torch/IRL neural-network parameterisation does not produce. Likewise
+    # torch neural-network parameterisation does not produce. Likewise
     # ds_diagnose()/ds_ppc() call predict_intensity() on a
     # fit_intensity_nb()/fit_intensity_gam()-shaped object that doesn't
     # exist here (see intensity_fit_obj note above). Rather than fabricate

@@ -8,7 +8,7 @@ Users supply environmental rasters and GPS locations (or paired used-available l
 
 - **Surrogate BO** — Latin Hypercube Sampling → GP emulator → Thompson Sampling or Expected Improvement (selectable) via JAX connectivity
 - **Gradient descent** — parametric or neural network resistance via automatic differentiation in JAX
-- **PyTorch** — log-linear resistance with global absorption and `log(lambda) = alpha + gamma * log(1 + connectivity)` by default; optional MLP / convolutional / spline-GAM / IRL models, MAP optimization, and Bayesian posterior sampling
+- **PyTorch** — log-linear resistance with global absorption and `log(lambda) = alpha + gamma * log(1 + connectivity)` by default; optional MLP / convolutional / spline-GAM models, MAP optimization, and Bayesian posterior sampling
 
 ---
 
@@ -23,7 +23,7 @@ remotes::install_github("seansorek/DiffiScape")
 
 ### Python Requirements
 
-DiffiScape now requires Python for all solver modes (surrogate, gradient, torch/irl). The default uses PyTorch; install JAX only when selecting a JAX solver. Before using the package you need:
+DiffiScape now requires Python for all solver modes (surrogate, gradient, torch). The default uses PyTorch; install JAX only when selecting a JAX solver. Before using the package you need:
 
 - **Python ≥ 3.10** — [Download Python](https://www.python.org/downloads/) or use a conda distribution
 - **JAX, JAXScape, Flax, NumPyro** — installed automatically on first use, or install manually via `pip install jax jaxscape flax numpyro`
@@ -387,7 +387,7 @@ result <- run_torch_pipeline(
   basis_stack = basis,
   obs_points  = pts,
   solver      = "global_absorption",
-  model_type  = "loglinear",  # "loglinear", "mlp", "conv", "spline_gam", or "irl"
+  model_type  = "loglinear",  # "loglinear", "mlp", "conv", or "spline_gam"
   n_epochs    = 500L,
   output_dir  = "torch_results/"
 )
@@ -434,54 +434,11 @@ opt <- ds_optimize(basis, pts, solver = "torch",
                    )))
 ```
 
-#### Inverse Reinforcement Learning (value-shaped) resistance
-
-The `"irl"` resistance model treats the landscape as a Markov decision process
-(states = cells, actions = moves to neighbours) and learns the **reward**
-(negative cost) an agent appears to be following. A reward network over the
-basis covariates is turned into a resistance surface via entropy-regularised
-**soft value iteration**, so resistance reflects the *long-range desirability*
-of the landscape (an agent's plan-to-go value), not just local habitat:
-
-```
-reward rψ(x) → soft value iteration (β, γ_d) → V(x)
-            → R(x) = clamp(offset − scale·V(x))
-            → differentiable circuit solver → C(x) → log λ = α + γ·log(1+C) → PPP likelihood
-```
-
-Crucially this **keeps circuit theory as the forward model**: the learned
-resistance flows through the same differentiable current solve as the other
-PyTorch models, and gradients backpropagate through both the circuit solve and
-the unrolled value iteration into the reward network. It needs only occurrence
-points (no movement trajectories).
-
-```r
-# Convenience alias for solver = "torch" with model_type = "irl":
-opt <- ds_optimize(basis, pts, solver = "irl",
-                   config = list(torch = list(
-                     beta = 1.0,        # soft value-iteration temperature
-                     gamma_d = 0.9,     # MDP discount / leakage (< 1)
-                     n_value_iter = 60L,
-                     n_epochs = 300L
-                   )))
-
-# Package the fit as a custom resistance_model for predict()/ds_diagnose():
-model <- irl_resistance_model(opt, basis)
-R     <- predict(model)
-
-# Gradient smoke-test through value iteration + circuit solve:
-verify_irl_gradient(basis)
-```
-
-> **Note:** v1 supports IRL for MAP (Adam) optimization. Bayesian posterior
-> sampling (`run_bayesian_sampling()` / `run_advi()`) currently targets the
-> spline-GAM model only; IRL posterior sampling is planned future work.
-
 ---
 
 ## Vignettes
 
-Six worked examples ship with the package and are built automatically when it is installed. Access them with:
+Five worked examples ship with the package and are built automatically when it is installed. Access them with:
 
 ```r
 browseVignettes("DiffiScape")
@@ -494,7 +451,6 @@ browseVignettes("DiffiScape")
 | `gam-profile` | GAM intensity profile workflow |
 | `torch-mlp` | PyTorch MLP resistance network |
 | `spline-gam` | Spline-GAM resistance network |
-| `irl` | PyTorch inverse-reinforcement-learning resistance network |
 
 ---
 

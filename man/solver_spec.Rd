@@ -4,20 +4,17 @@
 \alias{solver_spec}
 \title{Construct an internal solver-dispatch spec}
 \usage{
-solver_spec(
-  solver,
-  choices = c("surrogate", "gradient", "enzyme", "torch", "irl")
-)
+solver_spec(solver, choices = c("surrogate", "gradient", "enzyme", "torch"))
 }
 \arguments{
 \item{solver}{Character scalar; one of \code{"surrogate"}, \code{"gradient"},
-\code{"enzyme"} (deprecated alias for \code{"gradient"}), \code{"torch"}, \code{"irl"}.}
+\code{"enzyme"} (deprecated alias for \code{"gradient"}), \code{"torch"}.}
 
 \item{choices}{Character vector of valid \code{solver} values for the calling
 function (passed through to \code{match.arg()}'s \code{choices}, so callers with
 a narrower accepted set -- e.g. \code{\link[=ds_fit_intensity]{ds_fit_intensity()}}, which does not
-support \code{"torch"}/\code{"irl"} as a \emph{fitting} solver -- get the right error
-message). Defaults to the full 5-value set.}
+support \code{"torch"} as a \emph{fitting} solver -- get the right error
+message). Defaults to the full 4-value set.}
 }
 \value{
 An object of class \code{c("ds_solver_<canonical>", "ds_solver")}
@@ -44,9 +41,9 @@ entries consumed directly by \code{\link[=optimize_resistance]{optimize_resistan
 \code{config$model_config} and \code{config$optim_config} sublists when
 \code{model_type} selects a neural resistance model (forwarded to
 \code{\link[=optimize_resistance_gradient]{optimize_resistance_gradient()}}).}
-\item{\code{solver = "torch"} / \code{"irl"}}{A \code{config$torch} sublist whose
+\item{\code{solver = "torch"}}{A \code{config$torch} sublist whose
 entries are forwarded as named arguments to \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.
-\code{"irl"} is \code{"torch"} with \code{model_type} forced to \code{"irl"}.}
+Model choices are passed to \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.}
 }
 }
 
