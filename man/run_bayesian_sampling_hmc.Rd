@@ -2,7 +2,7 @@
 % Please edit documentation in R/torch_pipeline.R
 \name{run_bayesian_sampling_hmc}
 \alias{run_bayesian_sampling_hmc}
-\title{HMC / NUTS posterior sampling from a trained torch model}
+\title{Retired checkpoint sampler}
 \usage{
 run_bayesian_sampling_hmc(
   basis_stack,
@@ -76,10 +76,8 @@ knobs (must match the MAP run).}
 \item{device}{Character; \code{"auto"}, \code{"cuda"}, or \code{"cpu"}.}
 }
 \value{
-A list with posterior samples, \code{summary}, diagnostics
-(\code{n_divergences}, etc.), and \code{elapsed_time}.
+An actionable migration error.
 }
 \description{
-Runs the No-U-Turn Sampler over the joint posterior, starting from the
-MAP checkpoint produced by \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.
+Old .pt checkpoints cannot be loaded by JAX. Refit with ds_optimize() and use ds_posterior(method = "nuts") or method = "advi". Custom MALA is retired.
 }

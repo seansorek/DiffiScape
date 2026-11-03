@@ -1,22 +1,21 @@
 # ============================================================================
 # JAX bridge via reticulate
 #
-# Loads the bundled diffiscape_jax Python package and exposes a thin
-# call interface analogous to the PyTorch bridge in torch_bridge.R.
+# Loads the installed diffiscape Python package and exposes a thin
+# call interface for complete installed Python operations.
 # ============================================================================
 
-# Internal module state (Task 4 will migrate these into .ds_env via zzz.R)
+# Lazy installed-package state.
 .jax_env <- new.env(parent = emptyenv())
 .jax_env$initialized <- FALSE
 .jax_env$core_module <- NULL
 .jax_env$window_module <- NULL
 .jax_env$optimize_module <- NULL
-.jax_env$sample_module <- NULL
 
 
 #' Initialise the JAX backend for DiffiScape
 #'
-#' Loads the bundled `diffiscape_jax` package via \pkg{reticulate},
+#' Loads the installed `diffiscape` package via \pkg{reticulate},
 #' verifying that the required Python packages (`jax`, `jaxlib`,
 #' `jaxscape`, `numpy`) are available. Call once per R session before
 #' any of the JAX-based solvers.
@@ -43,26 +42,14 @@ ds_jax_setup <- function(python = NULL, force = FALSE) {
     reticulate::use_python(python, required = TRUE)
   }
 
-  required <- c("jax", "jaxlib", "jaxscape", "numpy")
-  missing  <- required[!vapply(required, reticulate::py_module_available,
-                               logical(1))]
-  if (length(missing) > 0) {
-    stop("Missing Python packages: ", paste(missing, collapse = ", "),
-         "\nInstall them with ds_install_jax_deps().",
-         call. = FALSE)
-  }
-
-  module_dir <- system.file("python", package = "DiffiScape")
-  if (!nzchar(module_dir) || !dir.exists(module_dir)) {
-    stop("Bundled Python package not found in inst/python/. ",
-         "Re-install DiffiScape.", call. = FALSE)
-  }
-
   tryCatch({
-    .jax_env$core_module <- reticulate::import_from_path(
-      "diffiscape_jax.core", path = module_dir)
-    .jax_env$window_module <- reticulate::import_from_path(
-      "diffiscape_jax.window", path = module_dir)
+    .jax_env$package <- reticulate::import("diffiscape", delay_load = TRUE, convert = FALSE)
+    version <- reticulate::py_to_r(.jax_env$package$`__version__`)
+    if (utils::compareVersion(version, "0.1.0") < 0 || utils::compareVersion(version, "0.2.0") >= 0) {
+      stop("Requires Python diffiscape >=0.1.0,<0.2. Install the matching wheel.")
+    }
+    .jax_env$core_module <- reticulate::import("diffiscape.core")
+    .jax_env$window_module <- reticulate::import("diffiscape.window")
     .jax_env$initialized <- TRUE
 
     jax <- reticulate::import("jax")
@@ -80,7 +67,7 @@ ds_jax_setup <- function(python = NULL, force = FALSE) {
     .jax_env$core_module <- NULL
     .jax_env$window_module <- NULL
     .jax_env$optimize_module <- NULL
-    .jax_env$sample_module <- NULL
+    .jax_env$package <- NULL
     stop("Failed to initialise JAX backend: ", conditionMessage(e),
          call. = FALSE)
   })
@@ -97,7 +84,7 @@ ds_jax_check <- function() {
 }
 
 
-#' Call a function from the bundled JAX modules
+#' Call a function from the installed JAX modules
 #'
 #' Thin wrapper that ensures the backend is initialised, then resolves the
 #' named function on the cached Python module handle and forwards
@@ -125,7 +112,7 @@ ds_jax_call <- function(module_name, fn_name, ...) {
 
   fn <- tryCatch(mod[[fn_name]], error = function(e) NULL)
   if (is.null(fn)) {
-    stop("Function not found in diffiscape_jax.", module_name, ": ", fn_name,
+    stop("Function not found in diffiscape.", module_name, ": ", fn_name,
          call. = FALSE)
   }
   fn(...)
@@ -246,7 +233,7 @@ ds_jax_connectivity <- function(resistance,
 
 #' Run gradient-based parametric optimisation via the JAX backend
 #'
-#' Calls `diffiscape_jax.optimize.run_parametric_optimization`, which
+#' Calls `diffiscape.optimize.run_parametric_optimization`, which
 #' minimises the negative log-likelihood of a connectivity-based
 #' point-process model using L-BFGS or Adam with JAX auto-diff gradients.
 #'
@@ -274,12 +261,6 @@ ds_jax_optimize <- function(basis_np, obs_np, valid_mask_np,
 
   if (!ds_jax_check()) ds_jax_setup()
 
-  if (is.null(.jax_env$optimize_module)) {
-    module_dir <- system.file("python", package = "DiffiScape")
-    .jax_env$optimize_module <- reticulate::import_from_path(
-      "diffiscape_jax.optimize", path = module_dir)
-  }
-
   np <- reticulate::import("numpy", convert = FALSE)
   init_np <- if (!is.null(init_params)) {
     np$array(as.double(init_params), dtype = np$float64)
@@ -287,9 +268,10 @@ ds_jax_optimize <- function(basis_np, obs_np, valid_mask_np,
     NULL
   }
 
-  result <- .jax_env$optimize_module$run_parametric_optimization(
+  result <- .jax_env$package$fit(
     basis_np, obs_np, valid_mask_np,
     as.integer(n_rows), as.integer(n_cols),
+    formulation = "window_resistance",
     cell_area  = as.double(cell_area),
     init_params = init_np,
     ...
@@ -300,8 +282,8 @@ ds_jax_optimize <- function(basis_np, obs_np, valid_mask_np,
 
 #' Run neural-network resistance optimisation via the JAX backend
 #'
-#' Calls `diffiscape_jax.optimize.run_neural_optimization`, which
-#' trains a Flax neural network (MLP, Conv, Spline-GAM, or IRL)
+#' Calls `diffiscape.optimize.run_neural_optimization`, which
+#' trains a Flax neural network (MLP, Conv, or the legacy RBF model)
 #' to produce a resistance surface that maximises the connectivity-based
 #' point-process log-likelihood.
 #'
@@ -313,7 +295,7 @@ ds_jax_optimize <- function(basis_np, obs_np, valid_mask_np,
 #' @param n_rows,n_cols Integer grid dimensions.
 #' @param cell_area Numeric cell area in square map units.
 #' @param model_type Character; `"mlp"` (default), `"conv"`,
-#'   `"spline_gam"`, or `"irl"`.
+#'   `"spline_gam"` (legacy RBF).
 #' @param model_config Named list of model-specific parameters forwarded
 #'   to the Flax module constructor.
 #' @param optim_config Named list with `lr`, `n_epochs`, `patience`.
@@ -334,25 +316,12 @@ ds_jax_neural_optimize <- function(basis_np, obs_np, valid_mask_np,
 
   if (!ds_jax_check()) ds_jax_setup()
 
-  if (is.null(.jax_env$optimize_module)) {
-    module_dir <- system.file("python", package = "DiffiScape")
-    .jax_env$optimize_module <- reticulate::import_from_path(
-      "diffiscape_jax.optimize", path = module_dir)
-  }
-
-  # Convert R lists to Python dicts via reticulate
-  model_cfg_py <- if (length(model_config) > 0) model_config else NULL
-  optim_cfg_py <- if (length(optim_config) > 0) optim_config else NULL
-
-  result <- .jax_env$optimize_module$run_neural_optimization(
-    basis_np, obs_np, valid_mask_np,
-    as.integer(n_rows), as.integer(n_cols),
-    cell_area    = as.double(cell_area),
-    model_type   = model_type,
-    model_config = model_cfg_py,
-    optim_config = optim_cfg_py,
-    ...
-  )
+  result <- .jax_env$package$fit(
+    basis_values = basis_np, obs_counts = obs_np, valid_mask = valid_mask_np,
+    n_rows = as.integer(n_rows), n_cols = as.integer(n_cols), cell_area = as.double(cell_area),
+    formulation = "window_resistance", model_type = model_type,
+    model_config = if (length(model_config)) model_config else NULL,
+    optim_config = if (length(optim_config)) optim_config else NULL, ...)
   reticulate::py_to_r(result)
 }
 
@@ -360,7 +329,7 @@ ds_jax_neural_optimize <- function(basis_np, obs_np, valid_mask_np,
 #' Install Python dependencies for the JAX backend
 #'
 #' Convenience wrapper around [reticulate::py_install()] that installs the
-#' packages required by the `diffiscape_jax` module.
+#' packages required by the `diffiscape` module.
 #'
 #' @param method Installation method passed to [reticulate::py_install()]
 #'   (`"auto"`, `"virtualenv"`, or `"conda"`).
@@ -379,8 +348,7 @@ ds_install_jax_deps <- function(method  = "auto",
          call. = FALSE)
   }
 
-  pkgs <- c("jax", "jaxlib", "jaxscape", "amjax", "lineax", "numpy",
-             "jaxopt", "optax", "flax", "numpyro")
+  pkgs <- "diffiscape>=0.1.0,<0.2"
   if (isTRUE(gpu)) {
     message("Note: for GPU support, install JAX with CUDA following ",
             "https://jax.readthedocs.io/en/latest/installation.html")
@@ -401,63 +369,6 @@ ds_install_jax_deps <- function(method  = "auto",
 # R/torch_pipeline.R.
 # ============================================================================
 
-#' Build a Flax resistance model and initialise parameters
-#'
-#' Internal helper that constructs the appropriate Flax `nn.Module` from
-#' `model_type` and `model_config`, then initialises parameters with a dummy
-#' forward pass.
-#'
-#' @param basis_np numpy array of basis values (used for model init shape).
-#' @param model_type Character; `"mlp"`, `"conv"`, `"spline_gam"`, or `"irl"`.
-#' @param model_config Named list of model-specific knobs (forwarded to the
-#'   Flax module constructor).
-#' @param seed Integer; PRNG seed for parameter initialisation.
-#' @return A named list with `model` (Flax Module) and `init_params` (pytree).
-#' @keywords internal
-.build_flax_model <- function(basis_np, model_type, model_config, seed) {
-
-  jax <- reticulate::import("jax", convert = FALSE)
-  resistance_mod <- reticulate::import_from_path(
-    "diffiscape_jax.resistance",
-    path = system.file("python", package = "DiffiScape")
-  )
-
-  cfg <- if (length(model_config) > 0) model_config else list()
-
-  model <- switch(model_type,
-    mlp = resistance_mod$ResistanceMLP(
-      features = as.integer(cfg$hidden_dim %||% 32L),
-      n_hidden = as.integer(cfg$n_hidden_layers %||% 2L)
-    ),
-    conv = resistance_mod$ResistanceConv(
-      channels = as.integer(cfg$conv_channels %||% 16L),
-      n_layers = as.integer(cfg$n_conv_layers %||% 3L)
-    ),
-    spline_gam = {
-      # Infer n_covariates from basis shape
-      np <- reticulate::import("numpy", convert = FALSE)
-      shape <- reticulate::py_to_r(np$array(basis_np$shape))
-      n_cov <- if (length(shape) > 1) shape[2] else 1L
-      resistance_mod$ResistanceSpline(
-        n_knots     = as.integer(cfg$n_knots %||% 10L),
-        n_covariates = as.integer(n_cov)
-      )
-    },
-    irl = resistance_mod$ResistanceIRL(
-      hidden_dim = as.integer(cfg$hidden_dim %||% 32L),
-      n_hidden   = as.integer(cfg$n_hidden_layers %||% 2L)
-    ),
-    stop("Unknown model_type: ", model_type,
-         ". Use 'mlp', 'conv', 'spline_gam', or 'irl'.", call. = FALSE)
-  )
-
-  rng_key <- jax$random$PRNGKey(as.integer(seed))
-  init_params <- model$`init`(rng_key, basis_np)
-
-  list(model = model, init_params = init_params)
-}
-
-
 #' NUTS posterior sampling via NumPyro
 #'
 #' Draws posterior samples for the parameters of a Flax neural-network
@@ -474,7 +385,7 @@ ds_install_jax_deps <- function(method  = "auto",
 #' @param parameterization Character; `"resistance"` (default) or
 #'   `"permeability"`.
 #' @param model_type Character; Flax model architecture -- `"mlp"` (default),
-#'   `"conv"`, `"spline_gam"`, or `"irl"`.
+#'   `"conv"`, `"spline_gam"` (legacy RBF).
 #' @param model_config Named list of model-specific knobs forwarded to the
 #'   Flax module constructor (e.g., `list(hidden_dim = 32L)`).
 #' @param seed Integer; random seed (default 42).
@@ -523,14 +434,6 @@ ds_jax_sample_nuts <- function(basis_stack,
   if (is.null(output_dir)) output_dir <- tempdir()
   if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
 
-  # Lazy-load the sample module
-
-  if (is.null(.jax_env$sample_module)) {
-    module_dir <- system.file("python", package = "DiffiScape")
-    .jax_env$sample_module <- reticulate::import_from_path(
-      "diffiscape_jax.sample", path = module_dir)
-  }
-
   if (verbose) message("\n  Preparing data for NUTS sampling (JAX)...")
   prep <- .prepare_backend_inputs(basis_stack, obs_points)
   if (verbose) {
@@ -539,9 +442,7 @@ ds_jax_sample_nuts <- function(basis_stack,
     message(sprintf("    Observations: %d GPS fixes", prep$n_obs))
   }
 
-  # Build the Flax model and initialise parameters
   if (verbose) message(sprintf("    Model type: %s", model_type))
-  flax_built <- .build_flax_model(prep$basis_np, model_type, model_config, seed)
 
   if (verbose) {
     message(sprintf("\n  Starting NUTS (No-U-Turn Sampler) via NumPyro..."))
@@ -549,9 +450,10 @@ ds_jax_sample_nuts <- function(basis_stack,
                     n_samples, warmup, warmup + n_samples))
   }
 
-  result <- .jax_env$sample_module$run_nuts_sampling(
-    flax_model       = flax_built$model,
-    init_params      = flax_built$init_params,
+  result <- .jax_env$package$sample(
+    method           = "nuts",
+    model_type       = model_type,
+    model_config     = if (length(model_config)) model_config else NULL,
     basis_values     = prep$basis_np,
     obs_counts       = prep$obs_np,
     valid_mask       = prep$vmask_np,
@@ -647,13 +549,6 @@ ds_jax_sample_advi <- function(basis_stack,
   if (is.null(output_dir)) output_dir <- tempdir()
   if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
 
-  # Lazy-load the sample module
-  if (is.null(.jax_env$sample_module)) {
-    module_dir <- system.file("python", package = "DiffiScape")
-    .jax_env$sample_module <- reticulate::import_from_path(
-      "diffiscape_jax.sample", path = module_dir)
-  }
-
   if (verbose) message("\n  Preparing data for ADVI (JAX)...")
   prep <- .prepare_backend_inputs(basis_stack, obs_points)
   if (verbose) {
@@ -662,18 +557,17 @@ ds_jax_sample_advi <- function(basis_stack,
     message(sprintf("    Observations: %d GPS fixes", prep$n_obs))
   }
 
-  # Build the Flax model and initialise parameters
   if (verbose) message(sprintf("    Model type: %s", model_type))
-  flax_built <- .build_flax_model(prep$basis_np, model_type, model_config, seed)
 
   if (verbose) {
     message(sprintf("\n  Starting ADVI via NumPyro..."))
     message(sprintf("    Max iterations: %d, LR: %.4f", max_iter, lr))
   }
 
-  result <- .jax_env$sample_module$run_advi_sampling(
-    flax_model       = flax_built$model,
-    init_params      = flax_built$init_params,
+  result <- .jax_env$package$sample(
+    method           = "advi",
+    model_type       = model_type,
+    model_config     = if (length(model_config)) model_config else NULL,
     basis_values     = prep$basis_np,
     obs_counts       = prep$obs_np,
     valid_mask       = prep$vmask_np,

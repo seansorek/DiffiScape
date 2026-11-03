@@ -57,7 +57,7 @@
 #'   with element `solver` (the canonical, post-alias-collapse value).
 #' @keywords internal
 solver_spec <- function(solver,
-                         choices = c("surrogate", "gradient", "enzyme",
+                         choices = c("adam", "lbfgs", "surrogate", "gradient", "enzyme",
                                      "torch")) {
   solver <- match.arg(solver, choices)
 

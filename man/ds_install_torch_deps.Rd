@@ -2,24 +2,20 @@
 % Please edit documentation in R/torch_bridge.R
 \name{ds_install_torch_deps}
 \alias{ds_install_torch_deps}
-\title{Install Python dependencies for the torch backend}
+\title{Install the replacement numerical core}
 \usage{
 ds_install_torch_deps(method = "auto", envname = NULL, gpu = FALSE)
 }
 \arguments{
-\item{method}{Installation method passed to \code{\link[reticulate:py_install]{reticulate::py_install()}}
-(\code{"auto"}, \code{"virtualenv"}, or \code{"conda"}).}
+\item{method}{Installation method passed to reticulate.}
 
-\item{envname}{Optional virtualenv/conda environment name.}
+\item{envname}{Optional environment name.}
 
-\item{gpu}{If \code{TRUE}, also install \code{cupy-cuda12x} for the GPU circuit
-solver. Requires a CUDA 12 capable GPU and matching CUDA toolkit.}
+\item{gpu}{Select a separately configured JAX accelerator environment.}
 }
 \value{
-Invisible \code{TRUE}.
+Invisible TRUE after installation.
 }
 \description{
-Convenience wrapper around \code{\link[reticulate:py_install]{reticulate::py_install()}} that installs the
-packages required by \verb{05_torch_pipeline.py}. Optionally installs
-\code{cupy-cuda12x} for GPU-accelerated circuit solves.
+Install the replacement numerical core
 }

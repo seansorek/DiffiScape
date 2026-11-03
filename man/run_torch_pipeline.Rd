@@ -2,7 +2,7 @@
 % Please edit documentation in R/torch_pipeline.R
 \name{run_torch_pipeline}
 \alias{run_torch_pipeline}
-\title{Optimise resistance with a PyTorch neural network}
+\title{Deprecated physical-model fitting entry point}
 \usage{
 run_torch_pipeline(
   basis_stack,
@@ -173,19 +173,8 @@ spline.}
 \item{intensity_log1p_max}{Numeric; clamp on \code{log1p(connectivity)}.}
 }
 \value{
-A list with \code{best_params}, \code{best_loglik}, \code{alpha}, \code{gamma},
-\code{resistance_raster}, \code{connectivity_raster}, \code{intensity_raster},
-\code{loss_history}, \code{best_epoch}, \code{n_params}, \code{n_epochs_run},
-\code{total_time}, \code{method}, \code{distribution}, \code{effective_loglinear},
-\code{model_type}, plus the diagnostics returned by the Python optimiser.
+The physical JAX fitting result; no Torch checkpoint is written.
 }
 \description{
-Trains a neural-network resistance surface (MLP / Conv / Spline-GAM) by
-backpropagating through a differentiable circuit solver, maximising a
-Poisson point-process log-likelihood with smoothness regularisation.
-}
-\details{
-Wraps \code{run_torch_optimization()} in the bundled Python module
-\verb{diff_cs/05_torch_pipeline.py}. Requires \code{\link[=ds_torch_setup]{ds_torch_setup()}} to have been
-called.
+Translates supported settings to run_jax_pipeline() using JAX. Old checkpoint UQ, absorption curricula, neural warm starts and Torch-specific devices require migration. Use ds_posterior() for NumPyro uncertainty.
 }

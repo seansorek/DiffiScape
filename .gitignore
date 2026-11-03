@@ -20,3 +20,7 @@ check_out/
 *.Rcheck/
 pe/
 nul
+# Python package build outputs
+python/build/
+python/dist/
+*.egg-info/

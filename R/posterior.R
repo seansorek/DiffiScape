@@ -447,60 +447,10 @@ loo_cv_surrogate <- function(opt_result) {
   }
   surrogate_config <- opt_result$config$surrogate_config %||% list()
 
-  X <- as.matrix(opt_result$X_evaluated)
-  y <- opt_result$y_evaluated
-
-  # Failed outer-loop evaluations are recorded as NA (see #101) rather than
-  # a fixed sentinel value, and are excluded here rather than fed into the
-  # LOO refits / residual calculations.
-  ok <- is.finite(y)
-  X  <- X[ok, , drop = FALSE]
-  y  <- y[ok]
-
-  n <- length(y)
-
-  loo_pred  <- numeric(n)
-  loo_sd    <- numeric(n)
-
-  for (i in seq_len(n)) {
-    fit_loo <- tryCatch(
-      fit_surrogate(X[-i, , drop = FALSE], y[-i],
-                    config = surrogate_config),
-      error = function(e) NULL
-    )
-    if (is.null(fit_loo)) {
-      loo_pred[i] <- NA
-      loo_sd[i]   <- NA
-      next
-    }
-    xi <- matrix(X[i, ], nrow = 1)
-    colnames(xi) <- colnames(X)
-    p <- predict_surrogate(fit_loo, xi)
-    loo_pred[i] <- p$mean
-    loo_sd[i]   <- p$sd
-  }
-
-  valid <- !is.na(loo_pred)
-  resid <- y[valid] - loo_pred[valid]
-  rmse  <- sqrt(mean(resid^2))
-  ss_res <- sum(resid^2)
-  ss_tot <- sum((y[valid] - mean(y[valid]))^2)
-  r2 <- 1 - ss_res / ss_tot
-
-  # 95% coverage
-  z95 <- stats::qnorm(0.975)
-  in_ci <- abs(resid) <= z95 * loo_sd[valid]
-  coverage <- mean(in_ci, na.rm = TRUE)
-
-  list(
-    observed    = y[valid],
-    predicted   = loo_pred[valid],
-    residuals   = resid,
-    rmse        = rmse,
-    r_squared   = r2,
-    coverage_95 = coverage,
-    n_failed    = sum(!valid)
-  )
+  result <- .py_surrogate("loo_cv", as.matrix(opt_result$X_evaluated),
+    as.numeric(opt_result$y_evaluated), if (length(surrogate_config)) surrogate_config else NULL)
+  for (name in c("observed", "predicted", "residuals")) result[[name]] <- as.numeric(result[[name]])
+  result
 }
 
 
@@ -514,19 +464,12 @@ loo_cv_surrogate <- function(opt_result) {
 #' @export
 posterior_summary <- function(samples, prob = 0.95) {
   if (nrow(samples) == 0) return(data.frame())
-  alpha <- (1 - prob) / 2
-  qs    <- c(alpha, 0.5, 1 - alpha)
-
-  params <- setdiff(names(samples), "loglik")
-  out <- data.frame(parameter = params, stringsAsFactors = FALSE)
-  out$mean   <- vapply(params, function(p) mean(samples[[p]], na.rm = TRUE), numeric(1))
-  out$sd     <- vapply(params, function(p) stats::sd(samples[[p]], na.rm = TRUE), numeric(1))
-
-  quantiles <- t(vapply(params, function(p) {
-    stats::quantile(samples[[p]], probs = qs, na.rm = TRUE)
-  }, numeric(3)))
-  colnames(quantiles) <- c("lower", "median", "upper")
-  cbind(out, as.data.frame(quantiles), row.names = NULL)
+  if (!ds_jax_check()) ds_jax_setup()
+  module <- reticulate::import("diffiscape.diagnostics", convert = FALSE)
+  out <- reticulate::py_to_r(module$posterior_summary(as.list(samples), prob))
+  out$parameter <- as.character(out$parameter)
+  out[-1] <- lapply(out[-1], as.numeric)
+  as.data.frame(out, stringsAsFactors = FALSE)
 }
 
 

@@ -2,7 +2,7 @@
 % Please edit documentation in R/pipeline.R
 \name{diffiscape}
 \alias{diffiscape}
-\title{Run the full DiffiScape pipeline}
+\title{Fit a complete landscape connectivity workflow}
 \usage{
 diffiscape(
   obs_data,
@@ -22,7 +22,7 @@ diffiscape(
   rescale_basis = TRUE,
   pattern = "*.tif",
   omniscape_settings = list(),
-  solver = c("torch", "surrogate", "gradient", "enzyme")
+  solver = c("adam", "lbfgs", "torch", "surrogate", "gradient", "enzyme")
 )
 }
 \arguments{
@@ -71,22 +71,14 @@ every connectivity step (final refit, posterior sampling, and
 diagnostics).  Recognised entries: \code{radius} (default \code{13L}),
 \code{block_size} (default \code{5L}), \code{cleanup} (default \code{TRUE}).}
 
-\item{solver}{Character; \code{"torch"} (default, PyTorch log-linear resistance),
-\code{"surrogate"} (GP surrogate optimiser), \code{"gradient"} (L-BFGS / Adam via
-JAX auto-diff), or \code{"enzyme"} (deprecated alias for \code{"gradient"}). For \code{"torch"},
-\code{\link[=run_torch_pipeline]{run_torch_pipeline()}} fits resistance and intensity jointly in a
-single call, so the separate intensity-fitting step is skipped and
-\code{posterior}/\code{diagnostics}/\code{ppc} are \code{NULL} (those require either a
-parametric \code{bounds}-based Laplace approximation or a
-\code{fit_intensity_nb()}/\code{fit_intensity_gam()}-shaped fit object that the
-torch backend does not produce).}
+\item{solver}{Optimization method, default \code{"adam"}; \code{"lbfgs"} uses bounded
+SciPy optimization. \code{"surrogate"} and legacy \code{"gradient"} select window
+effective resistance. Deprecated \code{"torch"} translates to physical JAX.
+Joint physical fits support NumPyro posterior inference and diagnostics.}
 }
 \value{
-A list with \code{obs_points}, \code{basis_stack}, \code{opt_result},
-\code{intensity_fit}, \code{posterior}, \code{diagnostics}.
+Optimization, intensity, posterior and diagnostic results.
 }
 \description{
-A single high-level function that chains every step of the pipeline:
-data loading, basis creation, optimisation, intensity fitting,
-posterior inference, and diagnostics.
+Uses the installed Python core for physical-current resistance and intensity fitting by default. The surrogate workflow supports R-only mgcv and custom callbacks. Physical posterior inference uses NumPyro with proper priors; inspect diagnostics before inference.
 }

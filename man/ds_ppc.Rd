@@ -18,7 +18,8 @@ ds_ppc(
   thin = 1L,
   seed = NULL,
   plot = TRUE,
-  verbose = TRUE
+  verbose = TRUE,
+  basis_stack = NULL
 )
 }
 \arguments{
@@ -56,6 +57,8 @@ Supported: \code{"total_count"}, \code{"vmi_ratio"}, \code{"mean_deviance"}.}
 \item{plot}{Logical; produce PPC diagnostic plots.}
 
 \item{verbose}{Logical; emit progress messages.}
+
+\item{basis_stack}{Fitted basis rasters, required for physical posterior prediction.}
 }
 \value{
 A list with class \code{"ds_ppc"}:

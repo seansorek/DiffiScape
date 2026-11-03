@@ -38,7 +38,7 @@ ds_jax_sample_nuts(
 \code{"permeability"}.}
 
 \item{model_type}{Character; Flax model architecture -- \code{"mlp"} (default),
-\code{"conv"}, \code{"spline_gam"}, or \code{"irl"}.}
+\code{"conv"}, \code{"spline_gam"} (legacy RBF).}
 
 \item{model_config}{Named list of model-specific knobs forwarded to the
 Flax module constructor (e.g., \code{list(hidden_dim = 32L)}).}

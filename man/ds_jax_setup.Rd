@@ -16,7 +16,7 @@ ds_jax_setup(python = NULL, force = FALSE)
 \code{TRUE} (invisibly) on success.
 }
 \description{
-Loads the bundled \code{diffiscape_jax} package via \pkg{reticulate},
+Loads the installed \code{diffiscape} package via \pkg{reticulate},
 verifying that the required Python packages (\code{jax}, \code{jaxlib},
 \code{jaxscape}, \code{numpy}) are available. Call once per R session before
 any of the JAX-based solvers.
