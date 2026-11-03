@@ -1,6 +1,6 @@
 """MAP optimisation entry point: run_torch_optimization.
 
-End-to-end neural-network/spline/IRL resistance + differentiable circuit
+End-to-end neural-network/spline resistance + differentiable circuit
 solve + Poisson point-process likelihood, trained with Adam.
 """
 import math
@@ -20,7 +20,7 @@ from .autograd_functions import (
     _DiffOmniscapeSolveFn,
 )
 from .resistance_nets import (
-    LogLinearResistanceNet, ResistanceNet, ConvResistanceNet, IRLResistanceNet,
+    LogLinearResistanceNet, ResistanceNet, ConvResistanceNet,
     SplineResistanceNet,
     _ppp_loglik,
 )
@@ -97,11 +97,6 @@ def run_torch_optimization(
     intensity_degree=3,          # B-spline degree for intensity spline
     lambda_init_intensity=2.0,   # Initial log-lambda for intensity smoothing
     intensity_log1p_max=10.0,    # Upper knot boundary for log(1+C)
-    # IRL (value-shaped) resistance — model_type="irl"
-    beta=1.0,                    # Soft value-iteration temperature
-    gamma_d=0.9,                 # Discount / leakage of the MDP (must be < 1)
-    n_value_iter=60,             # Soft value-iteration steps (unrolled)
-    value_scale_init=1.0,        # Initial scale in log R = offset - scale * V
 ):
     """
     End-to-end neural-network PPP-circuit optimization.
@@ -152,6 +147,9 @@ def run_torch_optimization(
         resistance, connectivity, log_lambda, alpha, gamma,
         loglik, loss_history, best_epoch, n_params, total_time
     """
+    if model_type not in ("loglinear", "mlp", "conv", "spline_gam"):
+        raise ValueError("model_type must be loglinear, mlp, conv, or spline_gam")
+
     t0_all = time.time()
 
     if seed is not None:
@@ -203,19 +201,12 @@ def run_torch_optimization(
     use_conv = (model_type == "conv")
     use_spline = (model_type == "spline_gam")
     use_loglinear = (model_type == "loglinear")
-    use_irl = (model_type == "irl")
-    # Grid-context nets (conv encoder, IRL value iteration) need the 2D basis
-    # grid and the (basis_grid, valid_mask, basis_valid) forward signature.
-    use_grid = use_conv or use_irl
-
     if verbose:
         n_obs = int(obs_counts_np.sum())
         n_obs_cells = int((obs_counts_np > 0).sum())
         print(f"\n{'='*60}")
         if use_spline:
             print(f"TORCH PIPELINE: P-spline GAM Resistance + Circuit + PPP")
-        elif use_irl:
-            print(f"TORCH PIPELINE: IRL value-shaped Resistance + Circuit + PPP")
         else:
             print(f"TORCH PIPELINE: Neural Net Resistance + Circuit + PPP")
         print(f"{'='*60}")
@@ -267,9 +258,6 @@ def run_torch_optimization(
                 print(f"  MLP dropout: {dropout}")
             if intensity_hidden > 0:
                 print(f"  Learned intensity MLP: 1 → {intensity_hidden} → 1")
-        if use_irl:
-            print(f"  Soft value iteration: β={beta}, γ_d={gamma_d}, "
-                  f"{n_value_iter} iters → log R = offset − scale·V")
         if warmup_epochs > 0:
             print(f"  LR warm-up: {warmup_epochs} epochs")
         if absorption_schedule is not None:
@@ -290,9 +278,9 @@ def run_torch_optimization(
     basis_t = torch.tensor(basis_values_np, dtype=torch.float64, device=dev)
     obs_t = torch.tensor(obs_counts_np, dtype=torch.float64, device=dev)
 
-    # ---- 2D grid for grid-context nets (conv encoder / IRL value iteration) ----
+    # ---- 2D grid for convolutional encoder ----
     basis_grid_t = None
-    if use_grid:
+    if use_conv:
         n_cells = n_rows * n_cols
         grid_np = np.zeros((n_features, n_cells), dtype=np.float64)
         grid_np[:, valid_mask_np] = basis_values_np.T  # fill valid; rest stays 0
@@ -322,13 +310,6 @@ def run_torch_optimization(
             hidden=hidden_dim, n_mlp_layers=n_hidden_layers,
             dropout=dropout, use_dilated=use_dilated,
             intensity_hidden=intensity_hidden,
-        ).double().to(dev)
-    elif use_irl:
-        net = IRLResistanceNet(
-            n_features, hidden=hidden_dim, n_layers=n_hidden_layers,
-            vi_beta=float(beta), gamma_d=float(gamma_d),
-            n_value_iter=int(n_value_iter),
-            value_scale_init=float(value_scale_init),
         ).double().to(dev)
     elif use_loglinear:
         net = LogLinearResistanceNet(n_features).double().to(dev)
@@ -441,7 +422,7 @@ def run_torch_optimization(
             opt.zero_grad()
 
             # Forward: covariates → R → circuit → C → log λ → loglik
-            if use_grid:
+            if use_conv:
                 net.train()
                 R, log_R_raw = net.forward_with_log_R(
                     basis_grid_t, valid_mask_np, basis_t)
@@ -507,9 +488,6 @@ def run_torch_optimization(
             loss.backward()
             torch.nn.utils.clip_grad_norm_(all_params_flat, grad_clip)
 
-            opt.step()
-            sched.step()
-
         except RuntimeError as e:
             if "CG did not converge" in str(e):
                 if verbose:
@@ -537,6 +515,9 @@ def run_torch_optimization(
         else:
             wait += 1
 
+        opt.step()
+        sched.step()
+
         if verbose and (ep % 10 == 0 or ep < 5 or ep == n_epochs - 1):
             abs_str = (f", α_abs={absorption_ep:.4f}"
                        if absorption_schedule is not None and use_absorption else "")
@@ -545,7 +526,7 @@ def run_torch_optimization(
                   f"{sched.get_last_lr()[0]:10.1e}  {elapsed:5.1f}s{abs_str}")
             with torch.no_grad():
                 net.eval()
-                if use_grid:
+                if use_conv:
                     R_mon, logR_mon = net.forward_with_log_R(
                         basis_grid_t, valid_mask_np, basis_t)
                 else:
@@ -600,7 +581,7 @@ def run_torch_optimization(
     # ---- Final forward (no grad) ----
     net.eval()
     with torch.no_grad():
-        if use_grid:
+        if use_conv:
             R_fin = net(basis_grid_t, valid_mask_np, basis_t).cpu().numpy()
         else:
             R_fin = net(basis_t).cpu().numpy()
@@ -712,13 +693,6 @@ def run_torch_optimization(
                 "lambda_init_intensity": float(lambda_init_intensity),
                 "intensity_log1p_max": float(intensity_log1p_max),
             })
-        if use_irl:
-            save_dict.update({
-                "beta": float(beta),
-                "gamma_d": float(gamma_d),
-                "n_value_iter": int(n_value_iter),
-                "value_scale_init": float(value_scale_init),
-            })
         torch.save(save_dict, os.path.join(output_dir, "resistance_nn.pt"))
 
     if verbose:
@@ -732,7 +706,7 @@ def run_torch_optimization(
             net.get_effective_loglinear(), dtype=np.float64)
     else:
         with torch.no_grad():
-            skip_w = net.skip.weight.squeeze().cpu().numpy().copy()
+            skip_w = net.skip.weight.reshape(-1).cpu().numpy().copy()
             skip_b = net.skip.bias.cpu().item()
         effective_loglinear = np.concatenate([[skip_b], skip_w])
 

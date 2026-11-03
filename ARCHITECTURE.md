@@ -14,7 +14,7 @@ for which solver**, and where the circuit-theory math is implemented.
   rasters+GPS   │  basis_functions → ds_optimize → intensity →  │
                 │  posterior / diagnostics / predict            │
                 └───────┬───────────────┬───────────────┐───────┘
-            solver=      │ "surrogate"    │ "gradient"    │ "torch" / "irl"
+            solver=      │ "surrogate"    │ "gradient"    │ "torch"
                          ▼                ▼                ▼
                   JAX surrogate    JAX autodiff       PyTorch diff.
                   (DiceKriging     circuit solver +   circuit solver
@@ -45,11 +45,10 @@ for which solver**, and where the circuit-theory math is implemented.
 | `"surrogate"` (default) | `optimize_resistance_surrogate` | **JAX** — surrogate GP emulation + cumulative current | None; Bayesian optimization over a DiceKriging GP surrogate (LHS init + Thompson sampling / expected improvement) |
 | `"gradient"` | `optimize_resistance_gradient` | **JAX** — pure-JAX autodiff circuit solver | JAX `vmap` + `grad` → Adam / L-BFGS |
 | `"torch"` | `run_torch_pipeline` | **PyTorch** — differentiable circuit solver | torch autograd (custom `Function`s) → Adam / Bayesian samplers |
-| `"irl"` | `run_torch_pipeline` (`model_type="irl"`) | **PyTorch** | Same as `torch`, with the value-iteration (IRL) resistance net |
 
 Rule of thumb: **surrogate** = robust, derivative-free, good for moderate-D problems;
 **gradient** = exact JAX autodiff gradients, flexible parametric models;
-**torch/irl** = flexible neural / spline / value-shaped resistance and full Bayesian posteriors.
+**torch** = flexible neural / spline resistance and full Bayesian posteriors.
 
 ## The circuit-solver implementations
 
@@ -61,7 +60,7 @@ Laplacian solve → current density) is implemented in two places:
    solvers. Includes cumulative current (global and windowed Omniscape-style).
 
 2. **`inst/python/diff_cs/`**
-   — PyTorch implementations. Used by `torch` / `irl` solvers. Includes custom autograd
+   — PyTorch implementations. Used by `torch` solvers. Includes custom autograd
    `Function`s wrapping the circuit solve for backpropagation.
 
 ### JAX backend (`inst/python/diffiscape_jax/`)
@@ -88,8 +87,8 @@ implementation lives in the sibling `torch_pipeline/` package, organized into:
 | `torch_pipeline/constants.py` | Shared numerical defaults (`DEFAULT_R_MIN/MAX/CLAMP_BETA/CG_TOL`) and GPU/cupy availability flags. |
 | `torch_pipeline/_module_loaders.py` | Lazy file-path imports of `03_circuit_solver.py` / `04_diff_omniscape.py` (siblings of `05_torch_pipeline.py`, one directory up from this package). |
 | `torch_pipeline/autograd_functions.py` | Cupy/torch DLPack bridges, adjoint-gradient math, and the custom `torch.autograd.Function` subclasses wrapping the circuit solves (`_CircuitSolveFn`, `_AbsorptionCircuitSolveFn`, `_DiffOmniscapeSolveFn`) plus the diff_omniscape bilinear interpolation/adjoint helpers. |
-| `torch_pipeline/resistance_nets.py` | Resistance nets — `ResistanceNet` (MLP), `ConvResistanceNet`, `IRLResistanceNet`, `SplineResistanceNet` (P-spline GAM, with its B-spline basis helpers) — plus the shared `_ppp_loglik` Poisson log-likelihood. |
-| `torch_pipeline/verify_gradients.py` | Finite-difference gradient checks (`verify_circuit_gradient`, `verify_conv_gradient`, `verify_softrl_gradient`, `verify_spline_gradient`). |
+| `torch_pipeline/resistance_nets.py` | Resistance nets — `ResistanceNet` (MLP), `ConvResistanceNet`, `SplineResistanceNet` (P-spline GAM, with its B-spline basis helpers) — plus the shared `_ppp_loglik` Poisson log-likelihood. |
+| `torch_pipeline/verify_gradients.py` | Finite-difference gradient checks (`verify_circuit_gradient`, `verify_conv_gradient`, `verify_spline_gradient`). |
 | `torch_pipeline/optimization.py` | `run_torch_optimization` — MAP fitting via Adam. |
 | `torch_pipeline/samplers/common.py` | Shared Bayesian-sampler setup: `_setup_sampling_state` (checkpoint loading, network reconstruction, parameter collection) and `_compute_ess_chain` (effective sample size), used by all three samplers below. |
 | `torch_pipeline/samplers/langevin.py`, `hmc.py`, `advi.py` | `run_langevin_sampling` (MALA/ULA), `run_hmc_sampling` (NUTS), `run_advi`. |

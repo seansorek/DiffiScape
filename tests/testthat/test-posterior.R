@@ -113,7 +113,7 @@ test_that("posterior_summary excludes loglik column from parameters", {
   bounds <- list(r_0 = c(-2, 2), z_1 = c(-3, 3))
   X      <- .create_lhs_design(15, bounds)
   y      <- rowSums(as.matrix(X)^2) + rnorm(15, sd = 0.05)
-  gp     <- .fit_surrogate(as.matrix(X), y)
+  gp     <- fit_surrogate(as.matrix(X), y)$model
 
   best_idx <- which.min(y)
   best_params <- list(r_0 = X$r_0[best_idx], z_1 = X$z_1[best_idx])
@@ -474,7 +474,7 @@ test_that("posterior_sample warns when inner standard errors are NA", {
   bounds <- list(r_0 = c(-2, 2), z_1 = c(-3, 3))
   X      <- .create_lhs_design(n, bounds)
   y      <- rowSums(as.matrix(X)^2) + rnorm(n, sd = 0.05)
-  gp     <- .fit_surrogate(as.matrix(X), y)
+  gp     <- fit_surrogate(as.matrix(X), y)$model
 
   list(
     X_evaluated = X,
@@ -523,17 +523,14 @@ test_that("loo_cv_surrogate surfaces n_failed and shrinks vectors when LOO fits 
   opt_result <- .make_loo_opt_result(seed = 4)
   n <- length(opt_result$y_evaluated)
 
-  # Force the 1st and 3rd leave-one-out refits to fail. loo_cv_surrogate()
-  # dispatches through fit_surrogate() -> .fit_surrogate_gp() for the "gp"
-  # backend, so that's the function to intercept (not the legacy
-  # .fit_surrogate() wrapper, which is no longer on this code path).
-  real_fit_surrogate_gp <- .fit_surrogate_gp
+  # Fail two refits at the public fitting boundary.
+  real_fit_surrogate <- fit_surrogate
   call_count <- 0L
   local_mocked_bindings(
-    .fit_surrogate_gp = function(X, y, config = list()) {
+    fit_surrogate = function(X, y, type = "gp", config = list()) {
       call_count <<- call_count + 1L
       if (call_count %in% c(1L, 3L)) stop("forced failure")
-      real_fit_surrogate_gp(X, y, config)
+      real_fit_surrogate(X, y, type = type, config = config)
     },
     .package = "DiffiScape"
   )

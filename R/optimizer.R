@@ -71,14 +71,8 @@
 #'
 #' @section Surrogate model:
 #' \describe{
-#'   \item{`surrogate_type`}{Character. `"gp"` (Gaussian Process via
-#'     \pkg{DiceKriging}, default) or `"rf"` (Random Forest via
-#'     \pkg{ranger}). Selects the model used to approximate the outer-loop
-#'     objective surface for the Thompson Sampling / Expected Improvement
-#'     acquisition loop. See [fit_surrogate()].}
 #'   \item{`surrogate_config`}{Named list of extra arguments forwarded to
-#'     the surrogate constructor (e.g. `list(num.trees = 500)` for `"rf"`).
-#'     Default: `list()`.}
+#'     [DiceKriging::km()]. Default: `list()`.}
 #' }
 #'
 #' @section Connectivity solver:
@@ -130,8 +124,7 @@ default_optimizer_config <- function() {
     # Resistance link
     resistance_link = NULL,    # resistance_link object (NULL -> link_exp())
 
-    # Surrogate model for the outer loop: "gp" (default) or "rf"
-    surrogate_type   = "gp",
+    # GP surrogate for the outer loop
     surrogate_config = list(),
 
     # Omniscape / connectivity
@@ -521,10 +514,8 @@ optimize_resistance_gradient <- function(basis_stack,
 #' @param resistance_params Resistance parameter vector or list.
 #' @param basis_stack A [terra::SpatRaster] of basis functions.
 #' @param obs_points Data.frame with `x, y` columns.
-#' @param distribution `"negbin"` or `"gam"`.  `NULL` is treated as
-#'   `"negbin"` (the formal default does not protect against an explicit
-#'   `NULL` argument, since R argument matching still binds the parameter
-#'   in that case).
+#' @param distribution Count family (`"negbin"`, `"poisson"`, or `"zinb"`),
+#'   or `"gam"`. `family` overrides the count family. `NULL` uses `"negbin"`.
 #' @param omniscape_settings List with `radius`, `block_size`, `cleanup`.
 #' @param intensity_config List from [default_intensity_config()].
 #' @param covariates_obs Named list of covariate vectors at obs.
@@ -543,6 +534,7 @@ optimize_resistance_gradient <- function(basis_stack,
 #' @param available_covariates Named list of covariate vectors at
 #'   `available_points` locations.  Required when `available_points` is
 #'   supplied and the intensity model includes covariates.
+#' @param .min_obs Internal minimum valid observation count for Laplace refits.
 #' @return A list with `loglik`, `intensity_params`, `intensity_se`,
 #'   `hessian`, `total_time`, `omniscape_time`, `convergence`, `distribution`.
 #' @export
@@ -559,7 +551,8 @@ evaluate_full_model <- function(resistance_params,
                                 link                = link_exp(),
                                 family              = NULL,
                                 available_points    = NULL,
-                                available_covariates = NULL) {
+                                available_covariates = NULL,
+                                .min_obs            = 0L) {
 
   # Guard against an explicit NULL distribution being passed through by a
   # caller (e.g. ds_fit_intensity() forwarding opt_result$distribution
@@ -571,6 +564,10 @@ evaluate_full_model <- function(resistance_params,
   if (distribution == "gam" && !is.null(available_points)) {
     stop("available_points is not supported with distribution = 'gam'.",
          call. = FALSE)
+  }
+
+  if (distribution != "gam") {
+    family <- resolve_family(family %||% intensity_config$family, distribution)
   }
 
   t0 <- Sys.time()
@@ -621,6 +618,8 @@ evaluate_full_model <- function(resistance_params,
     }
   }
 
+  if (sum(valid) < .min_obs) return(list(loglik = -1e10))
+
   # Step 3b: extract connectivity at available locations (selection mode)
   avail_conn <- NULL
   if (!is.null(available_points)) {
@@ -650,11 +649,7 @@ evaluate_full_model <- function(resistance_params,
   }
 
   # Step 4: fit intensity
-  fit_fn <- switch(distribution,
-    negbin = fit_intensity_nb,
-    gam    = fit_intensity_gam,
-    stop("Unknown distribution: ", distribution, call. = FALSE)
-  )
+  fit_fn <- if (distribution == "gam") fit_intensity_gam else fit_intensity_nb
 
   if (verbose) message(sprintf("  Fitting intensity (%s)...", distribution))
   int_args <- list(
@@ -790,93 +785,28 @@ evaluate_full_model <- function(resistance_params,
 }
 
 
-# --------------- Surrogate model abstraction --------------------------------
-#
-# The outer loop needs a regression surrogate for the (expensive) objective
-# surface. Two backends are supported:
-#   "gp" - Gaussian Process regression via DiceKriging::km() (default;
-#          preserves all prior behaviour exactly).
-#   "rf" - Random Forest regression via ranger::ranger(), using its
-#          jackknife-after-bootstrap variance estimator to provide the
-#          predictive SD required by the TS/EI acquisition functions.
-#
-# Every surrogate is wrapped in a small S3 object (class "ds_surrogate")
-# carrying `$type`, `$model`, and `$predictor_names` so downstream code
-# (.thompson_sampling, .expected_improvement, .compute_dimension_scales,
-# loo_cv_surrogate, laplace_resistance) can call predict_surrogate() without
-# needing to know which backend produced the fit.
-# ------------------------------------------------------------------------
+# --------------- GP surrogate ----------------------------------------------
 
-#' Fit a surrogate regression model for the outer optimisation loop
+#' Fit a Gaussian-process surrogate for the outer optimisation loop
 #'
-#' Factory function that fits either a Gaussian Process (`"gp"`, the
-#' default and historical behaviour) or a Random Forest (`"rf"`) regression
-#' surrogate of the (expensive) outer-loop objective, and wraps it in a
-#' common `"ds_surrogate"` object so both backends can be used
-#' interchangeably by the Thompson Sampling / Expected Improvement
-#' acquisition functions and by [loo_cv_surrogate()] / [laplace_resistance()].
+#' Uses [DiceKriging::km()] with a Matern 5/2 kernel. The fitted surrogate
+#' supplies means and uncertainty for acquisition and posterior calculations.
 #'
-#' @param X Numeric matrix or data.frame of evaluated parameter vectors
-#'   (one row per evaluation).
-#' @param y Numeric vector of objective values (one per row of `X`).
-#' @param type Character; `"gp"` (default, [DiceKriging::km()] with a
-#'   Matern 5/2 kernel) or `"rf"` (Random Forest via [ranger::ranger()],
-#'   using jackknife-after-bootstrap variance estimates as the predictive
-#'   SD needed for acquisition). Defaults to `"gp"` so existing callers of
-#'   [optimize_resistance()] are unaffected.
-#' @param config Named list of extra arguments forwarded to the underlying
-#'   constructor (`DiceKriging::km()` for `"gp"`, `ranger::ranger()` for
-#'   `"rf"`).
-#' @return An object of class `"ds_surrogate"`: a list with `type`, `model`
-#'   (the fitted backend object), and `predictor_names`.
+#' @param X Numeric matrix or data.frame of evaluated parameter vectors.
+#' @param y Numeric vector of objective values, one per row of `X`.
+#' @param type Character; only `"gp"` is supported.
+#' @param config Named list of extra arguments forwarded to [DiceKriging::km()].
+#' @return A `"ds_surrogate"` object with `type`, `model`, and `predictor_names`.
 #' @seealso [predict_surrogate()], [default_optimizer_config()]
 #' @export
-fit_surrogate <- function(X, y, type = c("gp", "rf"), config = list()) {
-  type <- match.arg(type)
-
-  if (is.data.frame(X)) X <- as.matrix(X)
-  storage.mode(X) <- "double"
-
-  # Exact-duplicate rows make the GP correlation matrix singular; remove
-  # them for both backends for consistent behaviour.
-  keep <- !duplicated(X)
-  X <- X[keep, , drop = FALSE]
-  y <- y[keep]
-
-  pnames <- colnames(X)
-
-  model <- switch(type,
-    gp = .fit_surrogate_gp(X, y, config),
-    rf = .fit_surrogate_rf(X, y, config)
-  )
-
-  structure(
-    list(type = type, model = model, predictor_names = pnames),
-    class = "ds_surrogate"
-  )
-}
-
-
-#' Legacy raw-GP surrogate fit (backward-compatible internal helper)
-#'
-#' Equivalent to `fit_surrogate(X, y, type = "gp")$model`: fits a
-#' [DiceKriging::km()] GP directly and returns the raw `km` object (not the
-#' `ds_surrogate` wrapper). Kept for internal callers and historical tests
-#' that operate on the raw GP object directly.
-#'
-#' @keywords internal
-.fit_surrogate <- function(X, y, config = list()) {
-  if (is.data.frame(X)) X <- as.matrix(X)
+fit_surrogate <- function(X, y, type = "gp", config = list()) {
+  type <- match.arg(type, "gp")
+  X <- as.matrix(X)
   storage.mode(X) <- "double"
   keep <- !duplicated(X)
   X <- X[keep, , drop = FALSE]
   y <- y[keep]
-  .fit_surrogate_gp(X, y, config)
-}
 
-
-#' @keywords internal
-.fit_surrogate_gp <- function(X, y, config = list()) {
   args_default <- list(
     formula      = ~1,
     design       = X,
@@ -888,7 +818,7 @@ fit_surrogate <- function(X, y, type = c("gp", "rf"), config = list()) {
   )
   args <- utils::modifyList(args_default, config)
 
-  tryCatch(
+  model <- tryCatch(
     do.call(DiceKriging::km, args),
     error = function(e) {
       # Near-duplicate points can still make the estimated-nugget path fail.
@@ -900,80 +830,40 @@ fit_surrogate <- function(X, y, type = c("gp", "rf"), config = list()) {
       do.call(DiceKriging::km, args_fallback)
     }
   )
-}
 
-
-#' @keywords internal
-.fit_surrogate_rf <- function(X, y, config = list()) {
-  if (!requireNamespace("ranger", quietly = TRUE)) {
-    stop("Package 'ranger' is required for surrogate_type = 'rf'. ",
-         "Install with install.packages('ranger').", call. = FALSE)
-  }
-
-  df <- as.data.frame(X)
-  df$.y <- y
-
-  args_default <- list(
-    formula    = .y ~ .,
-    data       = df,
-    num.trees  = 500L,
-    keep.inbag = TRUE
+  structure(
+    list(type = type, model = model, predictor_names = colnames(X)),
+    class = "ds_surrogate"
   )
-  args <- utils::modifyList(args_default, config)
-  args$data <- df  # ensure config can't drop the response column
-  if (isFALSE(args$keep.inbag)) {
-    warning("surrogate_config$keep.inbag = FALSE is incompatible with the ",
-            "jackknife SD estimate used by predict_surrogate(); overriding ",
-            "to keep.inbag = TRUE.", call. = FALSE)
-    args$keep.inbag <- TRUE
-  }
-
-  do.call(ranger::ranger, args)
 }
 
 
-#' Predict from a surrogate model
+#' Predict from a GP surrogate model
 #'
-#' Uniform prediction interface across surrogate backends, returning a mean
-#' and predictive standard deviation regardless of whether the surrogate is
-#' a GP ([DiceKriging::km()]) or a Random Forest ([ranger::ranger()]).
-#'
-#' For backward compatibility, `surrogate` may also be a raw
-#' [DiceKriging::km()] object (as returned by the legacy internal
-#' `.fit_surrogate()` helper) in addition to a `"ds_surrogate"` object from
-#' [fit_surrogate()].
-#'
-#' @param surrogate A `"ds_surrogate"` object from [fit_surrogate()], or a
-#'   raw `km` object.
+#' @param surrogate A `"ds_surrogate"` object from [fit_surrogate()], or a raw
+#'   [DiceKriging::km()] object.
 #' @param newdata Numeric matrix or data.frame of query points.
 #' @return A list with `mean` and `sd`, one value per row of `newdata`.
 #' @export
 predict_surrogate <- function(surrogate, newdata) {
   if (is.vector(newdata)) newdata <- matrix(newdata, nrow = 1)
-  if (is.data.frame(newdata)) newdata <- as.matrix(newdata)
+  newdata <- as.matrix(newdata)
 
-  # Backward-compat: a raw km object (e.g. from the legacy .fit_surrogate())
   if (methods::is(surrogate, "km")) {
-    colnames(newdata) <- colnames(surrogate@X)
-    pred <- stats::predict(surrogate, newdata = newdata, type = "UK")
-    return(list(mean = pred$mean, sd = pred$sd))
-  }
-
-  if (!inherits(surrogate, "ds_surrogate")) {
-    stop("`surrogate` must be a `ds_surrogate` object from fit_surrogate() ",
-         "(or a raw km object).", call. = FALSE)
-  }
-
-  colnames(newdata) <- surrogate$predictor_names
-
-  if (surrogate$type == "gp") {
-    pred <- stats::predict(surrogate$model, newdata = newdata, type = "UK")
-    list(mean = pred$mean, sd = pred$sd)
+    model <- surrogate
+    colnames(newdata) <- colnames(model@X)
   } else {
-    pred <- stats::predict(surrogate$model, data = as.data.frame(newdata),
-                           type = "se", se.method = "jack")
-    list(mean = pred$predictions, sd = pred$se)
+    if (!inherits(surrogate, "ds_surrogate")) {
+      stop("`surrogate` must be a `ds_surrogate` or raw km object.", call. = FALSE)
+    }
+    if (!identical(surrogate$type, "gp")) {
+      stop("Only GP surrogates are supported; refit with type = 'gp'.", call. = FALSE)
+    }
+    model <- surrogate$model
+    colnames(newdata) <- surrogate$predictor_names
   }
+  pred <- stats::predict(model, newdata = newdata, type = "UK")
+  list(mean = pred$mean, sd = pred$sd)
 }
 
 
@@ -1156,8 +1046,7 @@ predict_surrogate <- function(surrogate, newdata) {
 #' @return A list with `best_params`, `best_loglik`, `X_evaluated`,
 #'   `y_evaluated`, `surrogate`, `bounds`, `n_evaluations`.  `surrogate` is
 #'   a `"ds_surrogate"` object (see [fit_surrogate()]); use
-#'   [predict_surrogate()] to query it regardless of the backend selected
-#'   via `config$surrogate_type` (`"gp"`, the default, or `"rf"`).
+#'   [predict_surrogate()] to query its mean and uncertainty.
 #' @export
 optimize_resistance <- function(basis_stack,
                                 obs_points,
@@ -1171,6 +1060,9 @@ optimize_resistance <- function(basis_stack,
                                 available_points     = NULL,
                                 available_covariates = NULL) {
  # TODO refactor this function to work with more flexible resistance models (e.g. non-linear, non-parametric, ML-based).
+  if (!is.null(config$surrogate_type) && config$surrogate_type != "gp") {
+    stop("Only GP surrogates are supported; remove surrogate_type = 'rf'.", call. = FALSE)
+  }
   withr::local_seed(config$seed)
 
   n_basis  <- terra::nlyr(basis_stack)
@@ -1189,7 +1081,6 @@ optimize_resistance <- function(basis_stack,
   distribution     <- config$distribution
   res_link         <- config$resistance_link %||% link_exp()
   int_family       <- config$family  # may be NULL (uses default for distribution)
-  surrogate_type   <- config$surrogate_type %||% "gp"
   surrogate_config <- config$surrogate_config %||% list()
 
   # ======= Phase 1: LHS ====================================================
@@ -1259,7 +1150,7 @@ optimize_resistance <- function(basis_stack,
       y_fit[bad] <- .failure_penalty(y_fit[!bad])
     }
 
-    surrogate <- fit_surrogate(X_eval, y_fit, type = surrogate_type,
+    surrogate <- fit_surrogate(X_eval, y_fit,
                                config = surrogate_config)
 
     best_idx   <- which.min(y_fit)
@@ -1358,7 +1249,7 @@ optimize_resistance <- function(basis_stack,
   if (any(bad_final)) {
     y_final_fit[bad_final] <- .failure_penalty(y_final_fit[!bad_final])
   }
-  final_surrogate <- fit_surrogate(X_eval, y_final_fit, type = surrogate_type,
+  final_surrogate <- fit_surrogate(X_eval, y_final_fit,
                                    config = surrogate_config)
 
   results <- list(

@@ -7,8 +7,7 @@
 #
 #   solver_spec(solver)  ->  object of class c("ds_solver_<canonical>", "ds_solver")
 #
-# classes: ds_solver_surrogate, ds_solver_gradient, ds_solver_torch,
-# ds_solver_irl.  "enzyme" is a deprecated alias for "gradient" and is
+# classes: ds_solver_surrogate, ds_solver_gradient, ds_solver_torch. "enzyme" is a deprecated alias for "gradient" and is
 # collapsed into ds_solver_gradient at construction time -- it never gets
 # its own class, matching the pre-refactor behavior exactly (including the
 # deprecation message text, which is intentionally unchanged).
@@ -42,24 +41,24 @@
 #'     `config$model_config` and `config$optim_config` sublists when
 #'     `model_type` selects a neural resistance model (forwarded to
 #'     [optimize_resistance_gradient()]).}
-#'   \item{`solver = "torch"` / `"irl"`}{A `config$torch` sublist whose
+#'   \item{`solver = "torch"`}{A `config$torch` sublist whose
 #'     entries are forwarded as named arguments to [run_torch_pipeline()].
-#'     `"irl"` is `"torch"` with `model_type` forced to `"irl"`.}
+#'     Model choices are passed to [run_torch_pipeline()].}
 #' }
 #'
 #' @param solver Character scalar; one of `"surrogate"`, `"gradient"`,
-#'   `"enzyme"` (deprecated alias for `"gradient"`), `"torch"`, `"irl"`.
+#'   `"enzyme"` (deprecated alias for `"gradient"`), `"torch"`.
 #' @param choices Character vector of valid `solver` values for the calling
 #'   function (passed through to `match.arg()`'s `choices`, so callers with
 #'   a narrower accepted set -- e.g. [ds_fit_intensity()], which does not
-#'   support `"torch"`/`"irl"` as a *fitting* solver -- get the right error
-#'   message). Defaults to the full 5-value set.
+#'   support `"torch"` as a *fitting* solver -- get the right error
+#'   message). Defaults to the full 4-value set.
 #' @return An object of class `c("ds_solver_<canonical>", "ds_solver")`
 #'   with element `solver` (the canonical, post-alias-collapse value).
 #' @keywords internal
 solver_spec <- function(solver,
                          choices = c("surrogate", "gradient", "enzyme",
-                                     "torch", "irl")) {
+                                     "torch")) {
   solver <- match.arg(solver, choices)
 
   # Deprecation alias: "enzyme" collapses into "gradient" here, once, for

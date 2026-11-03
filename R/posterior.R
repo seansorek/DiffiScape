@@ -96,96 +96,26 @@ laplace_resistance <- function(opt_result,
     H <- numDeriv::hessian(surrogate_fn, best_vec, method.args = list(eps = step))
 
   } else if (refit && !is.null(basis_stack) && !is.null(obs_points)) {
-    # Direct Hessian via the JAX solver
-    distribution <- opt_result$distribution %||% "negbin"
-    n_basis      <- terra::nlyr(basis_stack)
-    basis_vals   <- terra::values(basis_stack)
-    template     <- basis_stack[[1]]
-    omni_def      <- list(radius = 13L, block_size = 5L)
-    omni_cfg      <- utils::modifyList(omni_def, omniscape_settings)
-    solver_radius <- omni_cfg$radius
-    solver_block  <- omni_cfg$block_size
-
+    n_basis <- terra::nlyr(basis_stack)
     refit_fn <- function(theta) {
-      resistance <- create_resistance_surface(
-        params_vector_to_list(theta, n_basis),
-        basis_stack, link = link
+      result <- evaluate_full_model(
+        resistance_params    = params_vector_to_list(theta, n_basis),
+        basis_stack          = basis_stack,
+        obs_points           = obs_points,
+        distribution         = opt_result$distribution,
+        omniscape_settings   = omniscape_settings,
+        intensity_config     = intensity_config,
+        covariates_obs       = covariates_obs,
+        covariates_rasters   = covariates_rasters,
+        residualise          = residualise,
+        verbose              = FALSE,
+        link                 = link,
+        family               = family,
+        available_points     = available_points,
+        available_covariates = available_covariates,
+        .min_obs             = 3L
       )
-
-      jax_result <- ds_jax_connectivity(
-        resistance,
-        radius     = solver_radius,
-        block_size = solver_block
-      )
-      cum_rast <- jax_result$cum_current
-
-      conn_obs <- extract_connectivity(cum_rast, obs_points)
-      valid    <- !is.na(conn_obs)
-      if (any(!valid) && !is.null(family) && identical(family$name, "clogit") &&
-          isTRUE(family$uses_strata)) {
-        stop(sprintf(
-          "%d of %d obs_points fall outside the connectivity raster's valid ",
-          sum(!valid), length(valid)),
-          "mask on the refit path. family_clogit() precomputes its stratum ",
-          "idx_map from the positions of stratum_ids_used/stratum_ids_avail ",
-          "at construction time; silently dropping rows here would shift ",
-          "those positions and corrupt the used/available pairing without ",
-          "any error. Pre-filter obs_points together with ",
-          "stratum_ids_used (dropping the same rows from both) before ",
-          "calling laplace_resistance().",
-          call. = FALSE
-        )
-      }
-      if (sum(valid) < 3) return(-1e10)
-
-      fit_fn <- switch(distribution,
-        negbin = fit_intensity_nb, gam = fit_intensity_gam)
-
-      int_args <- list(
-        connectivity_at_obs = conn_obs[valid],
-        connectivity_raster = cum_rast,
-        obs_coords          = obs_points[valid, , drop = FALSE],
-        covariates_obs      = if (!is.null(covariates_obs))
-          lapply(covariates_obs, function(v) v[valid]) else NULL,
-        covariates_rasters  = covariates_rasters,
-        residualise         = residualise,
-        config              = intensity_config
-      )
-      if (distribution != "gam" && !is.null(family))
-        int_args$family <- family
-      if (!is.null(available_points)) {
-        avail_conn_raw <- extract_connectivity(cum_rast, available_points)
-        avail_valid    <- !is.na(avail_conn_raw)
-        if (any(!avail_valid) && !is.null(family) &&
-            identical(family$name, "clogit") && isTRUE(family$uses_strata)) {
-          stop(sprintf(
-            "%d of %d available_points fall outside the connectivity ",
-            sum(!avail_valid), length(avail_valid)),
-            "raster's valid mask on the refit path. family_clogit() ",
-            "precomputes its stratum idx_map from the positions of ",
-            "stratum_ids_used/stratum_ids_avail at construction time; ",
-            "silently dropping rows here would shift those positions and ",
-            "corrupt the used/available pairing without any error. ",
-            "Pre-filter available_points together with stratum_ids_avail ",
-            "(dropping the same rows from both) before calling ",
-            "laplace_resistance().",
-            call. = FALSE
-          )
-        }
-        avail_conn     <- avail_conn_raw[avail_valid]
-        avail_cov      <- if (!is.null(available_covariates))
-          lapply(available_covariates, function(v) v[avail_valid]) else NULL
-        int_args$available_connectivity <- avail_conn
-        int_args$available_covariates   <- avail_cov
-      }
-      int_fit <- do.call(fit_fn, int_args)
-
-      # Return the log-likelihood itself (not its negation), to match
-      # surrogate_fn's sign convention above -- both branches must hand
-      # numDeriv::hessian() an objective of the *same* sign so that the
-      # single `neg_H <- -H` negation below is correct for either path.
-      # See #94.
-      ll <- int_fit$loglik
+      ll <- result$loglik
       if (!is.finite(ll)) -1e10 else ll
     }
 
@@ -494,11 +424,8 @@ posterior_sample <- function(laplace,
 
 #' Leave-one-out cross-validation of the outer-loop surrogate
 #'
-#' For the GP surrogate (`surrogate_type = "gp"`, the default), this uses
-#' repeated refitting (one fit per held-out point) with the same Matern
-#' GP; for the Random Forest surrogate (`"rf"`) it likewise refits with
-#' one point held out each time.  Works with either surrogate backend via
-#' [predict_surrogate()].
+#' Refits the GP once per held-out evaluation to assess predictive error
+#' and uncertainty on the observed objective values.
 #'
 #' @param opt_result Result from [optimize_resistance()].
 #' @return A list with `observed`, `predicted`, `residuals`, `rmse`,
@@ -515,10 +442,8 @@ loo_cv_surrogate <- function(opt_result) {
   surrogate <- opt_result$surrogate
   if (is.null(surrogate)) stop("No surrogate in opt_result", call. = FALSE)
 
-  surrogate_type <- if (inherits(surrogate, "ds_surrogate")) {
-    surrogate$type
-  } else {
-    "gp"
+  if (inherits(surrogate, "ds_surrogate") && !identical(surrogate$type, "gp")) {
+    stop("Only GP surrogates are supported; refit with type = 'gp'.", call. = FALSE)
   }
   surrogate_config <- opt_result$config$surrogate_config %||% list()
 
@@ -540,7 +465,7 @@ loo_cv_surrogate <- function(opt_result) {
   for (i in seq_len(n)) {
     fit_loo <- tryCatch(
       fit_surrogate(X[-i, , drop = FALSE], y[-i],
-                    type = surrogate_type, config = surrogate_config),
+                    config = surrogate_config),
       error = function(e) NULL
     )
     if (is.null(fit_loo)) {

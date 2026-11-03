@@ -9,7 +9,7 @@
 #   resistance_model              (base)
 #     resistance_model_parametric (log-linear, existing model)
 #     resistance_model_custom     (user-supplied function; supports ML methods
-#                                  such as IRL, CNNs, GAMs, etc.)
+#                                  such as CNNs or GAMs)
 #
 # The "custom" pathway gives full freedom to use any model that maps a
 # basis SpatRaster to a single-layer resistance SpatRaster.  Because
@@ -235,7 +235,7 @@ resistance_sensitivity <- function(params, basis_stack, delta = 0.1,
 #' Constructs an S3 object of class \code{resistance_model} that encapsulates a
 #' resistance model together with its basis stack and clamping bounds.
 #' Both model types share a consistent interface and can be used
-#' interchangeably with [predict()], [print()], and [summary()].
+#' interchangeably with [stats::predict()], [base::print()], and [base::summary()].
 #'
 #' Two model types are supported:
 #' * \code{"parametric"} — the log-linear model
@@ -245,12 +245,8 @@ resistance_sensitivity <- function(params, basis_stack, delta = 0.1,
 #'   as a callable function in \code{object$fn} for consistent interchange.
 #' * \code{"custom"} — any user-supplied function
 #'   \code{f(basis_stack, ...)} that returns a single-layer [terra::SpatRaster].
-#'   This pathway supports machine-learning approaches such as Inverse
-#'   Reinforcement Learning (IRL) or convolutional neural networks (CNNs):
-#'   because \eqn{d\mathrm{Connectivity}/d\theta}{dConnectivity/d-theta} is
-#'   available via Enzyme.jl, gradient-based optimisation works for any
-#'   differentiable custom model.  Expert-based maps make natural starting
-#'   points before gradient descent.
+#'   Custom functions can wrap trained networks or expert maps. The supplied
+#'   function is responsible for producing the resistance values.
 #'
 #' @param params
 #'   * \strong{parametric}: named numeric vector or list with elements
@@ -287,12 +283,12 @@ resistance_sensitivity <- function(params, basis_stack, delta = 0.1,
 #'   m2 <- resistance_model(c(r_0 = 1, z_1 = 0.5), basis,
 #'                          link = link_softplus())
 #'
-#'   ## Custom / ML model (e.g. IRL or CNN wrapper) -- same interface
+#'   ## Custom / ML model (e.g. a CNN wrapper) -- same interface
 #'   ml_fn <- function(basis_stack, ...) {
 #'     terra::app(basis_stack[[1]], function(x) exp(x))
 #'   }
 #'   m_ml <- resistance_model(ml_fn, basis, type = "custom",
-#'                            name = "IRL model v1")
+#'                            name = "Custom model v1")
 #'   R_ml <- predict(m_ml)   # identical call to the parametric case
 #' }
 resistance_model <- function(params,
@@ -427,51 +423,4 @@ predict.resistance_model <- function(object, basis_stack = NULL, ...) {
     )
   }
   result
-}
-
-
-#' Wrap an IRL (value-shaped) fit as a resistance_model
-#'
-#' Packages the optimised resistance raster from an IRL run
-#' ([run_torch_pipeline()] with `model_type = "irl"`, or [ds_optimize()] with
-#' `solver = "irl"`) as a custom [resistance_model()].  This lets a fit from the
-#' value-shaped pathway plug into [predict()], [ds_diagnose()], and the
-#' posterior tooling exactly like a parametric or other custom model — fulfilling
-#' the documented custom-IRL resistance pathway.
-#'
-#' @param irl_result A list returned by [run_torch_pipeline()] / [ds_optimize()]
-#'   with `solver = "irl"`; must contain a `resistance_raster` [terra::SpatRaster].
-#' @param basis_stack The [terra::SpatRaster] basis used to fit the model.
-#' @param ... Additional metadata stored on the model object.
-#' @return A [resistance_model()] object of type `"custom"`.
-#' @seealso [resistance_model()], [run_torch_pipeline()], [ds_optimize()]
-#' @export
-irl_resistance_model <- function(irl_result, basis_stack, ...) {
-
-  R_fit <- irl_result$resistance_raster
-  if (is.null(R_fit) || !inherits(R_fit, "SpatRaster")) {
-    stop(
-      "irl_result must contain a 'resistance_raster' SpatRaster ",
-      "(from run_torch_pipeline() / ds_optimize(solver = 'irl')).",
-      call. = FALSE
-    )
-  }
-
-  fn <- local({
-    R_stored <- R_fit
-    function(bs, ...) {
-      # Resample the fitted resistance onto the supplied basis grid if its
-      # geometry differs (e.g. predicting onto a new extent / resolution).
-      out <- if (isTRUE(terra::compareGeom(R_stored, bs, stopOnError = FALSE))) {
-        R_stored
-      } else {
-        terra::resample(R_stored, bs[[1]])
-      }
-      names(out) <- "resistance"
-      out
-    }
-  })
-
-  resistance_model(fn, basis_stack, type = "custom",
-                   name = "IRL value-shaped resistance", ...)
 }

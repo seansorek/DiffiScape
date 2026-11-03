@@ -24,14 +24,14 @@ test_that(".create_lhs_design generates correct dimensions", {
 })
 
 
-test_that(".fit_surrogate fits a GP model", {
+test_that("fit_surrogate fits a GP model", {
   skip_on_cran()
   set.seed(1)
   X <- matrix(runif(20), ncol = 2)
   colnames(X) <- c("r_0", "z_1")
   y <- rowSums(X^2)
 
-  gp <- .fit_surrogate(X, y)
+  gp <- fit_surrogate(X, y)$model
   expect_s4_class(gp, "km")
 })
 
@@ -42,7 +42,7 @@ test_that(".thompson_sampling returns one value per candidate", {
   X <- matrix(runif(20), ncol = 2)
   colnames(X) <- c("r_0", "z_1")
   y <- rowSums(X^2)
-  gp <- .fit_surrogate(X, y)
+  gp <- fit_surrogate(X, y)$model
 
   cand <- matrix(runif(10), ncol = 2)
   colnames(cand) <- c("r_0", "z_1")

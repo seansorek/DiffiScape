@@ -316,182 +316,96 @@ fit_intensity_nb <- function(connectivity_at_obs,
       resid_info <- ri
     }
 
-    n_cov <- length(cov_names)
-    inits <- family$init_fn(n_cov)
-
-    opt <- stats::optim(
-      par    = inits$start,
-      fn     = family$negloglik_fn,
-      method = "L-BFGS-B",
-      lower  = inits$lower,
-      upper  = inits$upper,
-      z_obs  = z_obs, z_int = z_int,
-      int_weights = int_weights, obs_weights = obs_weights,
-      cov_obs = cov_obs, cov_int = cov_int, cov_names = cov_names,
-      y_obs   = response,
-      hessian = TRUE
-    )
-
-    n_extra   <- family$n_extra_params
-    n_base    <- length(opt$par) - n_extra
-    if (!is.null(family$param_names_fn)) {
-      est_names <- family$param_names_fn(cov_names)
-      if (length(est_names) != length(opt$par)) {
-        est_names <- if (n_base == 1L) "gamma" else c("alpha", "gamma")
-        if (n_cov > 0 && n_base > 1L)
-          est_names <- c(est_names, paste0("beta_", cov_names))
-        if (n_extra > 0) est_names <- c(est_names, family$extra_param_names)
-      }
-    } else {
-      if (n_base == 1L) {
-        est_names <- "gamma"
-      } else {
-        est_names <- c("alpha", "gamma")
-        if (n_cov > 0) est_names <- c(est_names, paste0("beta_", cov_names))
-      }
-      if (n_extra > 0) est_names <- c(est_names, family$extra_param_names)
-    }
-
-    estimates <- opt$par
-    extra_idx <- if (n_extra > 0) {
-      seq(length(estimates) - n_extra + 1L, length(estimates))
-    } else {
-      integer(0)
-    }
-    extra_raw_names <- family$extra_param_names
-    if (n_extra > 0) {
-      for (k in seq_along(extra_idx)) {
-        ei <- extra_idx[k]
-        estimates[ei] <- .extra_param_to_natural(extra_raw_names[k], estimates[ei])
-      }
-    }
-    if (n_extra > 0 && family$name %in% c("negbin", "zinb")) {
-      est_names[length(est_names) - n_extra + 1L] <- "size"
-    }
-    if (n_extra > 0) {
-      for (k in seq_along(extra_idx)) {
-        if (identical(extra_raw_names[k], "logit_pi")) {
-          est_names[length(est_names) - n_extra + k] <- "pi"
-        }
-      }
-    }
-    names(estimates) <- est_names
-
-    se <- rep(NA_real_, length(estimates))
-    tryCatch({
-      H  <- opt$hessian
-      V  <- solve(H)
-      se <- sqrt(pmax(diag(V), 0))
-      if (n_extra > 0) {
-        for (k in seq_along(extra_idx)) {
-          ei <- extra_idx[k]
-          se[ei] <- se[ei] * .extra_param_se_scale(extra_raw_names[k], estimates[ei])
-        }
-      }
-    }, error = function(e) NULL)
-    names(se) <- est_names
-
-    return(list(
-      estimates        = estimates,
-      se               = se,
-      loglik           = -opt$value,
-      convergence      = opt$convergence,
-      c_scale          = std$c_scale,
-      min_connectivity = config$min_connectivity,
-      log_conn_mean    = std$mu,
-      log_conn_sd      = std$sigma,
-      is_residualised  = !is.null(resid_info),
-      residualisation_info = resid_info,
-      hessian          = opt$hessian
-    ))
-  }
-
-  # ---- extract integration grid -------------------------------------------
-  C_all_raw   <- terra::values(connectivity_raster)
-  valid_mask  <- !is.na(C_all_raw)
-  C_int_raw   <- pmax(C_all_raw[valid_mask], config$min_connectivity)
-  n_int_full  <- length(C_int_raw)
-  cell_area   <- prod(terra::res(connectivity_raster))
-
-  C_obs_raw <- pmax(connectivity_at_obs, config$min_connectivity)
-
-  # ---- subsample integration points ---------------------------------------
-  frac <- config$integration_subsample
-  stopifnot(n_int_full > 0)
-  if (frac < 1 && frac > 0) {
-    idx <- withr::with_seed(config$seed, {
-      n_samp  <- max(1L, round(n_int_full * frac))
-      step_sz <- n_int_full / n_samp
-      start_  <- stats::runif(1, 1, step_sz)
-      idx_    <- unique(round(seq(start_, n_int_full, by = step_sz)))
-      idx_[idx_ <= n_int_full]
-    })
-    C_int   <- C_int_raw[idx]
-    wt_mult <- n_int_full / length(idx)
   } else {
-    C_int   <- C_int_raw
-    idx     <- seq_len(n_int_full)
-    wt_mult <- 1
-  }
+    # ---- extract integration grid -------------------------------------------
+    C_all_raw   <- terra::values(connectivity_raster)
+    valid_mask  <- !is.na(C_all_raw)
+    C_int_raw   <- pmax(C_all_raw[valid_mask], config$min_connectivity)
+    n_int_full  <- length(C_int_raw)
+    cell_area   <- prod(terra::res(connectivity_raster))
 
-  int_weights <- rep(cell_area * wt_mult, length(C_int))
-  obs_weights <- rep(1, length(C_obs_raw))
+    C_obs_raw <- pmax(connectivity_at_obs, config$min_connectivity)
 
-  # ---- standardise connectivity ------------------------------------------
-  std <- standardise_connectivity(C_obs_raw, C_int, config$c_scale)
-  z_obs <- std$z_obs
-  z_int <- std$z_int
+    # ---- subsample integration points ---------------------------------------
+    frac <- config$integration_subsample
+    stopifnot(n_int_full > 0)
+    if (frac < 1 && frac > 0) {
+      idx <- withr::with_seed(config$seed, {
+        n_samp  <- max(1L, round(n_int_full * frac))
+        step_sz <- n_int_full / n_samp
+        start_  <- stats::runif(1, 1, step_sz)
+        idx_    <- unique(round(seq(start_, n_int_full, by = step_sz)))
+        idx_[idx_ <= n_int_full]
+      })
+      C_int   <- C_int_raw[idx]
+      wt_mult <- n_int_full / length(idx)
+    } else {
+      C_int   <- C_int_raw
+      idx     <- seq_len(n_int_full)
+      wt_mult <- 1
+    }
 
-  # ---- covariates at integration points -----------------------------------
-  cov_int <- NULL
-  cov_names <- character(0)
-  if (!is.null(covariates_rasters) && length(covariates_rasters) > 0) {
-    cov_int <- lapply(covariates_rasters, function(r) {
-      v <- terra::values(r)[valid_mask]
-      pmax(pmin(v[idx], 1), 0)
-    })
-    cov_names <- names(covariates_rasters)
-  }
+    int_weights <- rep(cell_area * wt_mult, length(C_int))
+    obs_weights <- rep(1, length(C_obs_raw))
 
-  cov_obs <- NULL
-  if (!is.null(covariates_obs) && length(covariates_obs) > 0) {
-    cov_obs <- lapply(covariates_obs, function(v) pmax(pmin(v, 1), 0))
-    if (length(cov_names) == 0) cov_names <- names(covariates_obs)
-  }
+    # ---- standardise connectivity ------------------------------------------
+    std <- standardise_connectivity(C_obs_raw, C_int, config$c_scale)
+    z_obs <- std$z_obs
+    z_int <- std$z_int
 
-  # Validate: if covariates_obs is supplied, covariates_rasters must also be
-  # supplied with the same names (#47)
-  if (!is.null(cov_obs) && is.null(cov_int)) {
-    stop(
-      "covariates_obs supplied but covariates_rasters is NULL. ",
-      "Integration-side covariates must be provided for: ",
-      paste(names(covariates_obs), collapse = ", "),
-      call. = FALSE
-    )
-  }
-  if (!is.null(cov_obs) && !is.null(cov_int)) {
-    missing_in_int <- setdiff(names(cov_obs), names(cov_int))
-    if (length(missing_in_int) > 0) {
+    # ---- covariates at integration points -----------------------------------
+    cov_int <- NULL
+    cov_names <- character(0)
+    if (!is.null(covariates_rasters) && length(covariates_rasters) > 0) {
+      cov_int <- lapply(covariates_rasters, function(r) {
+        v <- terra::values(r)[valid_mask]
+        pmax(pmin(v[idx], 1), 0)
+      })
+      cov_names <- names(covariates_rasters)
+    }
+
+    cov_obs <- NULL
+    if (!is.null(covariates_obs) && length(covariates_obs) > 0) {
+      cov_obs <- lapply(covariates_obs, function(v) pmax(pmin(v, 1), 0))
+      if (length(cov_names) == 0) cov_names <- names(covariates_obs)
+    }
+
+    # Validate: if covariates_obs is supplied, covariates_rasters must also be
+    # supplied with the same names (#47)
+    if (!is.null(cov_obs) && is.null(cov_int)) {
       stop(
-        "covariates_obs contains covariates missing from covariates_rasters: ",
-        paste(missing_in_int, collapse = ", "),
+        "covariates_obs supplied but covariates_rasters is NULL. ",
+        "Integration-side covariates must be provided for: ",
+        paste(names(covariates_obs), collapse = ", "),
         call. = FALSE
       )
     }
-  }
+    if (!is.null(cov_obs) && !is.null(cov_int)) {
+      missing_in_int <- setdiff(names(cov_obs), names(cov_int))
+      if (length(missing_in_int) > 0) {
+        stop(
+          "covariates_obs contains covariates missing from covariates_rasters: ",
+          paste(missing_in_int, collapse = ", "),
+          call. = FALSE
+        )
+      }
+    }
 
-  # ---- optional residualisation -------------------------------------------
-  resid_info <- NULL
-  if (residualise && !is.null(cov_obs) && length(cov_obs) > 0) {
-    ri <- residualise_connectivity(z_obs, z_int, cov_obs, cov_int)
-    z_obs      <- ri$z_obs_resid
-    z_int      <- ri$z_int_resid
-    resid_info <- ri
+    # ---- optional residualisation -------------------------------------------
+    resid_info <- NULL
+    if (residualise && !is.null(cov_obs) && length(cov_obs) > 0) {
+      ri <- residualise_connectivity(z_obs, z_int, cov_obs, cov_int)
+      z_obs      <- ri$z_obs_resid
+      z_int      <- ri$z_int_resid
+      resid_info <- ri
+    }
+
   }
 
   # ---- optimise -----------------------------------------------------------
   n_cov   <- length(cov_names)
-  inits   <- family$init_fn(n_cov)
+
+  inits <- family$init_fn(n_cov)
 
   opt <- stats::optim(
     par    = inits$start,
@@ -507,15 +421,18 @@ fit_intensity_nb <- function(connectivity_at_obs,
   )
 
   # ---- extract results ----------------------------------------------------
-  n_extra   <- family$n_extra_params
-  if (!is.null(family$param_names_fn)) {
-    est_names <- family$param_names_fn(cov_names)
-    if (n_extra > 0 && length(est_names) < length(opt$par)) {
-      est_names <- c(est_names, family$extra_param_names)
-    }
-  } else {
-    est_names <- c("alpha", "gamma")
-    if (n_cov > 0) est_names <- c(est_names, paste0("beta_", cov_names))
+  n_extra <- family$n_extra_params
+  n_base <- length(opt$par) - n_extra
+  est_names <- if (!is.null(family$param_names_fn)) {
+    family$param_names_fn(cov_names)
+  } else character(0)
+  if (n_extra > 0 && length(est_names) == n_base) {
+    est_names <- c(est_names, family$extra_param_names)
+  }
+  if (length(est_names) != length(opt$par)) {
+    est_names <- if (n_base == 1L) "gamma" else c("alpha", "gamma")
+    if (n_cov > 0 && n_base > 1L)
+      est_names <- c(est_names, paste0("beta_", cov_names))
     if (n_extra > 0) est_names <- c(est_names, family$extra_param_names)
   }
 

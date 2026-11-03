@@ -33,7 +33,7 @@ pip install -r inst/python/diffiscape_jax/requirements.txt
 ```
 
 ```bash
-# PyTorch backend (optional, for torch and irl solvers)
+# PyTorch backend (optional, for the torch solver)
 pip install torch --index-url https://download.pytorch.org/whl/cpu
 pip install -r inst/python/diff_cs/requirements.txt
 # GPU (optional): also `pip install cupy-cuda12x` — auto-detected at runtime.
@@ -63,7 +63,7 @@ finite-difference check so you don't ship a wrong gradient:
 
 - JAX: `verify_*` helpers in `inst/python/diffiscape_jax/tests/` (test modules).
 - PyTorch: `verify_circuit_gradient` / `verify_conv_gradient` /
-  `verify_spline_gradient` / `verify_irl_gradient` in `05_torch_pipeline.py`
+  `verify_spline_gradient` in `05_torch_pipeline.py`
   (exposed in R as `verify_*_gradient`).
 
 ## Conventions

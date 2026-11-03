@@ -4,7 +4,7 @@ Functions and resistance-net forward chains.
 These are smoke tests for the differentiable pipeline, exposed as importable
 functions (not just pytest) so R callers can run a quick sanity check before
 launching an expensive optimisation (see verify_torch_gradient() /
-verify_conv_gradient() / verify_spline_gradient() / verify_irl_gradient() in
+verify_conv_gradient() / verify_spline_gradient() in
 R/torch_pipeline.R).
 """
 import numpy as np
@@ -15,7 +15,7 @@ from .autograd_functions import (
     _AbsorptionCircuitSolveFn,
     _DiffOmniscapeSolveFn,
 )
-from .resistance_nets import ConvResistanceNet, IRLResistanceNet, SplineResistanceNet
+from .resistance_nets import ConvResistanceNet, SplineResistanceNet
 
 
 # ===========================================================================
@@ -234,118 +234,6 @@ def verify_conv_gradient(basis_values_np, valid_mask_np,
     }
 
 
-def verify_softrl_gradient(basis_values_np, valid_mask_np,
-                           n_rows, n_cols, source_spacing=1,
-                           source_from_resistance=True,
-                           hidden_dim=16, n_hidden_layers=2,
-                           beta=1.0, gamma_d=0.9, n_value_iter=30,
-                           value_scale_init=1.0,
-                           eps=1e-4, seed=42,
-                           solver="global_absorption",
-                           radius=15, block_size=10,
-                           absorption=0.01):
-    """
-    End-to-end finite-difference gradient check for IRLResistanceNet.
-
-    Tests the full chain: reward(basis) → soft value iteration → R → circuit
-    → C → scalar loss.  Perturbs individual reward/offset/scale parameters and
-    compares finite-difference vs autograd gradients through the unrolled value
-    iteration.
-    """
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-    n_valid = int(valid_mask_np.sum())
-    n_features = basis_values_np.shape[1]
-
-    # Build 2D grid (same layout as the conv/IRL training path)
-    n_cells = n_rows * n_cols
-    grid_np = np.zeros((n_features, n_cells), dtype=np.float64)
-    grid_np[:, valid_mask_np] = basis_values_np.T
-    grid_np = grid_np.reshape(1, n_features, n_rows, n_cols)
-    basis_grid_t = torch.tensor(grid_np, dtype=torch.float64)
-    basis_valid_t = torch.tensor(basis_values_np, dtype=torch.float64)
-
-    net = IRLResistanceNet(
-        n_features, hidden=hidden_dim, n_layers=n_hidden_layers,
-        vi_beta=float(beta), gamma_d=float(gamma_d),
-        n_value_iter=int(n_value_iter),
-        value_scale_init=float(value_scale_init),
-    ).double()
-
-    use_absorption = (solver == "global_absorption")
-    use_diff_omniscape = (solver == "diff_omniscape")
-
-    def _forward_loss(net_):
-        R = net_(basis_grid_t, valid_mask_np, basis_valid_t)
-        if use_diff_omniscape:
-            C = _DiffOmniscapeSolveFn.apply(
-                R, valid_mask_np, n_rows, n_cols,
-                source_spacing, source_from_resistance,
-                radius, block_size, 1.0, seed,
-            )
-        elif use_absorption:
-            C = _AbsorptionCircuitSolveFn.apply(
-                R, valid_mask_np, n_rows, n_cols,
-                source_spacing, source_from_resistance,
-                absorption,
-            )
-        else:
-            C = _CircuitSolveFn.apply(
-                R, valid_mask_np, n_rows, n_cols,
-                source_spacing, source_from_resistance,
-            )
-        return (C * dl_dC).sum()
-
-    # Random loss direction (fixed across perturbations)
-    dl_dC = torch.randn(n_valid, dtype=torch.float64)
-
-    # Analytic gradient
-    loss = _forward_loss(net)
-    loss.backward()
-
-    all_params = [(n, p, p.grad.detach().cpu().numpy().ravel().copy())
-                  for n, p in net.named_parameters()
-                  if p.requires_grad and p.grad is not None]
-    n_check_per_param = 3
-    fd_results = []
-
-    for pname, param, analytic_g in all_params:
-        n_elem = len(analytic_g)
-        check_idx = np.random.choice(n_elem, min(n_check_per_param, n_elem),
-                                     replace=False)
-        for idx in check_idx:
-            orig = param.data.view(-1)[idx].item()
-
-            param.data.view(-1)[idx] = orig + eps
-            net.zero_grad()
-            lp = _forward_loss(net).item()
-
-            param.data.view(-1)[idx] = orig - eps
-            net.zero_grad()
-            lm = _forward_loss(net).item()
-
-            param.data.view(-1)[idx] = orig
-
-            fd = (lp - lm) / (2 * eps)
-            an = analytic_g[idx]
-            rel_err = abs(fd - an) / (max(abs(fd), abs(an)) + 1e-7)
-            fd_results.append((pname, idx, fd, an, rel_err))
-
-    rel_errors = [r[4] for r in fd_results]
-    max_rel = float(max(rel_errors))
-
-    print(f"  IRL gradient check: max rel error = {max_rel:.2e} "
-          f"(checked {len(fd_results)} param elements across {len(all_params)} params)")
-    for pname, idx, fd, an, re in fd_results:
-        status = "OK" if re < 0.05 else "FAIL"
-        print(f"    {pname}[{idx}]: FD={fd:.6e}, AN={an:.6e}, rel={re:.2e} {status}")
-
-    return {
-        "max_rel_error": max_rel,
-        "pass": max_rel < 0.05,
-        "rel_errors": [float(r) for r in rel_errors],
-    }
 
 
 def verify_spline_gradient(basis_values_np, valid_mask_np,

@@ -75,7 +75,7 @@ test_that("optimize_resistance_gradient's unsupported-argument check does not fa
 test_that("ds_optimize dispatches 'gradient' solver", {
   # Match should succeed without error
   solver <- match.arg("gradient",
-                      c("surrogate", "gradient", "enzyme", "torch", "irl"))
+                      c("surrogate", "gradient", "enzyme", "torch"))
   expect_equal(solver, "gradient")
 })
 

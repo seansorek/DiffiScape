@@ -45,7 +45,7 @@ and \code{summary()} methods, making them interchangeable.
 Constructs an S3 object of class \code{resistance_model} that encapsulates a
 resistance model together with its basis stack and clamping bounds.
 Both model types share a consistent interface and can be used
-interchangeably with \code{\link[=predict]{predict()}}, \code{\link[=print]{print()}}, and \code{\link[=summary]{summary()}}.
+interchangeably with \code{\link[stats:predict]{stats::predict()}}, \code{\link[base:print]{base::print()}}, and \code{\link[base:summary]{base::summary()}}.
 }
 \details{
 Two model types are supported:
@@ -57,12 +57,8 @@ Parameters are stored in \code{object$params}; the model is also wrapped
 as a callable function in \code{object$fn} for consistent interchange.
 \item \code{"custom"} — any user-supplied function
 \code{f(basis_stack, ...)} that returns a single-layer \link[terra:SpatRaster]{terra::SpatRaster}.
-This pathway supports machine-learning approaches such as Inverse
-Reinforcement Learning (IRL) or convolutional neural networks (CNNs):
-because \eqn{d\mathrm{Connectivity}/d\theta}{dConnectivity/d-theta} is
-available via Enzyme.jl, gradient-based optimisation works for any
-differentiable custom model.  Expert-based maps make natural starting
-points before gradient descent.
+Custom functions can wrap trained networks or expert maps. The supplied
+function is responsible for producing the resistance values.
 }
 }
 \examples{
@@ -81,12 +77,12 @@ points before gradient descent.
   m2 <- resistance_model(c(r_0 = 1, z_1 = 0.5), basis,
                          link = link_softplus())
 
-  ## Custom / ML model (e.g. IRL or CNN wrapper) -- same interface
+  ## Custom / ML model (e.g. a CNN wrapper) -- same interface
   ml_fn <- function(basis_stack, ...) {
     terra::app(basis_stack[[1]], function(x) exp(x))
   }
   m_ml <- resistance_model(ml_fn, basis, type = "custom",
-                           name = "IRL model v1")
+                           name = "Custom model v1")
   R_ml <- predict(m_ml)   # identical call to the parametric case
 }
 }
