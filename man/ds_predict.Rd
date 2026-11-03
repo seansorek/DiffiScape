@@ -6,19 +6,25 @@
 \usage{
 ds_predict(
   intensity_fit,
-  connectivity,
+  connectivity = NULL,
   intensity_config = default_intensity_config(),
-  covariates_rasters = NULL
+  covariates_rasters = NULL,
+  basis_stack = NULL
 )
 }
 \arguments{
-\item{intensity_fit}{Result from \code{\link[=ds_fit_intensity]{ds_fit_intensity()}}.}
+\item{intensity_fit}{Result from \code{\link[=ds_fit_intensity]{ds_fit_intensity()}}, or a fitted JAX
+parametric result from \code{\link[=ds_optimize]{ds_optimize()}}.}
 
-\item{connectivity}{A \link[terra:SpatRaster]{terra::SpatRaster} of connectivity values.}
+\item{connectivity}{A \link[terra:SpatRaster]{terra::SpatRaster} of connectivity values for an
+intensity fit. Not needed when predicting a fitted JAX model.}
 
 \item{intensity_config}{Intensity config.}
 
 \item{covariates_rasters}{Named list of covariate rasters.}
+
+\item{basis_stack}{Basis rasters in fitted covariate order, required for
+predicting a fitted JAX model.}
 }
 \value{
 A \link[terra:SpatRaster]{terra::SpatRaster} of predicted intensity.

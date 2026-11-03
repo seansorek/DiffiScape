@@ -91,13 +91,9 @@ ds_create_basis <- function(rasters,
 }
 
 
-#' Optimise resistance parameters
+#' Optimize resistance parameters
 #'
-#' Wrapper that dispatches to [optimize_resistance()] (GP surrogate),
-#' [optimize_resistance_gradient()] (L-BFGS / Adam via JAX auto-diff,
-#' or Flax neural-network resistance when `model_type` is set), or
-#' [run_torch_pipeline()] (PyTorch neural-network resistance), depending
-#' on `solver`.
+#' Defaults to physical log-linear/global-absorption PPP fitting using Optax Adam. solver="lbfgs" uses SciPy L-BFGS-B. config$fit supplies physical/model settings. The legacy gradient and surrogate workflows use window effective resistance. solver="torch" and config$torch are deprecated translations.
 #'
 #' @param basis_stack Basis function stack.
 #' @param obs_points Data.frame with `x, y`.
@@ -120,39 +116,13 @@ ds_create_basis <- function(rasters,
 #' @param available_covariates Named list of covariate vectors at
 #'   `available_points` locations.  Required when `available_points` is
 #'   supplied and the intensity model includes covariates.
-#' @param solver Character; `"torch"` (PyTorch log-linear resistance by
-#'   default), `"surrogate"` (GP + Thompson Sampling or Expected Improvement),
-#'   `"gradient"` (L-BFGS / Adam via JAX
-#'   auto-diff), `"enzyme"` (deprecated, alias for `"gradient"`),
-#' @param model_type Resistance model. For Torch: `"loglinear"`, `"mlp"`,
-#'   `"conv"`, or `"spline_gam"`; the default `"parametric"` leaves the nested
-#'   Torch config's model choice unchanged. For the gradient solver:
-#'   `"parametric"`, `"mlp"`, `"conv"`, `"spline_gam"`, or `"irl"`.
-#' @return Result from [optimize_resistance()],
-#'   [optimize_resistance_gradient()], or [run_torch_pipeline()].
-#' @section Supported Torch inputs:
-#' Torch fits a Poisson PPP jointly with resistance. Explicit non-Poisson
-#' families, custom resistance links, bounds, covariates, and residualisation
-#' are rejected. Use the surrogate solver for these modeling choices.
-#' The legacy outer config's default `distribution = "negbin"` does not change
-#' Torch's Poisson likelihood; select other families explicitly with `family`.
-#'
-#' @section Config conventions:
-#' The three backend families are deliberately *not* unified onto a common
-#' config shape -- each keeps its pre-existing convention, and dispatch
-#' (via an internal `solver_spec()` S3 mechanism) is the one place that
-#' knows how to extract the right sublist for its solver:
-#' \describe{
-#'   \item{`solver = "surrogate"`}{Plain top-level `config` entries (see
-#'     [default_optimizer_config()]). No sublist.}
-#'   \item{`solver = "gradient"` / `"enzyme"`}{Top-level `config` entries
-#'     for the parametric L-BFGS/Adam path, plus optional
-#'     `config$model_config` / `config$optim_config` sublists when
-#'     `model_type` selects a neural resistance model.}
-#'   \item{`solver = "torch"`}{A `config$torch` sublist forwarded
-#'     as named arguments to [run_torch_pipeline()].}
-#' }
+#' @param solver Optimization method: `"adam"` (default), `"lbfgs"`,
+#'   `"surrogate"`, legacy window `"gradient"`, deprecated `"enzyme"` or `"torch"`.
+#' @param model_type Physical resistance: `"loglinear"`, `"mlp"`, `"conv"`,
+#'   or `"spline_gam"` (B-spline). `"parametric"` uses the default/config model.
+#'   The legacy window spline is RBF. IRL is retired.
 #' @export
+#' @return A fitted optimization result with stored prediction state.
 ds_optimize <- function(basis_stack,
                         obs_points,
                         bounds               = NULL,
@@ -164,7 +134,7 @@ ds_optimize <- function(basis_stack,
                         residualise          = FALSE,
                         available_points     = NULL,
                         available_covariates = NULL,
-                        solver               = c("torch", "surrogate", "gradient",
+                        solver               = c("adam", "lbfgs", "torch", "surrogate", "gradient",
                                                  "enzyme"),
                         model_type           = "parametric") {
 
@@ -244,8 +214,8 @@ ds_optimize <- function(basis_stack,
   }
   if (!is.null(covariates_obs) || !is.null(covariates_rasters) ||
       !is.null(available_covariates) || isTRUE(residualise) ||
-      !is.null(bounds)) {
-    stop("The torch solver does not support covariates_obs, covariates_rasters, ",
+      (!is.null(bounds) && identical(spec$solver, "torch"))) {
+    stop("The physical-current solver does not support covariates_obs, covariates_rasters, ",
          "available_covariates, residualise = TRUE, or bounds. Use solver = ",
          "'surrogate' for these settings.", call. = FALSE)
   }
@@ -255,14 +225,27 @@ ds_optimize <- function(basis_stack,
                             !identical(family$name, "poisson"))) ||
       (is.null(family) && !is.null(config$distribution) &&
        !config$distribution %in% c("negbin", "poisson"))) {
-    stop("The torch solver supports only the Poisson PPP family. ",
+    stop("The physical-current solver supports only the Poisson PPP family. ",
          "Use solver = 'surrogate' for other intensity families.", call. = FALSE)
   }
   if (!is.null(config$resistance_link) &&
       !identical(config$resistance_link$name, "exp")) {
-    stop("The torch solver does not support custom resistance links.",
+    stop("The physical-current solver does not support custom resistance links.",
          call. = FALSE)
   }
+  if (spec$solver %in% c("adam", "lbfgs") && is.null(config$torch)) {
+    fit_args <- config$fit %||% list()
+    fit_args$basis_stack <- basis_stack
+    fit_args$obs_points <- obs_points
+    fit_args$output_dir <- fit_args$output_dir %||% output_dir
+    fit_args$seed <- fit_args$seed %||% config$seed %||% 42L
+    fit_args$method <- spec$solver
+    fit_args$bounds <- bounds
+    if (model_type != "parametric") fit_args$model_type <- match.arg(model_type, c("loglinear", "mlp", "conv", "spline_gam"))
+    return(do.call(run_jax_pipeline, fit_args))
+  }
+  if (!is.null(config$fit) && !is.null(config$torch)) stop("Use config$fit only; config$torch is deprecated.", call. = FALSE)
+  if (spec$solver == "lbfgs" && !is.null(config$torch)) stop("Translate config$torch to config$fit before choosing lbfgs.", call. = FALSE)
   torch_args <- config$torch %||% list()
   torch_args$basis_stack <- basis_stack
   torch_args$obs_points  <- obs_points
@@ -275,6 +258,10 @@ ds_optimize <- function(basis_stack,
   }
   do.call(run_torch_pipeline, torch_args)
 }
+
+
+.ds_optimize_dispatch.ds_solver_adam <- .ds_optimize_dispatch.ds_solver_torch
+.ds_optimize_dispatch.ds_solver_lbfgs <- .ds_optimize_dispatch.ds_solver_torch
 
 
 #' @keywords internal
@@ -335,13 +322,13 @@ ds_optimize <- function(basis_stack,
 #'   deprecation message, but no longer affects this function's internal
 #'   connectivity-computation logic: both `"surrogate"` and `"gradient"`
 #'   route through the same [evaluate_full_model()] call (JAX connectivity
-#'   via [ds_jax_connectivity()]).  `"torch"` is accepted as
-#'   a *value* (so a caller forwarding [ds_optimize()]'s solver gets a
+#'   via [ds_jax_connectivity()]).  `"torch"` are accepted as
+#'   *values* (so a caller forwarding [ds_optimize()]'s solver gets a
 #'   clear, actionable error instead of a generic `match.arg()` failure)
-#'   but is **not supported** by this function: that backend fits
+#'   but are **not supported** by this function: those backends fit
 #'   resistance and intensity jointly inside a single [ds_optimize()] /
 #'   [run_torch_pipeline()] call, so there is nothing left for
-#'   `ds_fit_intensity()` to do for it -- calling this function with
+#'   `ds_fit_intensity()` to do for them -- calling this function with
 #'   `solver = "torch"` raises an error directing you to the
 #'   already-complete result from [run_torch_pipeline()].
 #' @param link A [resistance_link] object (default [link_exp()]).
@@ -358,7 +345,7 @@ ds_fit_intensity <- function(opt_result,
                               residualise          = FALSE,
                               available_points     = NULL,
                               available_covariates = NULL,
-                              solver               = c("surrogate", "gradient",
+                              solver               = c("surrogate", "gradient", "adam", "lbfgs",
                                                        "enzyme", "torch"),
                               link                 = link_exp(),
                               family               = NULL) {
@@ -434,20 +421,41 @@ ds_fit_intensity <- function(opt_result,
 }
 
 
+.ds_fit_intensity_dispatch.ds_solver_adam <- .ds_fit_intensity_dispatch.ds_solver_torch
+.ds_fit_intensity_dispatch.ds_solver_lbfgs <- .ds_fit_intensity_dispatch.ds_solver_torch
+
+
 #' Predict intensity surface
 #'
 #' Generates a raster of the predicted intensity surface.
 #'
-#' @param intensity_fit Result from [ds_fit_intensity()].
-#' @param connectivity A [terra::SpatRaster] of connectivity values.
+#' @param intensity_fit Result from [ds_fit_intensity()], or a fitted JAX
+#'   parametric result from [ds_optimize()].
+#' @param connectivity A [terra::SpatRaster] of connectivity values for an
+#'   intensity fit. Not needed when predicting a fitted JAX model.
 #' @param intensity_config Intensity config.
 #' @param covariates_rasters Named list of covariate rasters.
+#' @param basis_stack Basis rasters in fitted covariate order, required for
+#'   predicting a fitted JAX model.
 #' @return A [terra::SpatRaster] of predicted intensity.
 #' @export
 ds_predict <- function(intensity_fit,
-                       connectivity,
+                       connectivity = NULL,
                        intensity_config   = default_intensity_config(),
-                       covariates_rasters = NULL) {
+                       covariates_rasters = NULL,
+                       basis_stack = NULL) {
+
+  if (!is.null(intensity_fit$python_fit)) {
+    if (is.null(basis_stack)) stop("basis_stack is required to predict a fitted JAX model.", call. = FALSE)
+    if (!ds_jax_check()) ds_jax_setup()
+    prep <- .prepare_backend_inputs(basis_stack, data.frame(x = numeric(), y = numeric()))
+    prediction <- reticulate::py_to_r(.jax_env$package$predict(
+      intensity_fit$python_fit, prep$basis_np))
+    raster <- basis_stack[[1]]
+    terra::values(raster) <- as.vector(t(prediction$intensity))
+    names(raster) <- "intensity"
+    return(raster)
+  }
 
   fit_obj <- intensity_fit$intensity_fit_obj %||% intensity_fit
   predict_intensity(
@@ -461,13 +469,17 @@ ds_predict <- function(intensity_fit,
 
 #' Posterior inference
 #'
-#' Wrapper around Laplace approximation + Monte Carlo composition.
+#' Physical fits use NumPyro with the fitted model, penalties, and proper priors.
+#' R-only profile objectives retain Laplace approximation and Monte Carlo composition.
 #'
 #' @param opt_result Result from [ds_optimize()].
 #' @param basis_stack Basis function stack.
 #' @param obs_points Data.frame with `x, y`.
 #' @param n_draws Number of posterior draws.
 #' @param n_inner Inner-loop draws per outer draw.
+#' @param method Physical inference: `"nuts"` or `"advi"`.
+#' @param ... Physical NumPyro settings such as `warmup`, `max_treedepth`,
+#'   `target_accept`, `max_iter`, or `fix_smoothing`.
 #' @param omniscape_settings List of Omniscape settings.
 #' @param intensity_config Intensity config.
 #' @param covariates_obs Named list of covariate vectors.
@@ -498,8 +510,27 @@ ds_posterior <- function(opt_result,
                          available_points     = NULL,
                          available_covariates = NULL,
                          link                 = link_exp(),
-                         family               = NULL) {
+                         family               = NULL,
+                         method               = "nuts", ...) {
 
+  if (!is.null(opt_result$python_fit) && !identical(opt_result$python_fit$configuration$formulation, "window_resistance")) {
+    if (!is.null(covariates_obs) || !is.null(covariates_rasters) || !is.null(available_points) ||
+        !is.null(available_covariates) || isTRUE(residualise) || !identical(link$name, "exp") ||
+        (!is.null(family) && !identical(family$name, "poisson"))) {
+      stop("Physical posterior inference uses the fitted Poisson model and does not support changing covariates, availability, links, or family.", call. = FALSE)
+    }
+    if (!ds_jax_check()) ds_jax_setup()
+    prep <- .prepare_backend_inputs(basis_stack, obs_points)
+    result <- .jax_env$package$sample(prep$basis_np, prep$obs_np, prep$vmask_np,
+      as.integer(prep$n_rows), as.integer(prep$n_cols), cell_area = prep$cell_area,
+      fitted = opt_result$python_fit, method = method, n_samples = as.integer(n_draws), ...)
+    posterior <- reticulate::py_to_r(result)
+    effects_module <- reticulate::import("diffiscape.physical_models", convert = FALSE)
+    effects <- reticulate::py_to_r(effects_module$partial_effects(opt_result$python_fit, posterior))
+    return(list(laplace = NULL, samples = posterior$samples, summary = posterior$summary,
+      diagnostics = posterior$diagnostics, python_posterior = posterior,
+      partial_effects = effects$partial_effects, interaction_effects = effects$interaction_effects))
+  }
   use_refit <- TRUE
 
   lap <- laplace_resistance(
@@ -564,6 +595,20 @@ ds_diagnose <- function(intensity_fit,
                         family             = NULL,
                         plot               = TRUE) {
 
+  if (!is.null(intensity_fit$python_fit) && !identical(intensity_fit$python_fit$configuration$formulation, "window_resistance")) {
+    if (!ds_jax_check()) ds_jax_setup()
+    prep <- .prepare_backend_inputs(connectivity, obs_points)
+    module <- reticulate::import("diffiscape.diagnostics", convert = FALSE)
+    result <- reticulate::py_to_r(module$diagnose_physical(intensity_fit$python_fit, prep$obs_np))
+    raster <- connectivity[[1]]
+    full <- rep(NA_real_, terra::ncell(raster))
+    full[prep$valid_mask] <- as.numeric(result$residuals)
+    terra::values(raster) <- full
+    result$residual_raster <- raster
+    result$moran <- NULL
+    if (plot) plot_residual_map(raster, obs_points)
+    return(result)
+  }
   diagnose_model(
     intensity_fit      = intensity_fit,
     obs_points         = obs_points,
@@ -578,11 +623,9 @@ ds_diagnose <- function(intensity_fit,
 
 # --------------- One-call wrapper -------------------------------------------
 
-#' Run the full DiffiScape pipeline
+#' Fit a complete landscape connectivity workflow
 #'
-#' A single high-level function that chains every step of the pipeline:
-#' data loading, basis creation, optimisation, intensity fitting,
-#' posterior inference, and diagnostics.
+#' Uses the installed Python core for physical-current resistance and intensity fitting by default. The surrogate workflow supports R-only mgcv and custom callbacks. Physical posterior inference uses NumPyro with proper priors; inspect diagnostics before inference.
 #'
 #' @param obs_data Either a file path (CSV / shapefile) or a data.frame
 #'   with `x, y` columns.
@@ -612,18 +655,12 @@ ds_diagnose <- function(intensity_fit,
 #'   every connectivity step (final refit, posterior sampling, and
 #'   diagnostics).  Recognised entries: `radius` (default `13L`),
 #'   `block_size` (default `5L`), `cleanup` (default `TRUE`).
-#' @param solver Character; `"torch"` (default, PyTorch log-linear resistance),
-#'   `"surrogate"` (GP surrogate optimiser), `"gradient"` (L-BFGS / Adam via
-#'   JAX auto-diff), or `"enzyme"` (deprecated alias for `"gradient"`). For `"torch"`,
-#'   [run_torch_pipeline()] fits resistance and intensity jointly in a
-#'   single call, so the separate intensity-fitting step is skipped and
-#'   `posterior`/`diagnostics`/`ppc` are `NULL` (those require either a
-#'   parametric `bounds`-based Laplace approximation or a
-#'   `fit_intensity_nb()`/`fit_intensity_gam()`-shaped fit object that the
-#'   torch backend does not produce).
-#' @return A list with `obs_points`, `basis_stack`, `opt_result`,
-#'   `intensity_fit`, `posterior`, `diagnostics`.
+#' @param solver Optimization method, default `"adam"`; `"lbfgs"` uses bounded
+#'   SciPy optimization. `"surrogate"` and legacy `"gradient"` select window
+#'   effective resistance. Deprecated `"torch"` translates to physical JAX.
+#'   Joint physical fits support NumPyro posterior inference and diagnostics.
 #' @export
+#' @return Optimization, intensity, posterior and diagnostic results.
 diffiscape <- function(obs_data,
                        rasters,
                        optimizer_config     = default_optimizer_config(),
@@ -641,7 +678,7 @@ diffiscape <- function(obs_data,
                        rescale_basis        = TRUE,
                        pattern              = "*.tif",
                        omniscape_settings   = list(),
-                       solver               = c("torch", "surrogate", "gradient",
+                       solver               = c("adam", "lbfgs", "torch", "surrogate", "gradient",
                                                 "enzyme")) {
 
   solver <- match.arg(solver)
@@ -690,51 +727,38 @@ diffiscape <- function(obs_data,
     solver               = solver
   )
 
-  if (solver == "torch") {
-    # --- torch: resistance + intensity are fit jointly inside
-    # ds_optimize() -> run_torch_pipeline(), so there is no separate
-    # intensity-fitting step. Build the normal intensity_fit shape directly
-    # from fields already present on opt_result (see run_torch_pipeline()'s
-    # return value in R/torch_pipeline.R).
+  if (solver %in% c("adam", "lbfgs", "torch")) {
+    # Physical resistance and intensity are fitted jointly in Python.
     message("\n[4/6] Fitting final intensity model... SKIPPED ",
             "(solver = '", solver, "' fits resistance + intensity jointly)")
     intensity_fit <- list(
       loglik             = opt_result$best_loglik,
       intensity_params   = opt_result$intensity_params,
-      # No fit_intensity_nb()/fit_intensity_gam()-shaped object exists for
-      # the torch path (predict_intensity() / diagnose_model() require
-      # $estimates, $c_scale, $log_conn_mean, $log_conn_sd, none of which
-      # the neural-network intensity head produces) -- NULL rather than a
-      # fabricated stand-in.
+      # Preserve the joint fit rather than fabricating an independent intensity MLE.
       intensity_fit_obj  = NULL,
+      python_fit         = opt_result$python_fit,
       intensity_se       = opt_result$intensity_se,
-      # No Hessian is computed by the Adam/MAP torch optimiser.
+      # Use NumPyro draws for physical-model uncertainty.
       hessian            = NULL,
       convergence        = opt_result$convergence,
       distribution       = opt_result$distribution,
       total_time         = opt_result$total_time,
-      # The torch pipeline fuses the connectivity solve into the training
+      # The physical core includes connectivity solving in its training
       # loop rather than timing it as a separate post-hoc step.
       omniscape_time     = NULL
     )
 
-    # --- Posterior / diagnostics / PPC: not available for torch -------
-    # ds_posterior() (Laplace approx + MC composition) requires
-    # opt_result$bounds, a parametric r_0/z_1..z_K bounds list that the
-    # torch neural-network parameterisation does not produce. Likewise
-    # ds_diagnose()/ds_ppc() call predict_intensity() on a
-    # fit_intensity_nb()/fit_intensity_gam()-shaped object that doesn't
-    # exist here (see intensity_fit_obj note above). Rather than fabricate
-    # these or silently change the result's field set, they are explicitly
-    # NULL for this solver.
-    message("\n[5/6] Posterior inference... SKIPPED (not available for solver = '",
-            solver, "')")
     posterior <- NULL
-
-    message("\n[6/6] Diagnostics... SKIPPED (not available for solver = '",
-            solver, "')")
-    diagnostics <- NULL
+    if (n_posterior > 0 && !is.null(opt_result$python_fit)) {
+      posterior <- ds_posterior(opt_result, basis_stack, obs_points, n_draws = n_posterior)
+    }
+    diagnostics <- if (!is.null(opt_result$python_fit)) ds_diagnose(
+      intensity_fit, obs_points, opt_result$connectivity_raster, plot = plot) else NULL
     ppc <- NULL
+    if (!is.null(posterior)) {
+      ppc <- ds_ppc(posterior, intensity_fit, obs_points, opt_result$connectivity_raster,
+                    basis_stack = basis_stack, plot = plot)
+    }
 
   } else {
     # --- Step 4: Final intensity fit ---

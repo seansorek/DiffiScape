@@ -79,7 +79,7 @@ Default: \code{3000}.}
 
 \describe{
 \item{\code{surrogate_config}}{Named list of extra arguments forwarded to
-\code{\link[DiceKriging:km]{DiceKriging::km()}}. Default: \code{list()}.}
+the SMT KRG implementation. Default: \code{list()}.}
 }
 }
 

@@ -35,7 +35,7 @@ ds_jax_sample_advi(
 \code{"permeability"}.}
 
 \item{model_type}{Character; Flax model architecture -- \code{"mlp"} (default),
-\code{"conv"}, \code{"spline_gam"}, or \code{"irl"}.}
+\code{"conv"}, \code{"spline_gam"} (legacy RBF).}
 
 \item{model_config}{Named list of model-specific knobs forwarded to the
 Flax module constructor (e.g., \code{list(hidden_dim = 32L)}).}
@@ -50,7 +50,8 @@ Defaults to \code{tempdir()}.}
 \item{radius}{Integer; moving-window buffer radius for the connectivity
 operator (default 13). Must match the \code{radius} used on the
 forward/evaluation path (e.g. \code{ds_jax_connectivity()}) for the fitted
-\code{gamma} to be meaningful there.}
+\code{gamma} to be meaningful there. Placed after the pre-existing arguments
+so old positional calls keep their original meaning.}
 
 \item{block_size}{Integer; moving-window core / source-block size for the
 connectivity operator (default 5). Must match the forward path's

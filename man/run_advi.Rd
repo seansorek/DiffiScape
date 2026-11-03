@@ -2,7 +2,7 @@
 % Please edit documentation in R/torch_pipeline.R
 \name{run_advi}
 \alias{run_advi}
-\title{Automatic Differentiation Variational Inference (ADVI)}
+\title{Retired checkpoint sampler}
 \usage{
 run_advi(
   basis_stack,
@@ -77,11 +77,8 @@ knobs (must match the MAP run).}
 \item{device}{Character; \code{"auto"}, \code{"cuda"}, or \code{"cpu"}.}
 }
 \value{
-A list with posterior samples / summary plus
-\code{best_elbo}, \code{converged}.
+An actionable migration error.
 }
 \description{
-Fits a mean-field or full-rank Gaussian variational posterior by
-optimising the ELBO with Adam. Faster than HMC/Langevin but biased to
-the variational family.
+Old .pt checkpoints cannot be loaded by JAX. Refit with ds_optimize() and use ds_posterior(method = "nuts") or method = "advi". Custom MALA is retired.
 }

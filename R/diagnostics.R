@@ -45,20 +45,7 @@ compute_deviance_residuals <- function(observed, fitted, size) {
   if (length(fitted) != n) stop("observed and fitted must be same length",
                                  call. = FALSE)
 
-  y    <- observed
-  mu   <- pmax(fitted, 1e-10)
-  k    <- size
-
-  # Term 1: y * log(y / mu)  -- 0 when y == 0
-
-  t1 <- ifelse(y > 0, y * log(y / mu), 0)
-  # Term 2: (y + k) * log((y + k) / (mu + k))
-  t2 <- (y + k) * log((y + k) / (mu + k))
-
-  d_sq <- 2 * (t1 - t2)
-  d_sq <- pmax(d_sq, 0)   # numerical safety
-
-  sign(y - mu) * sqrt(d_sq)
+  family_negbin()$deviance_residuals_fn(observed, fitted, list(size = size))
 }
 
 
@@ -404,23 +391,12 @@ diagnose_model <- function(intensity_fit,
 # Simulate one replicate of cell counts from the posterior predictive.
 .ppc_simulate_counts <- function(mu_cells, family_name, size = NULL,
                                  pi_val = NULL) {
-  n <- length(mu_cells)
-  switch(family_name,
-    poisson = stats::rpois(n, lambda = mu_cells),
-    negbin = {
-      size_safe <- max(size, 1e-6)
-      stats::rnbinom(n, mu = mu_cells, size = size_safe)
-    },
-    zinb = {
-      size_safe <- max(size, 1e-6)
-      is_zero <- stats::runif(n) < pi_val
-      counts  <- stats::rnbinom(n, mu = mu_cells, size = size_safe)
-      ifelse(is_zero, 0L, counts)
-    },
-    stop("Posterior predictive checks are not supported for family '",
-         family_name, "'. PPC requires a count-valued distributional family ",
-         "(negbin, poisson, zinb).", call. = FALSE)
-  )
+  module <- reticulate::import("diffiscape.diagnostics", convert = FALSE)
+  values <- module$simulate_counts(as.numeric(mu_cells), family = family_name,
+    size = if (is.null(size)) 1 else as.double(size),
+    pi = if (is.null(pi_val)) 0 else as.double(pi_val),
+    seed = as.integer(sample.int(.Machine$integer.max, 1)))
+  as.numeric(reticulate::py_to_r(values))
 }
 
 
@@ -499,6 +475,7 @@ diagnose_model <- function(intensity_fit,
 #' @param seed Optional integer seed for reproducibility.
 #' @param plot Logical; produce PPC diagnostic plots.
 #' @param verbose Logical; emit progress messages.
+#' @param basis_stack Fitted basis rasters, required for physical posterior prediction.
 #' @return A list with class `"ds_ppc"`:
 #'   \describe{
 #'     \item{`observed`}{Named numeric vector of observed test quantities.}
@@ -525,8 +502,27 @@ ds_ppc <- function(posterior_samples,
                    thin               = 1L,
                    seed               = NULL,
                    plot               = TRUE,
-                   verbose            = TRUE) {
+                   verbose            = TRUE,
+                   basis_stack        = NULL) {
 
+  if (is.list(posterior_samples) && !is.null(posterior_samples$python_posterior) && !is.null(intensity_fit$python_fit)) {
+    if (is.null(basis_stack)) stop("basis_stack is required for physical posterior predictive checks", call. = FALSE)
+    if (include_moran) stop("Moran posterior checks remain an R-only extension; use the replicated counts explicitly.", call. = FALSE)
+    if (!ds_jax_check()) ds_jax_setup()
+    prep <- .prepare_backend_inputs(basis_stack, obs_points)
+    module <- reticulate::import("diffiscape.diagnostics", convert = FALSE)
+    out <- module$physical_predictive_checks(intensity_fit$python_fit, prep$basis_np,
+      posterior_samples$python_posterior, prep$obs_np, n_sim = as.integer(n_sim),
+      test_quantities = as.list(test_quantities), thin = as.integer(thin), seed = as.integer(seed %||% 42L))
+    out <- reticulate::py_to_r(out)
+    out$observed <- unlist(out$observed)
+    out$bayesian_p <- unlist(out$bayesian_p)
+    out$simulated <- lapply(out$simulated, as.numeric)
+    out$test_quantities <- unlist(out$test_quantities)
+    class(out) <- "ds_ppc"
+    if (plot) plot_ppc(out)
+    return(out)
+  }
   if (!is.data.frame(posterior_samples) || nrow(posterior_samples) == 0) {
     stop("posterior_samples must be a non-empty data.frame", call. = FALSE)
   }
@@ -541,6 +537,9 @@ ds_ppc <- function(posterior_samples,
     fit_obj$distribution
   } else {
     "negbin"
+  }
+  if (!family_name %in% c("poisson", "negbin", "zinb")) {
+    stop("Posterior predictive counts are not supported for family '", family_name, "'.", call. = FALSE)
   }
 
   if (!is.null(fit_obj$gam_model)) {
@@ -599,6 +598,24 @@ ds_ppc <- function(posterior_samples,
     }
   }
   actual_n_sim <- length(draw_idx)
+
+  # Moran's I and custom R family callbacks remain an R-only extension.
+  if (!include_moran && (is.null(family) || !is.null(attr(family$negloglik_fn, "python_config")))) {
+    module <- reticulate::import("diffiscape.diagnostics", convert = FALSE)
+    params <- fit_obj$estimates %||% intensity_fit$intensity_params
+    result <- reticulate::py_to_r(module$intensity_predictive_checks(
+      as.list(z_vals), if (length(cov_vals)) cov_vals else reticulate::dict(), as.list(obs_counts), as.list(params),
+      lapply(posterior_samples[draw_idx, , drop = FALSE], as.list),
+      cell_area = cell_area, family = family_name, test_quantities = as.list(test_quantities),
+      seed = as.integer(sample.int(.Machine$integer.max, 1))))
+    result$observed <- unlist(result$observed)
+    result$simulated <- lapply(result$simulated, unlist)
+    result$bayesian_p <- unlist(result$bayesian_p)
+    result$test_quantities <- unlist(result$test_quantities)
+    class(result) <- "ds_ppc"
+    if (plot) plot_ppc(result)
+    return(result)
+  }
 
   # --- Compute MAP expected counts for observed test quantities ---
   params_vec <- fit_obj$estimates %||% intensity_fit$intensity_params

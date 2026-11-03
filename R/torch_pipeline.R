@@ -1,151 +1,17 @@
 # ============================================================================
-# PyTorch neural-network resistance pipeline
+# Deprecated physical-model compatibility entry points
 #
-# R wrappers around inst/python/diff_cs/05_torch_pipeline.py:
-#   - run_torch_pipeline()           MAP optimisation via Adam
-#   - run_bayesian_sampling()        Langevin / MALA posterior
-#   - run_bayesian_sampling_hmc()    HMC / NUTS posterior
-#   - run_advi()                     ADVI variational posterior
-#   - verify_torch_gradient()        Adjoint vs autograd gradient check
-#   - verify_conv_gradient()         Conv resistance net gradient check
-#   - verify_spline_gradient()       Spline-GAM resistance gradient check
-#
-# All functions assume ds_torch_setup() has been called.
-# ============================================================================
+# Supported old fitting calls translate to the installed physical JAX core.
+# Checkpoint samplers fail with refitting instructions; gradient checks use JAX.
 
-
-# --------------- Data-preparation helper ------------------------------------
-#
-# Builds the numpy inputs the Python backend expects from a SpatRaster of
-# basis layers and a data.frame of observation coordinates. Shared by every
-# entry point in this file via the .prepare_backend_inputs() helper in
-# R/utils.R (also used by the JAX bridge in R/jax_bridge.R).
-#
 # --------------- Torch pipeline configuration --------------------------------
 
-#' Default PyTorch pipeline configuration
+#' Deprecated physical-model configuration
 #'
-#' Returns a named list of model hyperparameters for [run_torch_pipeline()].
-#' Modify individual elements and pass the result via the `config` argument.
-#' Workflow/output parameters (`verbose`, `output_dir`, `warm_start_theta`,
-#' `absorption_schedule`, `compute_uq`, `uq_block_only`) are excluded — pass
-#' those directly to [run_torch_pipeline()].
+#' Compatibility settings for run_torch_pipeline(). Use run_jax_pipeline() for new calls. weight_decay and stochastic focal_fraction are retired. Device selection follows the JAX environment.
 #'
-#' @section Neural-network architecture:
-#' \describe{
-#'   \item{`hidden_dim`}{Integer. Width of each MLP hidden layer.
-#'     Default: `32`.}
-#'   \item{`n_hidden_layers`}{Integer. Number of MLP hidden layers.
-#'     Default: `2`.}
-#' }
-#'
-#' @section Optimiser:
-#' \describe{
-#'   \item{`lr`}{Numeric. Adam learning rate. Default: `0.01`.}
-#'   \item{`weight_decay`}{Numeric. L2 weight decay (AdamW). Default: `1e-4`.}
-#'   \item{`n_epochs`}{Integer. Maximum training epochs. Default: `300`.}
-#'   \item{`patience`}{Integer. Early-stopping patience in epochs.
-#'     Default: `30`.}
-#'   \item{`grad_clip`}{Numeric. Gradient-norm clipping threshold.
-#'     Default: `10`.}
-#'   \item{`warmup_epochs`}{Integer. Linear LR warm-up duration in epochs.
-#'     Default: `10`.}
-#' }
-#'
-#' @section Connectivity solver:
-#' \describe{
-#'   \item{`solver`}{Character. Circuit solver: `"global_absorption"`
-#'     (all-pairs with absorption, default), `"diff_omniscape"` (focal
-#'     Omniscape), or `"global"` (all-pairs).}
-#'   \item{`radius`}{Integer. Omniscape focal radius in cells. Default: `15`.}
-#'   \item{`block_size`}{Integer. Omniscape focal block size. Default: `10`.}
-#'   \item{`focal_fraction`}{Numeric. Fraction of focal cells sampled
-#'     stochastically per gradient step. Default: `0.5`.}
-#'   \item{`absorption`}{Numeric. Absorption rate for the global solver.
-#'     Default: `0.01`.}
-#'   \item{`cg_tol`}{Numeric. Conjugate-gradient solver tolerance.
-#'     Default: `1e-6`.}
-#'   \item{`source_spacing`}{Integer. Lattice spacing in cells between circuit
-#'     sources for the global solver. Default: `1` (the `global_absorption`
-#'     solver forces spacing back to 1 regardless, so this avoids an
-#'     avoidable warning on the out-of-the-box config).}
-#'   \item{`source_from_resistance`}{Logical. Weight source strength by inverse
-#'     resistance. Default: `TRUE`.}
-#' }
-#'
-#' @section Regularisation:
-#' \describe{
-#'   \item{`reg_mean`}{Numeric. Weight on the `(mean(log R) - log_R_baseline)^2`
-#'     penalty, anchoring the overall resistance level. Default: `1.0`.}
-#'   \item{`reg_var`}{Numeric. Weight on a variance hinge that discourages
-#'     `var(log R)` from falling below `target_logR_var`. Default: `0.1`.}
-#'   \item{`target_logR_var`}{Numeric. Variance threshold below which the
-#'     hinge activates. Default: `1.0`.}
-#'   \item{`reg_skip`}{Numeric. Weight on skip-connection magnitude penalty
-#'     (MLP only). Default: `0.1`.}
-#'   \item{`log_R_baseline`}{Numeric. Target mean of `log R` used in the mean
-#'     penalty. Default: `3.0`.}
-#' }
-#'
-#' @section Miscellaneous:
-#' \describe{
-#'   \item{`seed`}{Integer. RNG seed for reproducibility. Default: `42`.}
-#'   \item{`device`}{Character. `"auto"` (GPU if available), `"cuda"`, or
-#'     `"cpu"`. Default: `"auto"`.}
-#' }
-#'
-#' @section Convolutional architecture (use_conv = TRUE):
-#' \describe{
-#'   \item{`use_conv`}{Logical. Use ConvResistanceNet instead of MLP.
-#'     Default: `FALSE`.}
-#'   \item{`n_conv_layers`}{Integer. Number of Conv2d residual blocks.
-#'     Default: `3`.}
-#'   \item{`conv_channels`}{Integer. Convolutional feature channels.
-#'     Default: `16`.}
-#'   \item{`conv_kernel_size`}{Integer. Convolution kernel size. Default: `3`.}
-#'   \item{`dropout`}{Numeric. Dropout rate applied in the MLP head.
-#'     Default: `0.0`.}
-#'   \item{`use_dilated`}{Logical. Use dilated convolutions for a larger
-#'     receptive field. Default: `TRUE`.}
-#'   \item{`intensity_hidden`}{Integer. Width of the learned intensity MLP;
-#'     `0` uses a linear mapping. Default: `0`.}
-#' }
-#'
-#' @section Spline-GAM model (model_type = "spline_gam"):
-#' \describe{
-#'   \item{`model_type`}{Character. `"loglinear"` (default), `"mlp"`, `"conv"`,
-#'     or `"spline_gam"`.}
-#'   \item{`n_knots`}{Integer. Spline knots per covariate. Default: `10`.}
-#'   \item{`spline_degree`}{Integer. B-spline degree. Default: `3` (cubic).}
-#'   \item{`include_interactions`}{Logical. Add tensor-product interaction terms
-#'     between pairs of covariates. Default: `TRUE`.}
-#'   \item{`penalty_scale`}{Numeric. Global multiplier on all smoothing
-#'     penalties. Default: `1.0`.}
-#'   \item{`lambda_init_marginal`}{Numeric. Initial smoothing parameter for
-#'     marginal (main-effect) terms. Default: `0.0`.}
-#'   \item{`lambda_init_interaction`}{Numeric. Initial smoothing parameter for
-#'     interaction terms. Default: `2.0`.}
-#'   \item{`lambda_min`}{Numeric. Minimum smoothing parameter floor.
-#'     Default: `0.0`.}
-#' }
-#'
-#' @section Intensity spline (intensity_spline = TRUE):
-#' \describe{
-#'   \item{`intensity_spline`}{Logical. Apply a learned spline transform on
-#'     connectivity in the intensity model. Default: `FALSE`.}
-#'   \item{`intensity_n_knots`}{Integer. Spline knots for the intensity
-#'     connectivity term. Default: `5`.}
-#'   \item{`intensity_degree`}{Integer. B-spline degree for intensity spline.
-#'     Default: `3`.}
-#'   \item{`lambda_init_intensity`}{Numeric. Initial smoothing parameter for
-#'     the intensity spline. Default: `2.0`.}
-#'   \item{`intensity_log1p_max`}{Numeric. Clamp applied to
-#'     `log1p(connectivity)` before the intensity spline. Default: `10.0`.}
-#' }
-#'
-#' @return A named list of hyperparameters.
-#' @seealso [run_torch_pipeline()], [run_advi()], [run_bayesian_sampling_hmc()]
 #' @export
+#' @return Named compatibility configuration.
 default_torch_config <- function() {
   list(
     # --- Neural-network architecture ---
@@ -212,15 +78,9 @@ default_torch_config <- function() {
 
 # --------------- MAP optimisation -------------------------------------------
 
-#' Optimise resistance with a PyTorch neural network
+#' Deprecated physical-model fitting entry point
 #'
-#' Trains a neural-network resistance surface (MLP / Conv / Spline-GAM) by
-#' backpropagating through a differentiable circuit solver, maximising a
-#' Poisson point-process log-likelihood with smoothness regularisation.
-#'
-#' Wraps `run_torch_optimization()` in the bundled Python module
-#' `diff_cs/05_torch_pipeline.py`. Requires [ds_torch_setup()] to have been
-#' called.
+#' Translates supported settings to run_jax_pipeline() using JAX. Old checkpoint UQ, absorption curricula, neural warm starts and Torch-specific devices require migration. Use ds_posterior() for NumPyro uncertainty.
 #'
 #' @param basis_stack A [terra::SpatRaster] with K covariate layers.
 #' @param obs_points Data.frame with `x, y` columns (projected coords).
@@ -282,12 +142,8 @@ default_torch_config <- function() {
 #' @param lambda_init_intensity Numeric; init smoothing for the intensity
 #'   spline.
 #' @param intensity_log1p_max Numeric; clamp on `log1p(connectivity)`.
-#' @return A list with `best_params`, `best_loglik`, `alpha`, `gamma`,
-#'   `resistance_raster`, `connectivity_raster`, `intensity_raster`,
-#'   `loss_history`, `best_epoch`, `n_params`, `n_epochs_run`,
-#'   `total_time`, `method`, `distribution`, `effective_loglinear`,
-#'   `model_type`, plus the diagnostics returned by the Python optimiser.
 #' @export
+#' @return The physical JAX fitting result; no Torch checkpoint is written.
 run_torch_pipeline <- function(basis_stack,
                                 obs_points,
                                 config                  = default_torch_config(),
@@ -342,182 +198,36 @@ run_torch_pipeline <- function(basis_stack,
                                 intensity_log1p_max     = config$intensity_log1p_max) {
 
   model_type <- match.arg(model_type, c("loglinear", "mlp", "conv", "spline_gam"))
-  if (!.ds_env$torch_initialized) ds_torch_setup()
-
-  np <- reticulate::import("numpy", convert = FALSE)
-
-  message("\n  Preparing data for PyTorch pipeline...")
-  prep <- .prepare_backend_inputs(basis_stack, obs_points)
-  message(sprintf("    Grid: %d x %d (%d valid cells)",
-                  prep$n_rows, prep$n_cols, prep$n_valid))
-  message(sprintf("    Observations: %d GPS fixes", prep$n_obs))
-  message(sprintf("    Cell area: %.1f m^2", prep$cell_area))
-
-  warm_theta_np <- if (!is.null(warm_start_theta)) {
-    np$array(as.double(warm_start_theta), dtype = np$float64)
-  } else NULL
-
-  abs_sched_np <- if (!is.null(absorption_schedule)) {
-    np$array(as.double(absorption_schedule), dtype = np$float64)
-  } else NULL
-
-  if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
-
-  message("\n  Starting PyTorch optimisation...")
-  results <- ds_torch_call(
-    "run_torch_optimization",
-    basis_values_np   = prep$basis_np,
-    obs_counts_np     = prep$obs_np,
-    n_rows            = as.integer(prep$n_rows),
-    n_cols            = as.integer(prep$n_cols),
-    valid_mask_np     = prep$vmask_np,
-    cell_area         = as.double(prep$cell_area),
-    source_spacing    = as.integer(source_spacing),
-    source_from_resistance = source_from_resistance,
-    hidden_dim        = as.integer(hidden_dim),
-    n_hidden_layers   = as.integer(n_hidden_layers),
-    lr                = as.double(lr),
-    weight_decay      = as.double(weight_decay),
-    n_epochs          = as.integer(n_epochs),
-    patience          = as.integer(patience),
-    grad_clip         = as.double(grad_clip),
-    cg_tol            = as.double(cg_tol),
-    warm_start_theta  = warm_theta_np,
-    reg_mean          = as.double(reg_mean),
-    reg_var           = as.double(reg_var),
-    target_logR_var   = as.double(target_logR_var),
-    reg_skip          = as.double(reg_skip),
-    log_R_baseline    = as.double(log_R_baseline),
-    output_dir        = output_dir,
-    seed              = as.integer(seed),
-    verbose           = verbose,
-    solver            = solver,
-    radius            = as.integer(radius),
-    block_size        = as.integer(block_size),
-    focal_fraction    = as.double(focal_fraction),
-    absorption        = as.double(absorption),
-    device            = as.character(device),
-    use_conv          = use_conv,
-    n_conv_layers     = as.integer(n_conv_layers),
-    conv_channels     = as.integer(conv_channels),
-    conv_kernel_size  = as.integer(conv_kernel_size),
-    dropout           = as.double(dropout),
-    use_dilated       = use_dilated,
-    intensity_hidden  = as.integer(intensity_hidden),
-    warmup_epochs     = as.integer(warmup_epochs),
-    absorption_schedule    = abs_sched_np,
-    model_type             = as.character(model_type),
-    n_knots                = as.integer(n_knots),
-    spline_degree          = as.integer(spline_degree),
-    include_interactions   = include_interactions,
-    penalty_scale          = as.double(penalty_scale),
-    lambda_init_marginal   = as.double(lambda_init_marginal),
-    lambda_init_interaction = as.double(lambda_init_interaction),
-    lambda_min             = as.double(lambda_min),
-    compute_uq             = compute_uq,
-    uq_block_only          = uq_block_only,
-    intensity_spline       = intensity_spline,
-    intensity_n_knots      = as.integer(intensity_n_knots),
-    intensity_degree       = as.integer(intensity_degree),
-    lambda_init_intensity  = as.double(lambda_init_intensity),
-    intensity_log1p_max    = as.double(intensity_log1p_max)
-  )
-
-  results_r <- reticulate::py_to_r(results)
-
-  message("\n  Converting results to SpatRasters...")
-  template <- basis_stack[[1]]
-
-  R_full <- rep(NA_real_, terra::ncell(template))
-  R_full[prep$valid_mask] <- results_r$resistance
-  resistance_rast <- terra::rast(template)
-  terra::values(resistance_rast) <- R_full
-  names(resistance_rast) <- "resistance"
-
-  C_full <- rep(NA_real_, terra::ncell(template))
-  C_full[prep$valid_mask] <- results_r$connectivity
-  connectivity_rast <- terra::rast(template)
-  terra::values(connectivity_rast) <- C_full
-  names(connectivity_rast) <- "connectivity"
-
-  loglam_full <- rep(NA_real_, terra::ncell(template))
-  loglam_full[prep$valid_mask] <- results_r$log_lambda
-  intensity_rast <- terra::rast(template)
-  terra::values(intensity_rast) <- exp(loglam_full)
-  names(intensity_rast) <- "intensity"
-
-  terra::writeRaster(resistance_rast,
-                     file.path(output_dir, "optimized_resistance.tif"),
-                     overwrite = TRUE)
-  terra::writeRaster(connectivity_rast,
-                     file.path(output_dir, "optimized_connectivity.tif"),
-                     overwrite = TRUE)
-  terra::writeRaster(intensity_rast,
-                     file.path(output_dir, "predicted_intensity.tif"),
-                     overwrite = TRUE)
-  message("  Saved resistance, connectivity, intensity rasters")
-
-  effective_ll <- results_r$effective_loglinear
-  n_basis <- length(effective_ll) - 1L
-  bp_list <- list(r_0 = effective_ll[1])
-  for (k in seq_len(n_basis)) {
-    bp_list[[paste0("z_", k)]] <- effective_ll[k + 1L]
+  if (isTRUE(use_conv)) model_type <- "conv"
+  if (isTRUE(compute_uq)) stop("compute_uq is unavailable after migration; use ds_posterior() with NumPyro for uncertainty.", call. = FALSE)
+  if (!is.null(absorption_schedule)) stop("absorption_schedule has no validated translation; fit with a fixed absorption value.", call. = FALSE)
+  if (!is.null(warm_start_theta) && model_type != "loglinear") stop("Neural warm starts have no validated translation; use the saved Python model state.", call. = FALSE)
+  if (!device %in% c("auto", "cpu")) stop("Select an accelerator through JAX installation/configuration; Torch device values cannot be translated.", call. = FALSE)
+  formulation <- switch(solver, global_absorption = "global_absorption", absorption = "global_absorption",
+    global = "boundary", diff_omniscape = "focal_current", stop("Unknown connectivity formulation: ", solver, call. = FALSE))
+  if (formulation == "global_absorption" && source_spacing != 1L) {
+    message("Legacy global absorption uses source_spacing=1; use run_jax_pipeline() to choose another spacing.")
+    source_spacing <- 1L
   }
-  best_params <- as.data.frame(bp_list)
-
-  n_obs <- prep$n_obs
-  method_tag <- if (model_type == "spline_gam") "torch_spline_gam_circuit"
-                else "torch_nn_circuit"
-
-  output <- list(
-    best_params         = best_params,
-    best_loglik         = results_r$loglik,
-    alpha               = results_r$alpha,
-    gamma               = results_r$gamma,
-    resistance_raster   = resistance_rast,
-    connectivity_raster = connectivity_rast,
-    intensity_raster    = intensity_rast,
-    loss_history        = results_r$loss_history,
-    best_epoch          = results_r$best_epoch,
-    n_params            = results_r$n_params,
-    n_epochs_run        = results_r$n_epochs_run,
-    total_time          = results_r$total_time,
-    method              = method_tag,
-    distribution        = "poisson_parametric",
-    effective_loglinear = effective_ll,
-    model_type          = model_type,
-    partial_effects     = results_r$partial_effects,
-    interaction_effects = results_r$interaction_effects,
-    uq_results          = results_r$uq_results,
-    intensity_params    = c(alpha = results_r$alpha, gamma = results_r$gamma),
-    intensity_se        = c(alpha = NA_real_,        gamma = NA_real_),
-    convergence         = 0L,
-    convergence_message = sprintf("early_stop_epoch_%d", results_r$best_epoch),
-    n_evaluations       = results_r$n_epochs_run,
-    solver              = results_r$solver %||% "circuit_global"
-  )
-
+  model_config <- switch(model_type,
+    loglinear = list(),
+    mlp = list(hidden_dim = hidden_dim, n_hidden_layers = n_hidden_layers),
+    conv = list(hidden_dim = hidden_dim, n_hidden_layers = n_hidden_layers, conv_channels = conv_channels,
+      n_conv_layers = n_conv_layers, conv_kernel_size = conv_kernel_size, dropout = dropout,
+      use_dilated = use_dilated, intensity_hidden = intensity_hidden),
+    spline_gam = list(n_knots = n_knots, spline_degree = spline_degree, include_interactions = include_interactions,
+      lambda_init_marginal = lambda_init_marginal, lambda_init_interaction = lambda_init_interaction,
+      lambda_min = lambda_min, intensity_spline = intensity_spline, intensity_n_knots = intensity_n_knots,
+      intensity_degree = intensity_degree, lambda_init_intensity = lambda_init_intensity, intensity_log1p_max = intensity_log1p_max))
+  message("run_torch_pipeline() is deprecated; using JAX with the same physical model. Use run_jax_pipeline(). Unused weight_decay and stochastic focal_fraction options are retired.")
+  output <- run_jax_pipeline(basis_stack, obs_points, model_type = model_type, formulation = formulation,
+    model_config = model_config, output_dir = output_dir, lr = lr, n_epochs = n_epochs,
+    patience = patience, grad_clip = grad_clip, warmup_epochs = warmup_epochs,
+    source_spacing = source_spacing, source_from_resistance = source_from_resistance, absorption = absorption,
+    radius = radius, block_size = block_size, reg_mean = reg_mean, reg_var = reg_var,
+    reg_skip = reg_skip, target_logR_var = target_logR_var, log_R_baseline = log_R_baseline,
+    penalty_scale = penalty_scale, init_params = warm_start_theta, seed = seed, verbose = verbose, cg_tol = cg_tol)
   saveRDS(output, file.path(output_dir, "torch_optimization_results.rds"))
-
-  summary_report <- list(
-    resistance_params = best_params,
-    intensity_params  = output$intensity_params,
-    intensity_se      = output$intensity_se,
-    loglik            = results_r$loglik,
-    distribution      = "poisson_parametric",
-    info_criteria     = list(
-      aic = -2 * results_r$loglik + 2 * results_r$n_params,
-      bic = -2 * results_r$loglik + log(n_obs) * results_r$n_params
-    ),
-    n_evaluations    = results_r$n_epochs_run,
-    n_basis          = terra::nlyr(basis_stack),
-    method           = method_tag,
-    solver           = output$solver,
-    optim_convergence = 0L,
-    optim_message    = "torch_adam"
-  )
-  saveRDS(summary_report, file.path(output_dir, "final_summary.rds"))
-
   output
 }
 
@@ -554,7 +264,7 @@ run_torch_pipeline <- function(basis_stack,
 
 #' Verify the differentiable circuit-solver gradient
 #'
-#' Finite-difference gradient check on the bundled differentiable circuit
+#' Finite-difference gradient check on the installed JAX circuit
 #' solver. Useful as a smoke test before running an expensive optimisation.
 #'
 #' @param basis_stack [terra::SpatRaster] of basis layers.
@@ -571,49 +281,7 @@ verify_torch_gradient <- function(basis_stack,
                                    radius     = 15L,
                                    block_size = 10L,
                                    absorption = 0.01) {
-
-  if (!.ds_env$torch_initialized) ds_torch_setup()
-  np <- reticulate::import("numpy", convert = FALSE)
-  cr <- .crop_basis_for_gradient(basis_stack, crop_size)
-
-  effective_radius <- min(as.integer(radius),
-                          cr$n_rows %/% 2 - 1,
-                          cr$n_cols %/% 2 - 1)
-  effective_radius <- max(effective_radius, 3L)
-  effective_block  <- min(as.integer(block_size), cr$n_rows %/% 3)
-  effective_block  <- max(effective_block, 2L)
-
-  if (effective_radius != radius || effective_block != block_size) {
-    message(sprintf(
-      "  Gradient check: adjusted radius=%d->%d, block_size=%d->%d for %dx%d crop",
-      radius, effective_radius, block_size, effective_block,
-      cr$n_rows, cr$n_cols
-    ))
-  }
-
-  result <- ds_torch_call(
-    "verify_circuit_gradient",
-    basis_values_np = np$array(cr$basis_vals, dtype = np$float64),
-    valid_mask_np   = np$array(cr$valid,      dtype = np$bool_),
-    n_rows          = as.integer(cr$n_rows),
-    n_cols          = as.integer(cr$n_cols),
-    source_spacing  = 5L,
-    source_from_resistance = TRUE,
-    solver     = solver,
-    radius     = as.integer(effective_radius),
-    block_size = as.integer(effective_block),
-    absorption = as.double(absorption)
-  )
-
-  result_r <- reticulate::py_to_r(result)
-  if (isTRUE(result_r$pass)) {
-    message("  Torch gradient check PASSED (max rel error: ",
-            sprintf("%.2e", result_r$max_rel_error), ")")
-  } else {
-    warning("  Torch gradient check FAILED (max rel error: ",
-            sprintf("%.2e", result_r$max_rel_error), ")")
-  }
-  result_r
+  .verify_jax_gradient(basis_stack, crop_size, "loglinear", list(), solver, absorption, radius, block_size)
 }
 
 
@@ -639,38 +307,7 @@ verify_conv_gradient <- function(basis_stack,
                                   hidden_dim      = 16L,
                                   use_dilated     = TRUE,
                                   intensity_hidden = 0L) {
-
-  if (!.ds_env$torch_initialized) ds_torch_setup()
-  np <- reticulate::import("numpy", convert = FALSE)
-  cr <- .crop_basis_for_gradient(basis_stack, crop_size)
-
-  result <- ds_torch_call(
-    "verify_conv_gradient",
-    basis_values_np  = np$array(cr$basis_vals, dtype = np$float64),
-    valid_mask_np    = np$array(cr$valid,      dtype = np$bool_),
-    n_rows           = as.integer(cr$n_rows),
-    n_cols           = as.integer(cr$n_cols),
-    source_spacing   = 1L,
-    source_from_resistance = TRUE,
-    conv_channels    = as.integer(conv_channels),
-    n_conv_layers    = as.integer(n_conv_layers),
-    conv_kernel_size = as.integer(conv_kernel_size),
-    hidden_dim       = as.integer(hidden_dim),
-    solver           = solver,
-    absorption       = as.double(absorption),
-    use_dilated      = use_dilated,
-    intensity_hidden = as.integer(intensity_hidden)
-  )
-
-  result_r <- reticulate::py_to_r(result)
-  if (isTRUE(result_r$pass)) {
-    message("  Conv gradient check PASSED (max rel error: ",
-            sprintf("%.2e", result_r$max_rel_error), ")")
-  } else {
-    warning("  Conv gradient check FAILED (max rel error: ",
-            sprintf("%.2e", result_r$max_rel_error), ")")
-  }
-  result_r
+  .verify_jax_gradient(basis_stack, crop_size, "conv", list(conv_channels = as.integer(conv_channels), n_conv_layers = as.integer(n_conv_layers), conv_kernel_size = as.integer(conv_kernel_size), hidden_dim = as.integer(hidden_dim), use_dilated = use_dilated, intensity_hidden = as.integer(intensity_hidden)), solver, absorption)
 }
 
 
@@ -700,39 +337,7 @@ verify_spline_gradient <- function(basis_stack,
                                     intensity_n_knots   = 5L,
                                     intensity_degree    = 3L,
                                     intensity_log1p_max = 10.0) {
-
-  if (!.ds_env$torch_initialized) ds_torch_setup()
-  np <- reticulate::import("numpy", convert = FALSE)
-  cr <- .crop_basis_for_gradient(basis_stack, crop_size)
-
-  result <- ds_torch_call(
-    "verify_spline_gradient",
-    basis_values_np      = np$array(cr$basis_vals, dtype = np$float64),
-    valid_mask_np        = np$array(cr$valid,      dtype = np$bool_),
-    n_rows               = as.integer(cr$n_rows),
-    n_cols               = as.integer(cr$n_cols),
-    source_spacing       = 1L,
-    source_from_resistance = TRUE,
-    n_knots              = as.integer(n_knots),
-    degree               = as.integer(spline_degree),
-    include_interactions = include_interactions,
-    solver               = solver,
-    absorption           = as.double(absorption),
-    intensity_spline     = intensity_spline,
-    intensity_n_knots    = as.integer(intensity_n_knots),
-    intensity_degree     = as.integer(intensity_degree),
-    intensity_log1p_max  = as.double(intensity_log1p_max)
-  )
-
-  result_r <- reticulate::py_to_r(result)
-  if (isTRUE(result_r$pass)) {
-    message("  Spline gradient check PASSED (max rel error: ",
-            sprintf("%.2e", result_r$max_rel_error), ")")
-  } else {
-    warning("  Spline gradient check FAILED (max rel error: ",
-            sprintf("%.2e", result_r$max_rel_error), ")")
-  }
-  result_r
+  .verify_jax_gradient(basis_stack, crop_size, "spline_gam", list(n_knots = as.integer(n_knots), spline_degree = as.integer(spline_degree), include_interactions = include_interactions, intensity_spline = intensity_spline, intensity_n_knots = as.integer(intensity_n_knots), intensity_degree = as.integer(intensity_degree), intensity_log1p_max = intensity_log1p_max), solver, absorption)
 }
 
 
@@ -740,35 +345,9 @@ verify_spline_gradient <- function(basis_stack,
 #
 # Shared post-processing: persist mcmc_results.rds + posterior_summary.csv.
 #
-#' @keywords internal
-.save_mcmc_artifacts <- function(results_r, output_dir) {
-  saveRDS(results_r, file.path(output_dir, "mcmc_results.rds"))
-  message("  Saved mcmc_results.rds")
-
-  if (!is.null(results_r$summary)) {
-    sum_df <- do.call(rbind, lapply(names(results_r$summary), function(nm) {
-      s <- results_r$summary[[nm]]
-      data.frame(
-        parameter = nm,
-        mean      = s$mean, sd = s$sd,
-        q025      = s$q025, median = s$q50, q975 = s$q975,
-        ess       = s$ess,
-        stringsAsFactors = FALSE
-      )
-    }))
-    utils::write.csv(sum_df,
-                     file.path(output_dir, "posterior_summary.csv"),
-                     row.names = FALSE)
-    message("  Saved posterior_summary.csv")
-  }
-}
-
-
-#' Langevin / MALA posterior sampling from a trained torch model
+#' Retired checkpoint sampler
 #'
-#' Starts from a MAP fit produced by [run_torch_pipeline()] and explores the
-#' joint posterior using preconditioned Langevin dynamics (or MALA when
-#' `use_mala = TRUE`).
+#' Old .pt checkpoints cannot be loaded by JAX. Refit with ds_optimize() and use ds_posterior(method = "nuts") or method = "advi". Custom MALA is retired.
 #'
 #' @param basis_stack [terra::SpatRaster] of basis layers (must match the
 #'   stack used for the MAP run).
@@ -791,10 +370,8 @@ verify_spline_gradient <- function(basis_stack,
 #' @param verbose Logical.
 #' @param output_dir Character; defaults to `model_dir`.
 #' @param device Character; `"auto"`, `"cuda"`, or `"cpu"`.
-#' @return A list with `samples_effective_loglinear`, `samples_alpha`,
-#'   `samples_gamma`, `partial_effects`, `log_posterior_trace`, `ess`,
-#'   `summary`, `elapsed_time`.
 #' @export
+#' @return An actionable migration error.
 run_bayesian_sampling <- function(basis_stack,
                                    obs_points,
                                    model_dir,
@@ -825,74 +402,13 @@ run_bayesian_sampling <- function(basis_stack,
                                    verbose              = TRUE,
                                    output_dir           = NULL,
                                    device               = "auto") {
-
-  if (!.ds_env$torch_initialized) ds_torch_setup()
-
-  model_path <- file.path(model_dir, "resistance_nn.pt")
-  if (!file.exists(model_path)) {
-    stop("Model checkpoint not found: ", model_path,
-         "\nRun run_torch_pipeline() first.", call. = FALSE)
-  }
-  if (is.null(output_dir)) output_dir <- model_dir
-
-  message("\n  Preparing data for Langevin sampling...")
-  prep <- .prepare_backend_inputs(basis_stack, obs_points)
-  message(sprintf("    Grid: %d x %d (%d valid cells)",
-                  prep$n_rows, prep$n_cols, prep$n_valid))
-  message(sprintf("    Observations: %d GPS fixes", prep$n_obs))
-
-  message("\n  Starting Langevin Monte Carlo sampling...")
-  message(sprintf("    Samples: %d, Burn-in: %d, Thin: %d -> %d total steps",
-                  n_samples, burn_in, thin, burn_in + n_samples * thin))
-
-  results <- ds_torch_call(
-    "run_langevin_sampling",
-    basis_values_np    = prep$basis_np,
-    obs_counts_np      = prep$obs_np,
-    n_rows             = as.integer(prep$n_rows),
-    n_cols             = as.integer(prep$n_cols),
-    valid_mask_np      = prep$vmask_np,
-    cell_area          = as.double(prep$cell_area),
-    model_path         = model_path,
-    source_spacing     = as.integer(source_spacing),
-    source_from_resistance = source_from_resistance,
-    solver             = as.character(solver),
-    absorption         = as.double(absorption),
-    n_samples          = as.integer(n_samples),
-    burn_in            = as.integer(burn_in),
-    thin               = as.integer(thin),
-    step_size          = if (!is.null(step_size)) as.double(step_size) else NULL,
-    precondition       = precondition,
-    precondition_warmup = as.integer(precondition_warmup),
-    fix_smoothing      = fix_smoothing,
-    fix_intensity      = fix_intensity,
-    use_mala           = use_mala,
-    target_accept      = as.double(target_accept),
-    reg_mean           = as.double(reg_mean),
-    log_R_baseline     = as.double(log_R_baseline),
-    penalty_scale      = as.double(penalty_scale),
-    n_knots            = as.integer(n_knots),
-    spline_degree      = as.integer(spline_degree),
-    include_interactions = include_interactions,
-    lambda_min         = as.double(lambda_min),
-    grad_clip          = as.double(grad_clip),
-    cg_tol             = as.double(cg_tol),
-    seed               = as.integer(seed),
-    verbose            = verbose,
-    output_dir         = output_dir,
-    device             = as.character(device)
-  )
-
-  results_r <- reticulate::py_to_r(results)
-  .save_mcmc_artifacts(results_r, output_dir)
-  results_r
+  stop("Checkpoint-based MALA is retired. Refit with ds_optimize() and use ds_posterior(..., method = 'nuts') or method = 'advi'. Old .pt files cannot be loaded by JAX.", call. = FALSE)
 }
 
 
-#' HMC / NUTS posterior sampling from a trained torch model
+#' Retired checkpoint sampler
 #'
-#' Runs the No-U-Turn Sampler over the joint posterior, starting from the
-#' MAP checkpoint produced by [run_torch_pipeline()].
+#' Old .pt checkpoints cannot be loaded by JAX. Refit with ds_optimize() and use ds_posterior(method = "nuts") or method = "advi". Custom MALA is retired.
 #'
 #' @inheritParams run_bayesian_sampling
 #' @param n_samples Integer; number of posterior draws.
@@ -900,9 +416,8 @@ run_bayesian_sampling <- function(basis_stack,
 #' @param max_treedepth Integer; NUTS max tree depth.
 #' @param init_step_size Numeric or `NULL` for auto.
 #' @param adapt_mass_matrix Logical.
-#' @return A list with posterior samples, `summary`, diagnostics
-#'   (`n_divergences`, etc.), and `elapsed_time`.
 #' @export
+#' @return An actionable migration error.
 run_bayesian_sampling_hmc <- function(basis_stack,
                                        obs_points,
                                        model_dir,
@@ -931,80 +446,13 @@ run_bayesian_sampling_hmc <- function(basis_stack,
                                        verbose              = TRUE,
                                        output_dir           = NULL,
                                        device               = "auto") {
-
-  if (!.ds_env$torch_initialized) ds_torch_setup()
-
-  model_path <- file.path(model_dir, "resistance_nn.pt")
-  if (!file.exists(model_path)) {
-    stop("Model checkpoint not found: ", model_path,
-         "\nRun run_torch_pipeline() first.", call. = FALSE)
-  }
-  if (is.null(output_dir)) output_dir <- model_dir
-
-  message("\n  Preparing data for HMC/NUTS sampling...")
-  prep <- .prepare_backend_inputs(basis_stack, obs_points)
-  message(sprintf("    Grid: %d x %d (%d valid cells)",
-                  prep$n_rows, prep$n_cols, prep$n_valid))
-  message(sprintf("    Observations: %d GPS fixes", prep$n_obs))
-
-  message("\n  Starting NUTS (No-U-Turn Sampler)...")
-  message(sprintf("    Samples: %d, Warmup: %d -> %d total iterations",
-                  n_samples, warmup, warmup + n_samples))
-
-  results <- ds_torch_call(
-    "run_hmc_sampling",
-    basis_values_np    = prep$basis_np,
-    obs_counts_np      = prep$obs_np,
-    n_rows             = as.integer(prep$n_rows),
-    n_cols             = as.integer(prep$n_cols),
-    valid_mask_np      = prep$vmask_np,
-    cell_area          = as.double(prep$cell_area),
-    model_path         = model_path,
-    source_spacing     = as.integer(source_spacing),
-    source_from_resistance = source_from_resistance,
-    solver             = as.character(solver),
-    absorption         = as.double(absorption),
-    n_samples          = as.integer(n_samples),
-    warmup             = as.integer(warmup),
-    max_treedepth      = as.integer(max_treedepth),
-    target_accept      = as.double(target_accept),
-    init_step_size     = if (!is.null(init_step_size)) as.double(init_step_size) else NULL,
-    adapt_mass_matrix  = adapt_mass_matrix,
-    fix_smoothing      = fix_smoothing,
-    fix_intensity      = fix_intensity,
-    reg_mean           = as.double(reg_mean),
-    log_R_baseline     = as.double(log_R_baseline),
-    penalty_scale      = as.double(penalty_scale),
-    n_knots            = as.integer(n_knots),
-    spline_degree      = as.integer(spline_degree),
-    include_interactions = include_interactions,
-    lambda_min         = as.double(lambda_min),
-    grad_clip          = as.double(grad_clip),
-    cg_tol             = as.double(cg_tol),
-    seed               = as.integer(seed),
-    verbose            = verbose,
-    output_dir         = output_dir,
-    device             = as.character(device)
-  )
-
-  results_r <- reticulate::py_to_r(results)
-  .save_mcmc_artifacts(results_r, output_dir)
-
-  if (!is.null(results_r$n_divergences) && results_r$n_divergences > 0) {
-    warning(sprintf(
-      "HMC reported %d divergent transitions. Consider increasing target_accept or tightening cg_tol.",
-      results_r$n_divergences
-    ))
-  }
-  results_r
+  stop("Torch checkpoints are retired. Refit with ds_optimize() and use ds_posterior(..., method = 'nuts'). Old .pt files cannot be loaded by JAX.", call. = FALSE)
 }
 
 
-#' Automatic Differentiation Variational Inference (ADVI)
+#' Retired checkpoint sampler
 #'
-#' Fits a mean-field or full-rank Gaussian variational posterior by
-#' optimising the ELBO with Adam. Faster than HMC/Langevin but biased to
-#' the variational family.
+#' Old .pt checkpoints cannot be loaded by JAX. Refit with ds_optimize() and use ds_posterior(method = "nuts") or method = "advi". Custom MALA is retired.
 #'
 #' @inheritParams run_bayesian_sampling_hmc
 #' @param n_samples Integer; number of posterior draws.
@@ -1015,9 +463,8 @@ run_bayesian_sampling_hmc <- function(basis_stack,
 #' @param n_elbo_samples Integer; MC samples per ELBO gradient.
 #' @param full_rank Logical; full-rank Gaussian variational family.
 #' @param patience Integer; ELBO plateau patience.
-#' @return A list with posterior samples / summary plus
-#'   `best_elbo`, `converged`.
 #' @export
+#' @return An actionable migration error.
 run_advi <- function(basis_stack,
                       obs_points,
                       model_dir,
@@ -1045,70 +492,5 @@ run_advi <- function(basis_stack,
                       verbose              = TRUE,
                       output_dir           = NULL,
                       device               = "auto") {
-
-  if (!.ds_env$torch_initialized) ds_torch_setup()
-
-  model_path <- file.path(model_dir, "resistance_nn.pt")
-  if (!file.exists(model_path)) {
-    stop("Model checkpoint not found: ", model_path,
-         "\nRun run_torch_pipeline() first.", call. = FALSE)
-  }
-  if (is.null(output_dir)) output_dir <- model_dir
-
-  message("\n  Preparing data for ADVI...")
-  prep <- .prepare_backend_inputs(basis_stack, obs_points)
-  message(sprintf("    Grid: %d x %d (%d valid cells)",
-                  prep$n_rows, prep$n_cols, prep$n_valid))
-  message(sprintf("    Observations: %d GPS fixes", prep$n_obs))
-
-  mode_str <- if (full_rank) "full-rank" else "mean-field"
-  message(sprintf("\n  Starting ADVI (%s)...", mode_str))
-  message(sprintf("    Max iterations: %d, LR: %.4f, ELBO MC samples: %d",
-                  max_iter, lr, n_elbo_samples))
-
-  results <- ds_torch_call(
-    "run_advi",
-    basis_values_np      = prep$basis_np,
-    obs_counts_np        = prep$obs_np,
-    n_rows               = as.integer(prep$n_rows),
-    n_cols               = as.integer(prep$n_cols),
-    valid_mask_np        = prep$vmask_np,
-    cell_area            = as.double(prep$cell_area),
-    model_path           = model_path,
-    source_spacing       = as.integer(source_spacing),
-    source_from_resistance = source_from_resistance,
-    solver               = as.character(solver),
-    absorption           = as.double(absorption),
-    n_samples            = as.integer(n_samples),
-    max_iter             = as.integer(max_iter),
-    lr                   = as.double(lr),
-    n_elbo_samples       = as.integer(n_elbo_samples),
-    full_rank            = full_rank,
-    patience             = as.integer(patience),
-    fix_smoothing        = fix_smoothing,
-    fix_intensity        = fix_intensity,
-    reg_mean             = as.double(reg_mean),
-    log_R_baseline       = as.double(log_R_baseline),
-    penalty_scale        = as.double(penalty_scale),
-    n_knots              = as.integer(n_knots),
-    spline_degree        = as.integer(spline_degree),
-    include_interactions = include_interactions,
-    lambda_min           = as.double(lambda_min),
-    cg_tol               = as.double(cg_tol),
-    seed                 = as.integer(seed),
-    verbose              = verbose,
-    output_dir           = output_dir,
-    device               = as.character(device)
-  )
-
-  results_r <- reticulate::py_to_r(results)
-  .save_mcmc_artifacts(results_r, output_dir)
-
-  if (!is.null(results_r$converged) && !isTRUE(results_r$converged)) {
-    warning("ADVI did not converge. Consider increasing max_iter or adjusting lr.")
-  }
-  message(sprintf("  ADVI: best ELBO = %.2f, converged = %s",
-                  results_r$best_elbo,
-                  if (isTRUE(results_r$converged)) "TRUE" else "FALSE"))
-  results_r
+  stop("Torch checkpoints are retired. Refit with ds_optimize() and use ds_posterior(..., method = 'advi'). Old .pt files cannot be loaded by JAX.", call. = FALSE)
 }

@@ -2,7 +2,7 @@
 % Please edit documentation in R/pipeline.R
 \name{ds_optimize}
 \alias{ds_optimize}
-\title{Optimise resistance parameters}
+\title{Optimize resistance parameters}
 \usage{
 ds_optimize(
   basis_stack,
@@ -16,7 +16,7 @@ ds_optimize(
   residualise = FALSE,
   available_points = NULL,
   available_covariates = NULL,
-  solver = c("torch", "surrogate", "gradient", "enzyme"),
+  solver = c("adam", "lbfgs", "torch", "surrogate", "gradient", "enzyme"),
   model_type = "parametric"
 )
 }
@@ -53,51 +53,16 @@ integration.}
 \code{available_points} locations.  Required when \code{available_points} is
 supplied and the intensity model includes covariates.}
 
-\item{solver}{Character; \code{"torch"} (PyTorch log-linear resistance by
-default), \code{"surrogate"} (GP + Thompson Sampling or Expected Improvement),
-\code{"gradient"} (L-BFGS / Adam via JAX
-auto-diff), \code{"enzyme"} (deprecated, alias for \code{"gradient"}),}
+\item{solver}{Optimization method: \code{"adam"} (default), \code{"lbfgs"},
+\code{"surrogate"}, legacy window \code{"gradient"}, deprecated \code{"enzyme"} or \code{"torch"}.}
 
-\item{model_type}{Resistance model. For Torch: \code{"loglinear"}, \code{"mlp"},
-\code{"conv"}, or \code{"spline_gam"}; the default \code{"parametric"} leaves the nested
-Torch config's model choice unchanged. For the gradient solver:
-\code{"parametric"}, \code{"mlp"}, \code{"conv"}, \code{"spline_gam"}, or \code{"irl"}.}
+\item{model_type}{Physical resistance: \code{"loglinear"}, \code{"mlp"}, \code{"conv"},
+or \code{"spline_gam"} (B-spline). \code{"parametric"} uses the default/config model.
+The legacy window spline is RBF. IRL is retired.}
 }
 \value{
-Result from \code{\link[=optimize_resistance]{optimize_resistance()}},
-\code{\link[=optimize_resistance_gradient]{optimize_resistance_gradient()}}, or \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.
+A fitted optimization result with stored prediction state.
 }
 \description{
-Wrapper that dispatches to \code{\link[=optimize_resistance]{optimize_resistance()}} (GP surrogate),
-\code{\link[=optimize_resistance_gradient]{optimize_resistance_gradient()}} (L-BFGS / Adam via JAX auto-diff,
-or Flax neural-network resistance when \code{model_type} is set), or
-\code{\link[=run_torch_pipeline]{run_torch_pipeline()}} (PyTorch neural-network resistance), depending
-on \code{solver}.
+Defaults to physical log-linear/global-absorption PPP fitting using Optax Adam. solver="lbfgs" uses SciPy L-BFGS-B. config$fit supplies physical/model settings. The legacy gradient and surrogate workflows use window effective resistance. solver="torch" and config$torch are deprecated translations.
 }
-\section{Supported Torch inputs}{
-
-Torch fits a Poisson PPP jointly with resistance. Explicit non-Poisson
-families, custom resistance links, bounds, covariates, and residualisation
-are rejected. Use the surrogate solver for these modeling choices.
-The legacy outer config's default \code{distribution = "negbin"} does not change
-Torch's Poisson likelihood; select other families explicitly with \code{family}.
-}
-
-\section{Config conventions}{
-
-The three backend families are deliberately \emph{not} unified onto a common
-config shape -- each keeps its pre-existing convention, and dispatch
-(via an internal \code{solver_spec()} S3 mechanism) is the one place that
-knows how to extract the right sublist for its solver:
-\describe{
-\item{\code{solver = "surrogate"}}{Plain top-level \code{config} entries (see
-\code{\link[=default_optimizer_config]{default_optimizer_config()}}). No sublist.}
-\item{\code{solver = "gradient"} / \code{"enzyme"}}{Top-level \code{config} entries
-for the parametric L-BFGS/Adam path, plus optional
-\code{config$model_config} / \code{config$optim_config} sublists when
-\code{model_type} selects a neural resistance model.}
-\item{\code{solver = "torch"}}{A \code{config$torch} sublist forwarded
-as named arguments to \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.}
-}
-}
-

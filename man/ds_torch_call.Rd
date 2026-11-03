@@ -2,22 +2,18 @@
 % Please edit documentation in R/torch_bridge.R
 \name{ds_torch_call}
 \alias{ds_torch_call}
-\title{Call a function from the bundled PyTorch pipeline module}
+\title{Retired direct backend calls}
 \usage{
 ds_torch_call(fn_name, ...)
 }
 \arguments{
-\item{fn_name}{Character; bare function name in \verb{05_torch_pipeline}
-(e.g. \code{"run_torch_optimization"}).}
+\item{fn_name}{Former Python function name.}
 
-\item{...}{Arguments forwarded to the Python function.}
+\item{...}{Former arguments.}
 }
 \value{
-The value returned by Python (use \code{\link[reticulate:py_to_r]{reticulate::py_to_r()}} if a
-manual conversion is needed).
+Raises an actionable migration error.
 }
 \description{
-Thin wrapper that ensures the backend is initialised, then resolves the
-named function on the cached Python module handle and forwards
-arguments to it via reticulate.
+Retired direct backend calls
 }

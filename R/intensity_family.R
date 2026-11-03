@@ -134,71 +134,7 @@ print.intensity_family <- function(x, ...) {
 #' @return An [intensity_family] object.
 #' @export
 family_negbin <- function() {
-  intensity_family(
-    name = "negbin",
-
-    negloglik_fn = function(theta,
-                            z_obs, z_int,
-                            int_weights, obs_weights,
-                            cov_obs   = NULL,
-                            cov_int   = NULL,
-                            cov_names = character(0),
-                            ...) {
-      alpha <- theta[1]
-      gamma <- theta[2]
-      n_cov <- length(cov_names)
-      betas <- if (n_cov > 0) {
-        stats::setNames(theta[3:(2 + n_cov)], cov_names)
-      } else {
-        NULL
-      }
-      log_nb_theta <- theta[length(theta)]
-      nb_theta     <- exp(log_nb_theta)
-
-      lambda_obs <- compute_intensity(z_obs, alpha, gamma, cov_obs, betas)
-      lambda_int <- compute_intensity(z_int, alpha, gamma, cov_int, betas)
-
-      term1 <- sum(obs_weights * log(pmax(lambda_obs, 1e-300)))
-      term2 <- sum(int_weights * lambda_int)
-
-      n_obs  <- sum(obs_weights)
-      nb_adj <- lgamma(n_obs + nb_theta) - lgamma(nb_theta) +
-                nb_theta * log(nb_theta / (nb_theta + term2)) +
-                n_obs    * log(term2 / (nb_theta + term2))
-
-      # Correct NB-PPP log-likelihood: term1 (conditional point log-lik) plus
-      # NB marginal log P(N=n_obs | mu=term2, size=nb_theta), derived from the
-      # Cox-process (Gamma-mixed Poisson) representation.  The pmf must NOT
-      # include an lgamma(n_obs + 1) factorial term: as in the Poisson PPP
-      # likelihood, the unordered point pattern density already cancels it.
-      negll <- -(term1 - n_obs * log(pmax(term2, 1e-300)) + nb_adj)
-      if (!is.finite(negll)) negll <- 1e15
-      negll
-    },
-
-    deviance_residuals_fn = function(observed, fitted, extra_params) {
-      k  <- extra_params[["size"]]
-      if (is.null(k) || is.na(k)) k <- 1
-      y  <- observed
-      mu <- pmax(fitted, 1e-10)
-      t1 <- ifelse(y > 0, y * log(y / mu), 0)
-      t2 <- (y + k) * log((y + k) / (mu + k))
-      d_sq <- pmax(2 * (t1 - t2), 0)
-      sign(y - mu) * sqrt(d_sq)
-    },
-
-    init_fn = function(n_cov) {
-      # theta = c(alpha, gamma, betas..., log_nb_theta)
-      list(
-        start = c(0, 1, rep(0, n_cov), log(1)),
-        lower = c(-10, -10, rep(-10, n_cov), log(0.01)),
-        upper = c( 10,  10, rep( 10, n_cov), log(1e6))
-      )
-    },
-
-    n_extra_params    = 1L,
-    extra_param_names = "log_nb_theta"
-  )
+  .python_intensity_family("negbin")
 }
 
 
@@ -211,55 +147,7 @@ family_negbin <- function() {
 #' @return An [intensity_family] object.
 #' @export
 family_poisson <- function() {
-  intensity_family(
-    name = "poisson",
-
-    negloglik_fn = function(theta,
-                            z_obs, z_int,
-                            int_weights, obs_weights,
-                            cov_obs   = NULL,
-                            cov_int   = NULL,
-                            cov_names = character(0),
-                            ...) {
-      alpha <- theta[1]
-      gamma <- theta[2]
-      n_cov <- length(cov_names)
-      betas <- if (n_cov > 0) {
-        stats::setNames(theta[3:(2 + n_cov)], cov_names)
-      } else {
-        NULL
-      }
-
-      lambda_obs <- compute_intensity(z_obs, alpha, gamma, cov_obs, betas)
-      lambda_int <- compute_intensity(z_int, alpha, gamma, cov_int, betas)
-
-      term1 <- sum(obs_weights * log(pmax(lambda_obs, 1e-300)))
-      term2 <- sum(int_weights * lambda_int)
-
-      negll <- -(term1 - term2)
-      if (!is.finite(negll)) negll <- 1e15
-      negll
-    },
-
-    deviance_residuals_fn = function(observed, fitted, extra_params) {
-      y  <- observed
-      mu <- pmax(fitted, 1e-10)
-      t1 <- ifelse(y > 0, y * log(y / mu), 0)
-      d_sq <- pmax(2 * (t1 - (y - mu)), 0)
-      sign(y - mu) * sqrt(d_sq)
-    },
-
-    init_fn = function(n_cov) {
-      list(
-        start = c(0, 1, rep(0, n_cov)),
-        lower = c(-10, -10, rep(-10, n_cov)),
-        upper = c( 10,  10, rep( 10, n_cov))
-      )
-    },
-
-    n_extra_params    = 0L,
-    extra_param_names = character(0)
-  )
+  .python_intensity_family("poisson")
 }
 
 
@@ -278,79 +166,7 @@ family_poisson <- function() {
 #' @return An [intensity_family] object.
 #' @export
 family_gaussian <- function(known_sd = NULL) {
-  est_sd <- is.null(known_sd)
-
-  intensity_family(
-    name = "gaussian",
-
-    negloglik_fn = function(theta,
-                            z_obs, z_int,
-                            int_weights, obs_weights,
-                            cov_obs   = NULL,
-                            cov_int   = NULL,
-                            cov_names = character(0),
-                            y_obs     = NULL,
-                            ...) {
-      if (is.null(y_obs)) {
-        stop("family_gaussian requires an observed response vector (y_obs). ",
-             "Pass `response` to fit_intensity_nb() or supply y_obs directly.",
-             call. = FALSE)
-      }
-      alpha <- theta[1]
-      gamma <- theta[2]
-      n_cov <- length(cov_names)
-      betas <- if (n_cov > 0) {
-        stats::setNames(theta[3:(2 + n_cov)], cov_names)
-      } else {
-        NULL
-      }
-
-      if (est_sd) {
-        log_sd <- theta[length(theta)]
-        sd_val <- exp(log_sd)
-      } else {
-        sd_val <- known_sd
-      }
-
-      # Response-scale Gaussian: y_obs ~ Normal(mu_obs, sd_val). mu_obs is
-      # the fitted mean response directly (not a log-scale median), and
-      # finite nonpositive responses are valid observations -- no clamping
-      # or log-transform is applied to either mu_obs or y_obs (#110).
-      mu_obs <- compute_intensity(z_obs, alpha, gamma, cov_obs, betas)
-      resid <- mu_obs - y_obs
-      negll <- 0.5 * sum(obs_weights * (resid / sd_val)^2) +
-               sum(obs_weights) * log(sd_val) +
-               0.5 * sum(obs_weights) * log(2 * pi)
-
-      if (!is.finite(negll)) negll <- 1e15
-      negll
-    },
-
-    deviance_residuals_fn = function(observed, fitted, extra_params) {
-      # Response-scale residuals, consistent with the response-scale
-      # Gaussian likelihood used in negloglik_fn (#110).
-      observed - fitted
-    },
-
-    init_fn = function(n_cov) {
-      if (est_sd) {
-        list(
-          start = c(0, 1, rep(0, n_cov), log(1)),
-          lower = c(-10, -10, rep(-10, n_cov), log(0.001)),
-          upper = c( 10,  10, rep( 10, n_cov), log(100))
-        )
-      } else {
-        list(
-          start = c(0, 1, rep(0, n_cov)),
-          lower = c(-10, -10, rep(-10, n_cov)),
-          upper = c( 10,  10, rep( 10, n_cov))
-        )
-      }
-    },
-
-    n_extra_params    = if (est_sd) 1L else 0L,
-    extra_param_names = if (est_sd) "log_sd" else character(0)
-  )
+  .python_intensity_family("gaussian", known_sd = known_sd)
 }
 
 
@@ -383,94 +199,7 @@ family_gaussian <- function(known_sd = NULL) {
 #' @return An [intensity_family] object.
 #' @export
 family_zinb <- function() {
-  intensity_family(
-    name = "zinb",
-
-    negloglik_fn = function(theta,
-                            z_obs, z_int,
-                            int_weights, obs_weights,
-                            cov_obs   = NULL,
-                            cov_int   = NULL,
-                            cov_names = character(0),
-                            ...) {
-      alpha <- theta[1]
-      gamma <- theta[2]
-      n_cov <- length(cov_names)
-      betas <- if (n_cov > 0) {
-        stats::setNames(theta[3:(2 + n_cov)], cov_names)
-      } else {
-        NULL
-      }
-      # Last two extra params: log_nb_theta, logit_pi
-      logit_pi     <- theta[length(theta)]
-      log_nb_theta <- theta[length(theta) - 1L]
-      nb_theta     <- exp(log_nb_theta)
-      pi_val       <- 1 / (1 + exp(-logit_pi))
-
-      lambda_obs <- compute_intensity(z_obs, alpha, gamma, cov_obs, betas)
-      lambda_int <- compute_intensity(z_int, alpha, gamma, cov_int, betas)
-
-      # Point-location density and the mean count Lambda are NOT scaled by
-      # (1 - pi_val): zero-inflation acts only on the marginal probability
-      # of the aggregate count n_obs below, not on where points fall
-      # conditional on being real. Scaling both terms by (1 - pi_val), as
-      # the previous implementation did, makes pi_val enter the likelihood
-      # only through the product exp(alpha) * (1 - pi_val), perfectly
-      # confounding it with alpha and leaving it unidentifiable (#91).
-      term1  <- sum(obs_weights * log(pmax(lambda_obs, 1e-300)))
-      Lambda <- sum(int_weights * lambda_int)
-
-      n_obs <- sum(obs_weights)
-
-      if (n_obs > 0) {
-        # log(1 - pi_val) + log NB(n_obs | Lambda, nb_theta), with the NB
-        # pmf's -lgamma(n_obs + 1) factorial term omitted (as in
-        # family_negbin(): it cancels with the unordered point-pattern
-        # combinatorial factor elsewhere). The trailing
-        # "- n_obs * log(Lambda)" outer term cancels the "+ n_obs *
-        # log(Lambda)" inside nb_adj, matching family_negbin()'s
-        # Cox-process derivation exactly, plus the additive zero-inflation
-        # log(1 - pi_val) term.
-        nb_adj <- lgamma(n_obs + nb_theta) - lgamma(nb_theta) +
-                  nb_theta * log(nb_theta / (nb_theta + Lambda)) +
-                  n_obs    * log(Lambda / (nb_theta + Lambda))
-
-        negll <- -(term1 - n_obs * log(pmax(Lambda, 1e-300)) + nb_adj +
-                     log(pmax(1 - pi_val, 1e-300)))
-      } else {
-        # Structural-zero branch: P(N = 0) = pi + (1 - pi) * NB(0 | Lambda, theta)
-        p_zero_nb <- (nb_theta / (nb_theta + Lambda))^nb_theta
-        negll <- -log(pmax(pi_val + (1 - pi_val) * p_zero_nb, 1e-300))
-      }
-
-      if (!is.finite(negll)) negll <- 1e15
-      negll
-    },
-
-    deviance_residuals_fn = function(observed, fitted, extra_params) {
-      # Use NB residuals as approximation for ZINB
-      k  <- extra_params[["size"]]
-      if (is.null(k) || is.na(k)) k <- 1
-      y  <- observed
-      mu <- pmax(fitted, 1e-10)
-      t1 <- ifelse(y > 0, y * log(y / mu), 0)
-      t2 <- (y + k) * log((y + k) / (mu + k))
-      d_sq <- pmax(2 * (t1 - t2), 0)
-      sign(y - mu) * sqrt(d_sq)
-    },
-
-    init_fn = function(n_cov) {
-      # theta = c(alpha, gamma, betas..., log_nb_theta, logit_pi)
-      list(
-        start = c(0, 1, rep(0, n_cov), log(1), 0),
-        lower = c(-10, -10, rep(-10, n_cov), log(0.01), -5),
-        upper = c( 10,  10, rep( 10, n_cov), log(1e6),   5)
-      )
-    },
-
-    n_extra_params    = 2L,
-    extra_param_names = c("log_nb_theta", "logit_pi")
-  )
+  .python_intensity_family("zinb")
 }
 
 
@@ -492,63 +221,7 @@ family_zinb <- function() {
 #' @return An [intensity_family] object.
 #' @export
 family_rsf <- function() {
-  intensity_family(
-    name = "rsf",
-
-    negloglik_fn = function(theta,
-                            z_obs, z_int,
-                            int_weights, obs_weights,
-                            cov_obs   = NULL,
-                            cov_int   = NULL,
-                            cov_names = character(0),
-                            ...) {
-      gamma <- theta[1]
-      n_cov <- length(cov_names)
-      betas <- if (n_cov > 0) {
-        stats::setNames(theta[2:(1 + n_cov)], cov_names)
-      } else {
-        NULL
-      }
-
-      f_obs <- gamma * z_obs
-      f_int <- gamma * z_int
-      if (!is.null(betas)) {
-        for (nm in names(betas)) {
-          f_obs <- f_obs + betas[[nm]] * cov_obs[[nm]]
-          f_int <- f_int + betas[[nm]] * cov_int[[nm]]
-        }
-      }
-
-      n_obs <- sum(obs_weights)
-      # log-sum-exp for numerical stability
-      mx <- max(f_int)
-      lse <- mx + log(sum(int_weights * exp(f_int - mx)))
-
-      negll <- -(sum(obs_weights * f_obs) - n_obs * lse)
-      if (!is.finite(negll)) negll <- 1e15
-      negll
-    },
-
-    deviance_residuals_fn = function(observed, fitted, extra_params) {
-      rep(NA_real_, length(observed))
-    },
-
-    init_fn = function(n_cov) {
-      # theta = c(gamma, betas...)
-      list(
-        start = c(0, rep(0, n_cov)),
-        lower = c(-10, rep(-10, n_cov)),
-        upper = c( 10, rep( 10, n_cov))
-      )
-    },
-
-    n_extra_params    = 0L,
-    extra_param_names = character(0),
-    param_names_fn    = function(cov_names) {
-      if (length(cov_names) == 0L) return("gamma")
-      c("gamma", paste0("beta_", cov_names))
-    }
-  )
+  .python_intensity_family("rsf")
 }
 
 
@@ -571,65 +244,8 @@ family_rsf <- function() {
 #' @export
 family_rsp <- function(background_weight = 1000) {
   stopifnot(is.numeric(background_weight), length(background_weight) == 1L,
-            background_weight > 0)
-
-  intensity_family(
-    name = "rsp",
-
-    negloglik_fn = function(theta,
-                            z_obs, z_int,
-                            int_weights, obs_weights,
-                            cov_obs   = NULL,
-                            cov_int   = NULL,
-                            cov_names = character(0),
-                            ...) {
-      alpha <- theta[1]
-      gamma <- theta[2]
-      n_cov <- length(cov_names)
-      betas <- if (n_cov > 0) {
-        stats::setNames(theta[3:(2 + n_cov)], cov_names)
-      } else {
-        NULL
-      }
-
-      f_obs <- alpha + gamma * z_obs
-      f_int <- alpha + gamma * z_int
-      if (!is.null(betas)) {
-        for (nm in names(betas)) {
-          f_obs <- f_obs + betas[[nm]] * cov_obs[[nm]]
-          f_int <- f_int + betas[[nm]] * cov_int[[nm]]
-        }
-      }
-
-      # Numerically stable log-sigmoid: log sigma(x) = -log1p(exp(-|x|)) + min(x, 0),
-      # which never exponentiates a positive argument (unlike the naive form).
-      log_sigmoid <- function(x) -log1p(exp(-abs(x))) + pmin(x, 0)
-      log_p_obs   <- log_sigmoid(f_obs)
-      log_1mp_int <- log_sigmoid(-f_int)
-
-      negll <- -(sum(obs_weights * log_p_obs) +
-                 background_weight * sum(int_weights * log_1mp_int))
-      if (!is.finite(negll)) negll <- 1e15
-      negll
-    },
-
-    deviance_residuals_fn = function(observed, fitted, extra_params) {
-      rep(NA_real_, length(observed))
-    },
-
-    init_fn = function(n_cov) {
-      # theta = c(alpha, gamma, betas...)
-      list(
-        start = c(0, 0, rep(0, n_cov)),
-        lower = c(-10, -10, rep(-10, n_cov)),
-        upper = c( 10,  10, rep( 10, n_cov))
-      )
-    },
-
-    n_extra_params    = 0L,
-    extra_param_names = character(0)
-    # param_names_fn is NULL -> uses default alpha/gamma/betas naming
-  )
+            is.finite(background_weight), background_weight > 0)
+  .python_intensity_family("rsp", background_weight = background_weight)
 }
 
 
@@ -685,98 +301,12 @@ family_clogit <- function(stratum_ids_used  = NULL,
            call. = FALSE)
     }
 
-    # Precompute index mapping for performance: list of list(used, avail)
-    idx_map <- lapply(strata_used, function(s) {
-      list(
-        used  = which(stratum_ids_used  == s),
-        avail = which(stratum_ids_avail == s)
-      )
-    })
-  } else {
-    idx_map <- NULL
   }
 
-  fam <- intensity_family(
-    name = "clogit",
-
-    negloglik_fn = function(theta,
-                            z_obs, z_int,
-                            int_weights, obs_weights,
-                            cov_obs   = NULL,
-                            cov_int   = NULL,
-                            cov_names = character(0),
-                            ...) {
-      gamma <- theta[1]
-      n_cov <- length(cov_names)
-      betas <- if (n_cov > 0) {
-        stats::setNames(theta[2:(1 + n_cov)], cov_names)
-      } else {
-        NULL
-      }
-
-      f_obs <- gamma * z_obs
-      f_int <- gamma * z_int
-      if (!is.null(betas)) {
-        for (nm in names(betas)) {
-          f_obs <- f_obs + betas[[nm]] * cov_obs[[nm]]
-          f_int <- f_int + betas[[nm]] * cov_int[[nm]]
-        }
-      }
-
-      if (is.null(idx_map)) {
-        # Global (no strata): equivalent to family_rsf()
-        n_obs <- sum(obs_weights)
-        mx  <- max(f_int)
-        lse <- mx + log(sum(int_weights * exp(f_int - mx)))
-        negll <- -(sum(obs_weights * f_obs) - n_obs * lse)
-      } else {
-        # Per-stratum conditional logistic
-        nll_total <- 0
-        for (im in idx_map) {
-          f_used  <- f_obs[im$used]
-          f_avail <- f_int[im$avail]
-          # Denominator includes the used location
-          f_all   <- c(f_used, f_avail)
-          mx_s    <- max(f_all)
-          lse_s   <- mx_s + log(sum(exp(f_all - mx_s)))
-          nll_total <- nll_total + (lse_s - f_used)
-        }
-        negll <- nll_total
-      }
-
-      if (!is.finite(negll)) negll <- 1e15
-      negll
-    },
-
-    deviance_residuals_fn = function(observed, fitted, extra_params) {
-      rep(NA_real_, length(observed))
-    },
-
-    init_fn = function(n_cov) {
-      # theta = c(gamma, betas...)
-      list(
-        start = c(0, rep(0, n_cov)),
-        lower = c(-10, rep(-10, n_cov)),
-        upper = c( 10, rep( 10, n_cov))
-      )
-    },
-
-    n_extra_params    = 0L,
-    extra_param_names = character(0),
-    param_names_fn    = function(cov_names) {
-      if (length(cov_names) == 0L) return("gamma")
-      c("gamma", paste0("beta_", cov_names))
-    }
-  )
-
-  # Flag whether this family instance carries a stratum index map, so
-  # callers (evaluate_full_model(), laplace_resistance()) can refuse to
-  # silently drop out-of-mask points -- doing so would invalidate the
-  # positional idx_map baked in above without any corresponding
-  # adjustment. See #90.
-  fam$uses_strata <- use_strata
-  fam
+  .python_intensity_family("clogit", stratum_ids_used = stratum_ids_used,
+                            stratum_ids_avail = stratum_ids_avail)
 }
+
 
 
 # ---- helpers ---------------------------------------------------------------
