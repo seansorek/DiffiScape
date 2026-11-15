@@ -31,6 +31,11 @@ test_that("installed Python and R fitting/prediction agree on a masked nonsquare
   on.exit(unlink(saved))
   saveRDS(fitted, saved)
   expect_equal(terra::values(ds_predict(readRDS(saved), basis_stack = raster)), terra::values(prediction))
+
+  moved_mask <- terra::setValues(raster, c(NA, -1, -0.5, 0, 0.5, 1))
+  expect_error(ds_predict(fitted, basis_stack = moved_mask), "valid-cell mask must match")
+  reshaped <- terra::rast(nrows = 3, ncols = 2, vals = terra::values(raster)[, 1])
+  expect_error(ds_predict(fitted, basis_stack = reshaped), "grid dimensions must match")
 })
 
 test_that("the default physical model predicts, samples and diagnoses without Torch", {

@@ -19,12 +19,10 @@ run_jax_pipeline <- function(basis_stack, obs_points, model_type = "loglinear",
   extra <- list(...)
   integer_keys <- c("n_epochs", "patience", "source_spacing", "radius", "block_size", "warmup_epochs", "seed")
   for (name in intersect(names(extra), integer_keys)) {
-    if (length(extra[[name]]) != 1L || !is.finite(extra[[name]]) || extra[[name]] != as.integer(extra[[name]])) stop(name, " must be an integer", call. = FALSE)
-    extra[[name]] <- as.integer(extra[[name]])
+    extra[[name]] <- .as_backend_integer(extra[[name]], name)
   }
   for (name in intersect(names(model_config), c("hidden_dim", "n_hidden_layers", "conv_channels", "n_conv_layers", "conv_kernel_size", "intensity_hidden", "n_knots", "spline_degree", "intensity_n_knots", "intensity_degree"))) {
-    if (length(model_config[[name]]) != 1L || !is.finite(model_config[[name]]) || model_config[[name]] != as.integer(model_config[[name]])) stop(name, " must be an integer", call. = FALSE)
-    model_config[[name]] <- as.integer(model_config[[name]])
+    model_config[[name]] <- .as_backend_integer(model_config[[name]], name)
   }
   if (!is.null(bounds)) {
     expected <- c("r_0", paste0("z_", seq_len(terra::nlyr(basis_stack))))

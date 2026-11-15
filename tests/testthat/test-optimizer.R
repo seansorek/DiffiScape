@@ -104,9 +104,10 @@ test_that("optimize_resistance returns expected result structure", {
   )
 
   cfg <- default_optimizer_config()
-  cfg$n_init <- 5L
-  cfg$n_iter <- 2L
-  cfg$seed   <- 42L
+  cfg$n_init <- 5
+  cfg$n_iter <- 2
+  cfg$n_candidates <- 30
+  cfg$seed <- 42
 
   out_dir <- withr::local_tempdir()
   result  <- optimize_resistance(basis, obs, config = cfg,
@@ -122,6 +123,14 @@ test_that("optimize_resistance returns expected result structure", {
   expect_equal(result$surrogate$type, "gp")
   expect_equal(result$surrogate$model$engine, "smt")
   expect_type(result$bounds, "list")
+})
+
+
+test_that("optimize_resistance rejects fractional and out-of-range integer settings", {
+  expect_error(optimize_resistance(NULL, NULL, config = list(n_iter = 1.5)),
+               "n_iter must be a whole number")
+  expect_error(optimize_resistance(NULL, NULL, config = list(seed = 2^31)),
+               "seed must be a whole number")
 })
 
 

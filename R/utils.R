@@ -175,3 +175,11 @@ validate_raster_alignment <- function(...) {
     n_obs      = sum(obs_counts_valid)
   )
 }
+
+.as_backend_integer <- function(value, name) {
+  if (!is.numeric(value) || length(value) != 1L || !is.finite(value) ||
+      abs(value) > .Machine$integer.max || value != trunc(value)) {
+    stop(name, " must be a whole number in the R integer range.", call. = FALSE)
+  }
+  as.integer(value)
+}

@@ -436,7 +436,8 @@ ds_fit_intensity <- function(opt_result,
 #' @param intensity_config Intensity config.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param basis_stack Basis rasters in fitted covariate order, required for
-#'   predicting a fitted JAX model.
+#'   predicting a fitted JAX model. The dimensions and valid-cell mask must
+#'   match the fitted grid.
 #' @return A [terra::SpatRaster] of predicted intensity.
 #' @export
 ds_predict <- function(intensity_fit,
@@ -447,8 +448,16 @@ ds_predict <- function(intensity_fit,
 
   if (!is.null(intensity_fit$python_fit)) {
     if (is.null(basis_stack)) stop("basis_stack is required to predict a fitted JAX model.", call. = FALSE)
+    fitted_config <- intensity_fit$python_fit$configuration
+    if (terra::nrow(basis_stack) != fitted_config$n_rows ||
+        terra::ncol(basis_stack) != fitted_config$n_cols) {
+      stop("basis_stack grid dimensions must match the fitted grid.", call. = FALSE)
+    }
     if (!ds_jax_check()) ds_jax_setup()
     prep <- .prepare_backend_inputs(basis_stack, data.frame(x = numeric(), y = numeric()))
+    if (!identical(prep$valid_mask, as.logical(fitted_config$valid_mask))) {
+      stop("basis_stack valid-cell mask must match the fitted grid.", call. = FALSE)
+    }
     prediction <- reticulate::py_to_r(.jax_env$package$predict(
       intensity_fit$python_fit, prep$basis_np))
     raster <- basis_stack[[1]]

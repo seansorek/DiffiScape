@@ -873,6 +873,14 @@ optimize_resistance <- function(basis_stack,
   if (!is.null(config$surrogate_type) && config$surrogate_type != "gp") {
     stop("Only GP surrogates are supported; remove surrogate_type = 'rf'.", call. = FALSE)
   }
+  integer_keys <- c("n_init", "n_iter", "seed", "n_candidates", "stall_threshold", "restart_threshold")
+  keys <- c(integer_keys, "acquisition", "ts_min_sd", "ei_xi_scale_factor", "ei_xi_min",
+    "ei_decay_rate_divisor", "sigma_initial", "sigma_min", "decay_factor",
+    "local_frac_initial", "local_frac_max", "local_frac_increment")
+  bo_config <- config[intersect(keys, names(config))]
+  for (name in intersect(names(bo_config), integer_keys)) {
+    bo_config[[name]] <- .as_backend_integer(bo_config[[name]], name)
+  }
   n_basis <- terra::nlyr(basis_stack)
   if (is.null(bounds)) bounds <- get_default_bounds(n_basis)
   if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
@@ -888,10 +896,6 @@ optimize_resistance <- function(basis_stack,
       link = config$resistance_link %||% link_exp(), family = config$family,
       available_points = available_points, available_covariates = available_covariates)
   }
-  keys <- c("n_init", "n_iter", "seed", "acquisition", "n_candidates", "ts_min_sd",
-    "ei_xi_scale_factor", "ei_xi_min", "ei_decay_rate_divisor", "sigma_initial", "sigma_min",
-    "stall_threshold", "decay_factor", "local_frac_initial", "local_frac_max", "local_frac_increment", "restart_threshold")
-  bo_config <- config[intersect(keys, names(config))]
   if (!ds_jax_check()) ds_jax_setup()
   module <- reticulate::import("diffiscape.surrogate", convert = FALSE)
   result <- module$optimize_surrogate(objective, do.call(rbind, bounds),

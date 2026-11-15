@@ -24,7 +24,8 @@ intensity fit. Not needed when predicting a fitted JAX model.}
 \item{covariates_rasters}{Named list of covariate rasters.}
 
 \item{basis_stack}{Basis rasters in fitted covariate order, required for
-predicting a fitted JAX model.}
+predicting a fitted JAX model. The dimensions and valid-cell mask must
+match the fitted grid.}
 }
 \value{
 A \link[terra:SpatRaster]{terra::SpatRaster} of predicted intensity.

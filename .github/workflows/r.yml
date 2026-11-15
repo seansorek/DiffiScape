@@ -92,6 +92,8 @@ jobs:
 
       - name: Generate R coverage
         if: matrix.config.upload-coverage == true
+        env:
+          RETICULATE_PYTHON: ${{ steps.setup-python.outputs.python-path }}
         run: |
           covr::codecov(
             token = "${{ secrets.CODECOV_TOKEN }}",
