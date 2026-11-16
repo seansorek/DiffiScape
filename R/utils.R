@@ -123,6 +123,9 @@ validate_raster_alignment <- function(...) {
 #'
 #' @param basis_stack A [terra::SpatRaster] with K covariate layers.
 #' @param obs_points Data.frame with `x, y` columns (projected coords).
+#'   Omit for prediction without observations.
+#' @param fitted_config Optional saved Python configuration to validate against.
+#' @param counts_only Whether the raster is connectivity used to locate counts.
 #' @return A named list with:
 #'   \describe{
 #'     \item{basis_np}{numpy array, shape (n_valid, K).}
@@ -135,16 +138,32 @@ validate_raster_alignment <- function(...) {
 #'     \item{n_obs}{Total observation count.}
 #'   }
 #' @keywords internal
-.prepare_backend_inputs <- function(basis_stack, obs_points) {
-
-  np <- reticulate::import("numpy", convert = FALSE)
-
+.prepare_backend_inputs <- function(basis_stack,
+                                    obs_points = data.frame(x = numeric(), y = numeric()),
+                                    fitted_config = NULL, counts_only = FALSE) {
   n_rows    <- terra::nrow(basis_stack)
   n_cols    <- terra::ncol(basis_stack)
   cell_area <- prod(terra::res(basis_stack))
 
   basis_matrix <- as.matrix(basis_stack)
   valid_mask   <- stats::complete.cases(basis_matrix)
+  if (!is.null(fitted_config)) {
+    raster_name <- if (counts_only) "connectivity" else "basis_stack"
+    if (n_rows != fitted_config$n_rows || n_cols != fitted_config$n_cols) {
+      stop(raster_name, " grid dimensions must match the fitted grid.", call. = FALSE)
+    }
+    if (!identical(valid_mask, as.logical(fitted_config$valid_mask))) {
+      stop(raster_name, " valid-cell mask must match the fitted grid.", call. = FALSE)
+    }
+    if (!missing(obs_points) && !is.null(fitted_config$cell_area) && cell_area != fitted_config$cell_area) {
+      stop(raster_name, " cell area must match the fitted grid.", call. = FALSE)
+    }
+    if (!counts_only && !is.null(fitted_config$n_covariates) && ncol(basis_matrix) != fitted_config$n_covariates) {
+      stop("basis_stack must have the same number of covariates as the fitted model.", call. = FALSE)
+    }
+    if (!ds_jax_check()) ds_jax_setup()
+  }
+  np <- reticulate::import("numpy", convert = FALSE)
   basis_values <- basis_matrix[valid_mask, , drop = FALSE]
 
   cell_indices <- terra::cellFromXY(

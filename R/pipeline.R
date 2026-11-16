@@ -303,8 +303,10 @@ ds_optimize <- function(basis_stack,
 #' @param opt_result Result from [ds_optimize()].
 #' @param basis_stack Basis function stack.
 #' @param obs_points Data.frame with `x, y`.
-#' @param omniscape_settings List of Omniscape settings.
-#' @param intensity_config Intensity config.
+#' @param omniscape_settings Named window settings that override settings
+#'   saved with the optimization result.
+#' @param intensity_config Intensity config. `NULL` uses the saved config or
+#'   [default_intensity_config()].
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param residualise Logical.
@@ -321,15 +323,16 @@ ds_optimize <- function(basis_stack,
 #'   The deprecated `"enzyme"` aliases `"gradient"`. For `"adam"`, `"lbfgs"`,
 #'   and the deprecated `"torch"` translation, use the intensity fit already
 #'   returned by [ds_optimize()] or [run_jax_pipeline()].
-#' @param link A [resistance_link] object (default [link_exp()]).
-#' @param family An [intensity_family] object, or `NULL`.
+#' @param link A [resistance_link] object. `NULL` uses the saved link or [link_exp()].
+#' @param family An [intensity_family] object. `NULL` uses the saved optimizer
+#'   family or the family from the intensity config or distribution.
 #' @return Result from [evaluate_full_model()].
 #' @export
 ds_fit_intensity <- function(opt_result,
                               basis_stack,
                               obs_points,
                               omniscape_settings   = list(),
-                              intensity_config     = default_intensity_config(),
+                              intensity_config     = NULL,
                               covariates_obs       = NULL,
                               covariates_rasters   = NULL,
                               residualise          = FALSE,
@@ -337,7 +340,7 @@ ds_fit_intensity <- function(opt_result,
                               available_covariates = NULL,
                               solver               = c("surrogate", "gradient", "adam", "lbfgs",
                                                        "enzyme", "torch"),
-                              link                 = link_exp(),
+                              link                 = NULL,
                               family               = NULL) {
 
   solver <- match.arg(solver)
@@ -376,18 +379,20 @@ ds_fit_intensity <- function(opt_result,
                                                              link,
                                                              family,
                                                              ...) {
+  profile <- .profile_model_settings(opt_result$config, omniscape_settings,
+                                     intensity_config, link, family)
   evaluate_full_model(
     resistance_params    = opt_result$best_params,
     basis_stack          = basis_stack,
     obs_points           = obs_points,
     distribution         = opt_result$distribution,
-    omniscape_settings   = omniscape_settings,
-    intensity_config     = intensity_config,
+    omniscape_settings   = profile$omniscape,
+    intensity_config     = profile$intensity_config,
     covariates_obs       = covariates_obs,
     covariates_rasters   = covariates_rasters,
     residualise          = residualise,
-    link                 = link,
-    family               = family,
+    link                 = profile$link,
+    family               = profile$family,
     available_points     = available_points,
     available_covariates = available_covariates
   )
@@ -438,16 +443,7 @@ ds_predict <- function(intensity_fit,
 
   if (!is.null(intensity_fit$python_fit)) {
     if (is.null(basis_stack)) stop("basis_stack is required to predict a fitted JAX model.", call. = FALSE)
-    fitted_config <- intensity_fit$python_fit$configuration
-    if (terra::nrow(basis_stack) != fitted_config$n_rows ||
-        terra::ncol(basis_stack) != fitted_config$n_cols) {
-      stop("basis_stack grid dimensions must match the fitted grid.", call. = FALSE)
-    }
-    if (!ds_jax_check()) ds_jax_setup()
-    prep <- .prepare_backend_inputs(basis_stack, data.frame(x = numeric(), y = numeric()))
-    if (!identical(prep$valid_mask, as.logical(fitted_config$valid_mask))) {
-      stop("basis_stack valid-cell mask must match the fitted grid.", call. = FALSE)
-    }
+    prep <- .prepare_backend_inputs(basis_stack, fitted_config = intensity_fit$python_fit$configuration)
     prediction <- reticulate::py_to_r(.jax_env$package$predict(
       intensity_fit$python_fit, prep$basis_np))
     raster <- basis_stack[[1]]
@@ -472,15 +468,18 @@ ds_predict <- function(intensity_fit,
 #' R-only profile objectives retain Laplace approximation and Monte Carlo composition.
 #'
 #' @param opt_result Result from [ds_optimize()].
-#' @param basis_stack Basis function stack.
+#' @param basis_stack Basis function stack. For a physical fit, supply the
+#'   covariates in fitted order and match the fitted dimensions, mask, and cell area.
 #' @param obs_points Data.frame with `x, y`.
 #' @param n_draws Number of posterior draws.
 #' @param n_inner Inner-loop draws per outer draw.
 #' @param method Physical inference: `"nuts"` or `"advi"`.
 #' @param ... Physical NumPyro settings such as `warmup`, `max_treedepth`,
 #'   `target_accept`, `max_iter`, or `fix_smoothing`.
-#' @param omniscape_settings List of Omniscape settings.
-#' @param intensity_config Intensity config.
+#' @param omniscape_settings Named window settings that override settings
+#'   saved with the optimization result.
+#' @param intensity_config Intensity config. `NULL` uses the saved config or
+#'   [default_intensity_config()].
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param residualise Logical.
@@ -492,8 +491,9 @@ ds_predict <- function(intensity_fit,
 #' @param available_covariates Named list of covariate vectors at
 #'   `available_points` locations.  Required when `available_points` is
 #'   supplied and the intensity model includes covariates.
-#' @param link A [resistance_link] object (default [link_exp()]).
-#' @param family An [intensity_family] object, or `NULL`.
+#' @param link A [resistance_link] object. `NULL` uses the saved link or [link_exp()].
+#' @param family An [intensity_family] object. `NULL` uses the saved optimizer
+#'   family or the family from the intensity config or distribution.
 #' @return A list with `laplace`, `samples`, `summary`.
 #' @export
 ds_posterior <- function(opt_result,
@@ -502,24 +502,24 @@ ds_posterior <- function(opt_result,
                          n_draws              = 200L,
                          n_inner              = 5L,
                          omniscape_settings   = list(),
-                         intensity_config     = default_intensity_config(),
+                         intensity_config     = NULL,
                          covariates_obs       = NULL,
                          covariates_rasters   = NULL,
                          residualise          = FALSE,
                          available_points     = NULL,
                          available_covariates = NULL,
-                         link                 = link_exp(),
+                         link                 = NULL,
                          family               = NULL,
                          method               = "nuts", ...) {
 
   if (!is.null(opt_result$python_fit) && !identical(opt_result$python_fit$configuration$formulation, "window_resistance")) {
     if (!is.null(covariates_obs) || !is.null(covariates_rasters) || !is.null(available_points) ||
-        !is.null(available_covariates) || isTRUE(residualise) || !identical(link$name, "exp") ||
+        !is.null(available_covariates) || isTRUE(residualise) ||
+        (!is.null(link) && !identical(link$name, "exp")) ||
         (!is.null(family) && !identical(family$name, "poisson"))) {
       stop("Physical posterior inference uses the fitted Poisson model and does not support changing covariates, availability, links, or family.", call. = FALSE)
     }
-    if (!ds_jax_check()) ds_jax_setup()
-    prep <- .prepare_backend_inputs(basis_stack, obs_points)
+    prep <- .prepare_backend_inputs(basis_stack, obs_points, opt_result$python_fit$configuration)
     result <- .jax_env$package$sample(prep$basis_np, prep$obs_np, prep$vmask_np,
       as.integer(prep$n_rows), as.integer(prep$n_cols), cell_area = prep$cell_area,
       fitted = opt_result$python_fit, method = method, n_samples = as.integer(n_draws), ...)
@@ -579,7 +579,8 @@ ds_posterior <- function(opt_result,
 #'
 #' @param intensity_fit Result from [ds_fit_intensity()].
 #' @param obs_points Data.frame with `x, y`.
-#' @param connectivity A [terra::SpatRaster].
+#' @param connectivity A [terra::SpatRaster]. For a physical fit, its dimensions,
+#'   valid-cell mask, and cell area must match the fitted grid.
 #' @param intensity_config Intensity config.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param family An [intensity_family] object, or `NULL`.
@@ -595,8 +596,8 @@ ds_diagnose <- function(intensity_fit,
                         plot               = TRUE) {
 
   if (!is.null(intensity_fit$python_fit) && !identical(intensity_fit$python_fit$configuration$formulation, "window_resistance")) {
-    if (!ds_jax_check()) ds_jax_setup()
-    prep <- .prepare_backend_inputs(connectivity, obs_points)
+    prep <- .prepare_backend_inputs(connectivity, obs_points, intensity_fit$python_fit$configuration,
+                                    counts_only = TRUE)
     module <- reticulate::import("diffiscape.diagnostics", convert = FALSE)
     result <- reticulate::py_to_r(module$diagnose_physical(intensity_fit$python_fit, prep$obs_np))
     raster <- connectivity[[1]]
@@ -650,10 +651,10 @@ ds_diagnose <- function(intensity_fit,
 #' @param crs Target CRS for reprojection (if input is spatial file).
 #' @param rescale_basis Logical; rescale basis rasters.
 #' @param pattern File pattern for raster directory.
-#' @param omniscape_settings Named list of Omniscape overrides forwarded to
-#'   every connectivity step (final refit, posterior sampling, and
-#'   diagnostics).  Recognised entries: `radius` (default `13L`),
-#'   `block_size` (default `5L`), `cleanup` (default `TRUE`).
+#' @param omniscape_settings Named window settings that override
+#'   `optimizer_config$omniscape` throughout optimization, refits, and
+#'   diagnostics for the window workflows. `radius` defaults to `13L` and
+#'   `block_size` to `5L`.
 #' @param solver Optimization method, default `"adam"`; `"lbfgs"` uses bounded
 #'   SciPy optimization. `"surrogate"` and legacy `"gradient"` select window
 #'   effective resistance. Deprecated `"torch"` translates to physical JAX.
@@ -684,9 +685,11 @@ diffiscape <- function(obs_data,
   spec <- solver_spec(solver)
   solver <- spec$solver
 
-  # Extract link and family from configs
-  res_link   <- optimizer_config$resistance_link %||% link_exp()
-  int_family <- optimizer_config$family %||% intensity_config$family
+  if (solver %in% c("surrogate", "gradient")) {
+    omniscape_settings <- utils::modifyList(optimizer_config$omniscape %||% list(),
+                                            omniscape_settings)
+    optimizer_config$omniscape <- omniscape_settings
+  }
 
   t0 <- Sys.time()
   if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
@@ -774,8 +777,8 @@ diffiscape <- function(obs_data,
       available_points     = available_points,
       available_covariates = available_covariates,
       solver               = solver,
-      link                 = res_link,
-      family               = int_family
+      link                 = optimizer_config$resistance_link,
+      family               = optimizer_config$family
     )
 
     # --- Step 5: Posterior ---
@@ -794,8 +797,8 @@ diffiscape <- function(obs_data,
         residualise          = residualise,
         available_points     = available_points,
         available_covariates = available_covariates,
-        link                 = res_link,
-        family               = int_family
+        link                 = optimizer_config$resistance_link,
+        family               = optimizer_config$family
       )
     } else {
       message("\n[5/6] Posterior inference... SKIPPED")
@@ -803,14 +806,8 @@ diffiscape <- function(obs_data,
 
     # --- Step 6: Diagnostics ---
     message("\n[6/6] Diagnostics...")
-    final_resistance  <- create_resistance_surface(opt_result$best_params,
-                                                     basis_stack, link = res_link)
-    omni_def <- list(radius = 13L, block_size = 5L)
-    omni_cfg <- utils::modifyList(omni_def, omniscape_settings)
-    final_omni <- ds_jax_connectivity(final_resistance,
-                                       radius     = omni_cfg$radius,
-                                       block_size = omni_cfg$block_size)
-    final_connectivity <- final_omni$cum_current
+    final_connectivity <- intensity_fit$connectivity
+    intensity_fit$connectivity <- NULL
 
     diagnostics <- ds_diagnose(
       intensity_fit      = intensity_fit,
@@ -818,7 +815,6 @@ diffiscape <- function(obs_data,
       connectivity       = final_connectivity,
       intensity_config   = intensity_config,
       covariates_rasters = covariates_rasters,
-      family             = int_family,
       plot               = plot
     )
 
@@ -833,7 +829,6 @@ diffiscape <- function(obs_data,
           connectivity       = final_connectivity,
           intensity_config   = intensity_config,
           covariates_rasters = covariates_rasters,
-          family             = int_family,
           plot               = plot
         ),
         error = function(e) {

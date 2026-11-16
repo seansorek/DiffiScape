@@ -231,7 +231,7 @@ test_that("family_poisson deviance_residuals have correct length and sign", {
   fam <- family_poisson()
   y   <- c(0, 1, 5, 10)
   mu  <- c(1, 1, 3, 12)
-  dr  <- fam$deviance_residuals_fn(y, mu, extra_params = list())
+  dr  <- fam$deviance_residuals_fn(y, mu, extra_params = numeric())
   expect_length(dr, length(y))
   expect_true(all(is.finite(dr)))
   expect_true(dr[3] > 0)   # y=5 > mu=3

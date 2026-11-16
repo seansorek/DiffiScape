@@ -11,13 +11,13 @@ ds_posterior(
   n_draws = 200L,
   n_inner = 5L,
   omniscape_settings = list(),
-  intensity_config = default_intensity_config(),
+  intensity_config = NULL,
   covariates_obs = NULL,
   covariates_rasters = NULL,
   residualise = FALSE,
   available_points = NULL,
   available_covariates = NULL,
-  link = link_exp(),
+  link = NULL,
   family = NULL,
   method = "nuts",
   ...
@@ -26,7 +26,8 @@ ds_posterior(
 \arguments{
 \item{opt_result}{Result from \code{\link[=ds_optimize]{ds_optimize()}}.}
 
-\item{basis_stack}{Basis function stack.}
+\item{basis_stack}{Basis function stack. For a physical fit, supply the
+covariates in fitted order and match the fitted dimensions, mask, and cell area.}
 
 \item{obs_points}{Data.frame with \verb{x, y}.}
 
@@ -34,9 +35,11 @@ ds_posterior(
 
 \item{n_inner}{Inner-loop draws per outer draw.}
 
-\item{omniscape_settings}{List of Omniscape settings.}
+\item{omniscape_settings}{Named window settings that override settings
+saved with the optimization result.}
 
-\item{intensity_config}{Intensity config.}
+\item{intensity_config}{Intensity config. \code{NULL} uses the saved config or
+\code{\link[=default_intensity_config]{default_intensity_config()}}.}
 
 \item{covariates_obs}{Named list of covariate vectors.}
 
@@ -54,9 +57,10 @@ integration.}
 \code{available_points} locations.  Required when \code{available_points} is
 supplied and the intensity model includes covariates.}
 
-\item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}
+\item{link}{A \link{resistance_link} object. \code{NULL} uses the saved link or \code{\link[=link_exp]{link_exp()}}.}
 
-\item{family}{An \link{intensity_family} object, or \code{NULL}.}
+\item{family}{An \link{intensity_family} object. \code{NULL} uses the saved optimizer
+family or the family from the intensity config or distribution.}
 
 \item{method}{Physical inference: \code{"nuts"} or \code{"advi"}.}
 

@@ -66,10 +66,10 @@ supplied and the intensity model includes covariates.}
 
 \item{pattern}{File pattern for raster directory.}
 
-\item{omniscape_settings}{Named list of Omniscape overrides forwarded to
-every connectivity step (final refit, posterior sampling, and
-diagnostics).  Recognised entries: \code{radius} (default \code{13L}),
-\code{block_size} (default \code{5L}), \code{cleanup} (default \code{TRUE}).}
+\item{omniscape_settings}{Named window settings that override
+\code{optimizer_config$omniscape} throughout optimization, refits, and
+diagnostics for the window workflows. \code{radius} defaults to \code{13L} and
+\code{block_size} to \code{5L}.}
 
 \item{solver}{Optimization method, default \code{"adam"}; \code{"lbfgs"} uses bounded
 SciPy optimization. \code{"surrogate"} and legacy \code{"gradient"} select window

@@ -1,3 +1,27 @@
+test_that("saved physical fits reject incompatible raster cells before calling Python", {
+  moved_mask <- terra::rast(nrows = 2, ncols = 3, xmin = 0, xmax = 3,
+    ymin = 0, ymax = 2, vals = c(NA, 0, 0.2, 0.5, 0.8, 1))
+  points <- as.data.frame(terra::xyFromCell(moved_mask, c(2, 3, 3, 5, 6)))
+  fitted <- list(python_fit = list(configuration = list(
+    formulation = "global_absorption", n_rows = 2L, n_cols = 3L, cell_area = 1,
+    valid_mask = c(TRUE, FALSE, TRUE, TRUE, TRUE, TRUE), n_covariates = 1L)))
+  posterior <- list(python_posterior = list())
+
+  expect_error(ds_predict(fitted, basis_stack = moved_mask), "valid-cell mask must match")
+  expect_error(ds_posterior(fitted, moved_mask, points), "valid-cell mask must match")
+  expect_error(ds_diagnose(fitted, points, moved_mask, plot = FALSE), "valid-cell mask must match")
+  expect_error(ds_ppc(posterior, fitted, points, moved_mask, basis_stack = moved_mask,
+    plot = FALSE), "valid-cell mask must match")
+
+  reshaped <- terra::rast(nrows = 3, ncols = 2, vals = c(0, NA, 0.2, 0.5, 0.8, 1))
+  expect_error(ds_diagnose(fitted, points, reshaped, plot = FALSE), "grid dimensions must match")
+  rescaled <- terra::rast(nrows = 2, ncols = 3, xmin = 0, xmax = 6,
+    ymin = 0, ymax = 2, vals = c(0, NA, 0.2, 0.5, 0.8, 1))
+  expect_error(ds_ppc(posterior, fitted, points, rescaled, basis_stack = rescaled,
+    plot = FALSE), "cell area must match")
+  expect_error(ds_predict(fitted, basis_stack = c(rescaled, rescaled)), "same number of covariates")
+})
+
 test_that("installed Python and R fitting/prediction agree on a masked nonsquare grid", {
   skip_on_cran()
   skip_if_not_installed("reticulate")

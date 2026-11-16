@@ -80,7 +80,8 @@ compute_deviance_residuals_gam <- function(gam_fit) {
 #' @param connectivity A [terra::SpatRaster] of connectivity values.
 #' @param intensity_config Intensity config.
 #' @param covariates_rasters Named list of covariate rasters.
-#' @param family An [intensity_family] object, or `NULL` (uses NB default).
+#' @param family An [intensity_family] object. By default, use the fitted
+#'   family or negative binomial for older fits without family metadata.
 #' @return A [terra::SpatRaster] of deviance residuals.
 #' @export
 rasterise_deviance_residuals <- function(intensity_fit,
@@ -107,6 +108,7 @@ rasterise_deviance_residuals <- function(intensity_fit,
   # fit in $intensity_fit_obj and just estimates in $intensity_params) or
   # directly from fit_intensity_nb/gam (which has $estimates at the top level).
   fit_obj <- intensity_fit$intensity_fit_obj %||% intensity_fit
+  family <- family %||% fit_obj$family %||% intensity_fit$family
 
   # Predicted intensity per cell (lambda * cell_area = expected count)
   pred_rast <- predict_intensity(
@@ -283,7 +285,8 @@ plot_residual_map <- function(resid_raster, obs_points = NULL, ...) {
 #' @param connectivity A [terra::SpatRaster].
 #' @param intensity_config Intensity config.
 #' @param covariates_rasters Named list of covariate rasters.
-#' @param family An [intensity_family] object, or `NULL` (uses NB default).
+#' @param family An [intensity_family] object. By default, use the fitted
+#'   family or negative binomial for older fits without family metadata.
 #' @param plot Logical; produce diagnostic plots.
 #' @return A list with `residual_raster`, `moran`, `mean_deviance`,
 #'   `prop_large` (proportion of |resid| > 2).
@@ -296,6 +299,8 @@ diagnose_model <- function(intensity_fit,
                            family             = NULL,
                            plot               = TRUE) {
 
+  fit_obj <- intensity_fit$intensity_fit_obj %||% intensity_fit
+  family <- family %||% fit_obj$family %||% intensity_fit$family
   resid_rast <- rasterise_deviance_residuals(
     intensity_fit, obs_points, connectivity,
     intensity_config, covariates_rasters, family = family
@@ -325,11 +330,10 @@ diagnose_model <- function(intensity_fit,
     tab <- table(cells)
     counts[as.integer(names(tab))] <- as.integer(tab)
 
-    fit_obj_plt  <- intensity_fit$intensity_fit_obj %||% intensity_fit
-    params_vec_plt <- fit_obj_plt$estimates %||% intensity_fit$intensity_params
+    params_vec_plt <- fit_obj$estimates %||% intensity_fit$intensity_params
 
     pred_rast <- predict_intensity(
-      fit_obj_plt, connectivity,
+      fit_obj, connectivity,
       covariates_rasters = covariates_rasters,
       config = intensity_config
     )
@@ -415,30 +419,22 @@ diagnose_model <- function(intensity_fit,
     out[["vmi_ratio"]] <- stats::var(counts) / max(mn, 1e-10)
   }
 
-  if ("mean_deviance" %in% tq_names) {
+  if ("mean_deviance" %in% tq_names || include_moran) {
     valid <- mu_cells > 0 & !is.na(mu_cells)
-    if (any(valid)) {
-      dr <- if (!is.null(family) && family$n_extra_params > 0L) {
-        ep_names <- .fit_extra_param_names(family)
-        extra_p  <- stats::setNames(size, ep_names[1L])
-        family$deviance_residuals_fn(counts[valid], mu_cells[valid], extra_p)
-      } else if (!is.null(family)) {
-        family$deviance_residuals_fn(counts[valid], mu_cells[valid], NULL)
-      } else {
-        s <- if (is.null(size) || is.na(size)) 1 else size
-        compute_deviance_residuals(counts[valid], mu_cells[valid], s)
-      }
-      out[["mean_deviance"]] <- mean(abs(dr))
-    } else {
-      out[["mean_deviance"]] <- NA_real_
+    extra_params <- if (family$n_extra_params > 0L) {
+      stats::setNames(size %||% 1, .fit_extra_param_names(family)[1L])
     }
+    dr <- if (any(valid)) {
+      family$deviance_residuals_fn(counts[valid], mu_cells[valid], extra_params)
+    }
+  }
+
+  if ("mean_deviance" %in% tq_names) {
+    out[["mean_deviance"]] <- if (length(dr)) mean(abs(dr)) else NA_real_
   }
 
   if (include_moran && !is.null(coords)) {
     moran_res <- tryCatch({
-      valid <- mu_cells > 0 & !is.na(mu_cells)
-      s <- if (is.null(size) || is.na(size)) 1 else size
-      dr <- compute_deviance_residuals(counts[valid], mu_cells[valid], s)
       moran_test(dr, coords[valid, , drop = FALSE], k = 8L)
     }, error = function(e) NULL)
     out[["moran_i"]] <- if (!is.null(moran_res)) moran_res$observed else NA_real_
@@ -459,13 +455,13 @@ diagnose_model <- function(intensity_fit,
 #'   `gamma`, `beta_*`, and optionally `size`).
 #' @param intensity_fit Result from [fit_intensity_nb()],
 #'   [evaluate_full_model()], or [ds_fit_intensity()].  Supplies the
-#'   connectivity standardisation constants (`c_scale`, `log_conn_mean`,
-#'   `log_conn_sd`).
+#'   fitted connectivity standardisation and residualisation.
 #' @param obs_points Data.frame with `x, y`.
 #' @param connectivity A [terra::SpatRaster] of connectivity values.
 #' @param intensity_config Intensity config list.
 #' @param covariates_rasters Named list of covariate rasters (or `NULL`).
-#' @param family An [intensity_family] object, or `NULL` (defaults to NB).
+#' @param family An [intensity_family] object. By default, use the fitted
+#'   family or negative binomial for older fits without family metadata.
 #' @param n_sim Number of posterior draws to simulate from.
 #' @param test_quantities Character vector of test quantity names.
 #'   Supported: `"total_count"`, `"vmi_ratio"`, `"mean_deviance"`.
@@ -476,6 +472,7 @@ diagnose_model <- function(intensity_fit,
 #' @param plot Logical; produce PPC diagnostic plots.
 #' @param verbose Logical; emit progress messages.
 #' @param basis_stack Fitted basis rasters, required for physical posterior prediction.
+#'   Supply covariates in fitted order and match the fitted dimensions, mask, and cell area.
 #' @return A list with class `"ds_ppc"`:
 #'   \describe{
 #'     \item{`observed`}{Named numeric vector of observed test quantities.}
@@ -508,8 +505,7 @@ ds_ppc <- function(posterior_samples,
   if (is.list(posterior_samples) && !is.null(posterior_samples$python_posterior) && !is.null(intensity_fit$python_fit)) {
     if (is.null(basis_stack)) stop("basis_stack is required for physical posterior predictive checks", call. = FALSE)
     if (include_moran) stop("Moran posterior checks remain an R-only extension; use the replicated counts explicitly.", call. = FALSE)
-    if (!ds_jax_check()) ds_jax_setup()
-    prep <- .prepare_backend_inputs(basis_stack, obs_points)
+    prep <- .prepare_backend_inputs(basis_stack, obs_points, intensity_fit$python_fit$configuration)
     module <- reticulate::import("diffiscape.diagnostics", convert = FALSE)
     out <- module$physical_predictive_checks(intensity_fit$python_fit, prep$basis_np,
       posterior_samples$python_posterior, prep$obs_np, n_sim = as.integer(n_sim),
@@ -529,50 +525,26 @@ ds_ppc <- function(posterior_samples,
 
   # Resolve fit object
   fit_obj <- intensity_fit$intensity_fit_obj %||% intensity_fit
-
-  # Determine family name
-  family_name <- if (!is.null(family)) {
-    family$name
-  } else if (!is.null(fit_obj$distribution)) {
-    fit_obj$distribution
-  } else {
-    "negbin"
-  }
-  if (!family_name %in% c("poisson", "negbin", "zinb")) {
-    stop("Posterior predictive counts are not supported for family '", family_name, "'.", call. = FALSE)
-  }
-
   if (!is.null(fit_obj$gam_model)) {
     stop("PPC is currently supported only for parametric intensity models ",
          "(negbin, poisson, zinb), not GAM fits.", call. = FALSE)
   }
 
+  family <- family %||% fit_obj$family %||% intensity_fit$family
+  family_name <- family$name %||% fit_obj$distribution %||% intensity_fit$distribution %||% "negbin"
+  if (!family_name %in% c("poisson", "negbin", "zinb")) {
+    stop("Posterior predictive counts are not supported for family '", family_name, "'.", call. = FALSE)
+  }
+
   if (!is.null(seed)) withr::local_seed(seed)
 
-  # --- Pre-extract raster data (once) ---
-  C_vals    <- terra::values(connectivity)[, 1]
-  valid     <- !is.na(C_vals)
-  mc        <- fit_obj$min_connectivity %||% 0
-  C_safe    <- pmax(C_vals[valid], mc)
-  z_vals    <- (log1p(C_safe / fit_obj$c_scale) - fit_obj$log_conn_mean) /
-               fit_obj$log_conn_sd
+  data <- .prepare_intensity_prediction(fit_obj, connectivity, covariates_rasters)
   cell_area <- prod(terra::res(connectivity))
-
-  # Covariate values at valid cells
-  cov_vals <- NULL
-  cov_names_vec <- character(0)
-  if (!is.null(covariates_rasters) && length(covariates_rasters) > 0) {
-    cov_names_vec <- names(covariates_rasters)
-    cov_vals <- lapply(covariates_rasters, function(r) {
-      v <- terra::values(r)[, 1]
-      pmax(pmin(v[valid], 1), 0)
-    })
-  }
 
   # Observed counts per valid cell
   coords    <- as_coord_matrix(obs_points)
   cells     <- terra::cellFromXY(connectivity, coords)
-  valid_idx <- which(valid)
+  valid_idx <- which(data$valid)
   n_valid   <- length(valid_idx)
 
   obs_counts <- rep(0L, n_valid)
@@ -598,13 +570,13 @@ ds_ppc <- function(posterior_samples,
     }
   }
   actual_n_sim <- length(draw_idx)
+  params <- as.list(fit_obj$estimates %||% intensity_fit$intensity_params)
 
   # Moran's I and custom R family callbacks remain an R-only extension.
   if (!include_moran && (is.null(family) || !is.null(attr(family$negloglik_fn, "python_config")))) {
     module <- reticulate::import("diffiscape.diagnostics", convert = FALSE)
-    params <- fit_obj$estimates %||% intensity_fit$intensity_params
     result <- reticulate::py_to_r(module$intensity_predictive_checks(
-      as.list(z_vals), if (length(cov_vals)) cov_vals else reticulate::dict(), as.list(obs_counts), as.list(params),
+      as.list(data$z), if (length(data$covariates)) data$covariates else reticulate::dict(), as.list(obs_counts), params,
       lapply(posterior_samples[draw_idx, , drop = FALSE], as.list),
       cell_area = cell_area, family = family_name, test_quantities = as.list(test_quantities),
       seed = as.integer(sample.int(.Machine$integer.max, 1))))
@@ -618,29 +590,16 @@ ds_ppc <- function(posterior_samples,
   }
 
   # --- Compute MAP expected counts for observed test quantities ---
-  params_vec <- fit_obj$estimates %||% intensity_fit$intensity_params
-  map_alpha  <- params_vec[["alpha"]]
-  if (is.null(map_alpha) || is.na(map_alpha)) map_alpha <- 0
-  map_gamma  <- params_vec[["gamma"]]
-  map_size   <- params_vec[["size"]]
+  family <- family %||% resolve_family(distribution = family_name)
+  map_size <- params[["size"]]
+  map_mu <- .predict_intensity_values(params, data$z, data$covariates) * cell_area
 
-  map_log_lambda <- map_alpha + map_gamma * z_vals
-  if (length(cov_names_vec) > 0) {
-    for (nm in cov_names_vec) {
-      b <- params_vec[[paste0("beta_", nm)]]
-      if (!is.null(b) && !is.na(b)) {
-        map_log_lambda <- map_log_lambda + b * cov_vals[[nm]]
-      }
-    }
-  }
-  map_mu <- exp(map_log_lambda) * cell_area
-
-  if (family_name == "zinb" && "pi" %in% names(params_vec)) {
-    # params_vec$pi is already on the natural (0, 1) probability scale --
+  if (family_name == "zinb" && "pi" %in% names(params)) {
+    # params$pi is already on the natural (0, 1) probability scale --
     # fit_intensity_nb() transforms the optimizer-scale logit_pi via
     # plogis() at extraction time, so it must NOT be re-transformed here
     # (see #109).
-    pi_map <- params_vec[["pi"]]
+    pi_map <- params[["pi"]]
     map_mu <- map_mu * (1 - pi_map)
   }
 
@@ -664,21 +623,8 @@ ds_ppc <- function(posterior_samples,
 
     row <- posterior_samples[draw_idx[i], , drop = FALSE]
 
-    alpha_i <- row[["alpha"]]
-    if (is.null(alpha_i) || is.na(alpha_i)) alpha_i <- 0
-    gamma_i <- row[["gamma"]]
-    size_i  <- row[["size"]]
-
-    log_lambda_i <- alpha_i + gamma_i * z_vals
-    if (length(cov_names_vec) > 0) {
-      for (nm in cov_names_vec) {
-        b <- row[[paste0("beta_", nm)]]
-        if (!is.null(b) && !is.na(b)) {
-          log_lambda_i <- log_lambda_i + b * cov_vals[[nm]]
-        }
-      }
-    }
-    mu_cells_i <- exp(log_lambda_i) * cell_area
+    size_i <- row[["size"]]
+    mu_cells_i <- .predict_intensity_values(row, data$z, data$covariates) * cell_area
 
     # row$pi comes from posterior_sample(), which draws directly from the
     # fit's natural-scale estimates (see fit_intensity_nb() in intensity.R),

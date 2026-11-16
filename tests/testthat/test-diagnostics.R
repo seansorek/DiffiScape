@@ -460,6 +460,68 @@ test_that("ds_ppc works with Poisson family", {
   expect_equal(result$n_sim, 10L)
 })
 
+test_that("residualised Poisson diagnostics use the fitted rates and family", {
+  raster <- terra::rast(nrows = 2, ncols = 3, xmin = 0, xmax = 6, ymin = 0, ymax = 2,
+                        vals = expm1(c(0, 2, NA, 4, 5, 6)))
+  habitat <- terra::rast(raster)
+  terra::values(habitat) <- c(-0.2, 0.25, 0, 0.75, 1, 1.2)
+  covariates <- list(habitat = habitat)
+  obs <- terra::xyFromCell(raster, c(1, 1, 3, 4))
+  poisson_residuals <- function(observed, fitted, extra_params) {
+    sign(observed - fitted) * sqrt(2 * (
+      stats::dpois(observed, observed, log = TRUE) -
+      stats::dpois(observed, fitted, log = TRUE)
+    ))
+  }
+  fitted_family <- family_poisson()
+  fitted_family$deviance_residuals_fn <- poisson_residuals
+  fit <- list(
+    estimates = c(alpha = 0.1, gamma = 0.3, beta_habitat = 0.2),
+    min_connectivity = expm1(1), c_scale = 1, log_conn_mean = 0, log_conn_sd = 1,
+    is_residualised = TRUE, family = fitted_family,
+    residualisation_info = list(aux_model = stats::lm(z ~ habitat, data.frame(
+      z = c(1, 2, 3), habitat = c(0, 0.5, 1)
+    )))
+  )
+  valid <- c(1, 2, 4, 5, 6)
+  clipped <- c(0, 0.25, 0.75, 1, 1)
+  z <- c(1, 2, 4, 5, 6) - (1 + 2 * clipped)
+  expected_rates <- exp(0.1 + 0.3 * z + 0.2 * clipped) * prod(terra::res(raster))
+  counts <- c(2, 0, 1, 0, 0)
+  expected_residuals <- poisson_residuals(counts, expected_rates, NULL)
+
+  prediction <- as.numeric(terra::values(predict_intensity(fit, raster, covariates)))
+  expect_true(is.na(prediction[3]))
+  expect_equal(prediction[valid] * prod(terra::res(raster)), expected_rates)
+  residuals <- rasterise_deviance_residuals(fit, obs, raster, covariates_rasters = covariates)
+  expect_equal(as.numeric(terra::values(residuals))[valid], expected_residuals)
+
+  calls <- list()
+  local_mocked_bindings(
+    .ppc_simulate_counts = function(mu_cells, family_name, size, pi_val) {
+      calls[[length(calls) + 1L]] <<- list(rates = mu_cells, family = family_name, size = size)
+      counts
+    },
+    family_poisson = function() fitted_family,
+    moran_test = function(residuals, ...) list(observed = mean(residuals)),
+    .package = "DiffiScape"
+  )
+  draws <- as.data.frame(as.list(fit$estimates))
+  current <- ds_ppc(draws, fit, obs, raster, covariates_rasters = covariates,
+                    include_moran = TRUE, n_sim = 1, plot = FALSE, verbose = FALSE)
+  fit$family <- NULL
+  legacy <- ds_ppc(draws, list(intensity_fit_obj = fit, distribution = "poisson"), obs, raster,
+                   covariates_rasters = covariates, include_moran = TRUE, n_sim = 1,
+                   plot = FALSE, verbose = FALSE)
+
+  expect_equal(current, legacy)
+  expect_equal(calls, rep(list(list(rates = expected_rates, family = "poisson", size = NULL)), 2))
+  expect_equal(current$observed, c(total_count = sum(counts),
+                                    vmi_ratio = stats::var(counts) / mean(counts),
+                                    mean_deviance = mean(abs(expected_residuals)),
+                                    moran_i = mean(expected_residuals)))
+})
+
 
 test_that("ds_ppc errors on unsupported family", {
   skip_on_cran()

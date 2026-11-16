@@ -148,58 +148,92 @@ test_that("ds_posterior forwards omniscape_settings to laplace and posterior_sam
 })
 
 
-test_that("diffiscape forwards omniscape_settings to refit, posterior, and diagnostics", {
+test_that("diffiscape uses the same windows for optimization, refit and diagnostics", {
   skip_on_cran()
 
-  custom_settings <- list(radius = 25L, block_size = 9L)
-  captured_fit_settings  <- NULL
+  captured_opt_settings <- NULL
   captured_post_settings <- NULL
-  captured_jax_radius    <- NULL
-
-  mock_opt   <- list(best_params = list(r_0 = 0), bounds = list(r_0 = c(-2, 2)),
-                     distribution = "negbin")
-  mock_fit   <- list(loglik = -10, intensity_params = c(0.1, 0.2),
-                     intensity_fit_obj = list(), distribution = "negbin")
-  mock_post  <- list(laplace = list(), samples = data.frame(), summary = data.frame())
-  mock_diag  <- list(deviance_residuals = numeric(0))
-  mock_conn  <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+  solved_windows <- list()
+  diagnosed_connectivity <- NULL
+  basis <- terra::rast(nrows = 2, ncols = 2, vals = 1:4)
+  connectivity <- terra::setValues(basis, c(4, 3, 2, 1))
+  obs <- as.data.frame(terra::xyFromCell(basis, 1:3))
 
   local_mocked_bindings(
-    ds_optimize = function(...) mock_opt,
-    ds_fit_intensity = function(...) {
-      args <- list(...)
-      captured_fit_settings <<- args$omniscape_settings
-      mock_fit
+    ds_optimize = function(..., config) {
+      captured_opt_settings <<- config$omniscape
+      list(best_params = list(r_0 = 0, z_1 = 1), distribution = "poisson", config = config)
     },
-    ds_posterior = function(...) {
-      args <- list(...)
-      captured_post_settings <<- args$omniscape_settings
-      mock_post
+    ds_posterior = function(..., omniscape_settings) {
+      captured_post_settings <<- omniscape_settings
+      list(samples = data.frame())
     },
-    create_resistance_surface = function(...) mock_conn,
-    ds_jax_connectivity = function(resistance, radius = 13L, block_size = 5L, ...) {
-      captured_jax_radius <<- radius
-      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
+    ds_jax_connectivity = function(resistance, radius, block_size) {
+      solved_windows[[length(solved_windows) + 1L]] <<- list(radius = radius, block_size = block_size)
+      list(cum_current = connectivity, elapsed_seconds = 0.1)
     },
-    ds_diagnose = function(...) mock_diag,
+    fit_intensity_nb = function(..., family) {
+      expect_identical(family$name, "poisson")
+      list(loglik = -10, family = family)
+    },
+    ds_diagnose = function(..., connectivity, intensity_fit) {
+      diagnosed_connectivity <<- connectivity
+      expect_identical(intensity_fit$intensity_fit_obj$family$name, "poisson")
+      list()
+    },
     .package = "DiffiScape"
   )
 
-  basis <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
-  obs   <- data.frame(x = c(0, 1), y = c(0, 1))
-
-  result <- diffiscape(
-    obs_data           = obs,
-    rasters            = list(layer1 = basis),
-    omniscape_settings = custom_settings,
-    n_posterior         = 3L,
-    plot               = FALSE,
-    solver             = "surrogate"
+  diffiscape(
+    obs, list(layer1 = basis),
+    optimizer_config = list(omniscape = list(radius = 3L, block_size = 9L)),
+    omniscape_settings = list(radius = 25L),
+    output_dir = withr::local_tempdir(),
+    n_posterior = 3L, plot = FALSE, solver = "surrogate"
   )
 
-  expect_equal(captured_fit_settings, custom_settings)
-  expect_equal(captured_post_settings, custom_settings)
-  expect_equal(captured_jax_radius, 25L)
+  expected_windows <- list(radius = 25L, block_size = 9L)
+  expect_identical(captured_opt_settings, expected_windows)
+  expect_identical(captured_post_settings, expected_windows)
+  expect_identical(solved_windows, list(expected_windows))
+  expect_identical(diagnosed_connectivity, connectivity)
+})
+
+
+test_that("saved profile settings drive standalone intensity and posterior refits", {
+  basis <- terra::rast(nrows = 2, ncols = 2, vals = 1:4)
+  obs <- as.data.frame(terra::xyFromCell(basis, 1:3))
+  opt <- list(
+    best_params = list(r_0 = 0, z_1 = 0),
+    bounds = list(r_0 = c(-1, 1), z_1 = c(-1, 1)),
+    distribution = "negbin",
+    config = list(omniscape = list(radius = 3L, block_size = 2L),
+                  resistance_link = link_softplus(), family = family_poisson(),
+                  intensity_config = list(c_scale = 4))
+  )
+  calls <- list()
+  local_mocked_bindings(
+    evaluate_full_model = function(resistance_params, omniscape_settings,
+                                   intensity_config, link, family, ...) {
+      calls[[length(calls) + 1L]] <<- list(omniscape_settings, intensity_config, link$name, family$name)
+      list(loglik = -sum(unlist(resistance_params)^2),
+           intensity_params = c(alpha = 0, gamma = 1),
+           intensity_se = c(alpha = 0.1, gamma = 0.1), convergence = 0L)
+    },
+    posterior_summary = function(...) data.frame(),
+    .package = "DiffiScape"
+  )
+
+  ds_fit_intensity(opt, basis, obs)
+  result <- ds_posterior(opt, basis, obs, n_draws = 1L, n_inner = 1L)
+  expect_equal(nrow(result$samples), 1L)
+  expect_identical(unique(calls), list(list(opt$config$omniscape, list(c_scale = 4), "softplus", "poisson")))
+
+  ds_fit_intensity(opt, basis, obs, omniscape_settings = list(radius = 6L),
+                   intensity_config = list(c_scale = 2), link = link_identity(),
+                   family = family_zinb())
+  expect_identical(tail(calls, 1L)[[1L]],
+                   list(list(radius = 6L, block_size = 2L), list(c_scale = 2), "identity", "zinb"))
 })
 
 
