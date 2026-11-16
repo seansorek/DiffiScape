@@ -13,13 +13,13 @@ fit_surrogate(X, y, type = "gp", config = list())
 
 \item{type}{Character; only \code{"gp"} is supported.}
 
-\item{config}{Named list of extra arguments forwarded to \code{\link[DiceKriging:km]{DiceKriging::km()}}.}
+\item{config}{SMT KRG options such as \code{eval_noise}, \code{noise0}, \code{n_start}, and \code{hyper_opt}. Legacy DiceKriging config keys require translation.}
 }
 \value{
 A \code{"ds_surrogate"} object with \code{type}, \code{model}, and \code{predictor_names}.
 }
 \description{
-Uses \code{\link[DiceKriging:km]{DiceKriging::km()}} with a Matern 5/2 kernel. The fitted surrogate
+Uses the installed Python core and SMT ordinary kriging with a Matern 5/2 kernel. The fitted surrogate
 supplies means and uncertainty for acquisition and posterior calculations.
 }
 \seealso{

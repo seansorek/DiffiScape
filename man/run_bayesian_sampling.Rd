@@ -2,7 +2,7 @@
 % Please edit documentation in R/torch_pipeline.R
 \name{run_bayesian_sampling}
 \alias{run_bayesian_sampling}
-\title{Langevin / MALA posterior sampling from a trained torch model}
+\title{Retired checkpoint sampler}
 \usage{
 run_bayesian_sampling(
   basis_stack,
@@ -78,12 +78,8 @@ knobs (must match the MAP run).}
 \item{device}{Character; \code{"auto"}, \code{"cuda"}, or \code{"cpu"}.}
 }
 \value{
-A list with \code{samples_effective_loglinear}, \code{samples_alpha},
-\code{samples_gamma}, \code{partial_effects}, \code{log_posterior_trace}, \code{ess},
-\code{summary}, \code{elapsed_time}.
+An actionable migration error.
 }
 \description{
-Starts from a MAP fit produced by \code{\link[=run_torch_pipeline]{run_torch_pipeline()}} and explores the
-joint posterior using preconditioned Langevin dynamics (or MALA when
-\code{use_mala = TRUE}).
+Old .pt checkpoints cannot be loaded by JAX. Refit with ds_optimize() and use ds_posterior(method = "nuts") or method = "advi". Custom MALA is retired.
 }

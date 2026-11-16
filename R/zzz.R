@@ -2,13 +2,13 @@
 # Package-level hooks and global state
 # ============================================================================
 
-#' @keywords internal
-.ds_env <- new.env(parent = emptyenv())
-
 .onLoad <- function(libname, pkgname) {
 
-  .ds_env$torch_initialized <- FALSE
-  .ds_env$torch_module      <- NULL
+  if (requireNamespace("reticulate", quietly = TRUE)) {
+    reticulate::py_require("diffiscape>=0.1.0,<0.2", python_version = ">=3.12")
+    .jax_env$package <- reticulate::import("diffiscape", delay_load = TRUE,
+                                           convert = FALSE)
+  }
 }
 
 .onAttach <- function(libname, pkgname) {
@@ -18,12 +18,4 @@
     " -- Differentiable Landscape Connectivity Optimization"
   )
 
-  reticulate_ok <- requireNamespace("reticulate", quietly = TRUE)
-  if (!reticulate_ok) {
-    packageStartupMessage(
-      "Note: reticulate not installed. ",
-      "Install with install.packages('reticulate') ",
-      "to enable the JAX and PyTorch compute backends."
-    )
-  }
 }

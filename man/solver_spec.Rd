@@ -4,7 +4,10 @@
 \alias{solver_spec}
 \title{Construct an internal solver-dispatch spec}
 \usage{
-solver_spec(solver, choices = c("surrogate", "gradient", "enzyme", "torch"))
+solver_spec(
+  solver,
+  choices = c("adam", "lbfgs", "surrogate", "gradient", "enzyme", "torch")
+)
 }
 \arguments{
 \item{solver}{Character scalar; one of \code{"surrogate"}, \code{"gradient"},

@@ -30,6 +30,6 @@ verify_torch_gradient(
 A list with \code{pass} (logical) and \code{max_rel_error}.
 }
 \description{
-Finite-difference gradient check on the bundled differentiable circuit
+Finite-difference gradient check on the installed JAX circuit
 solver. Useful as a smoke test before running an expensive optimisation.
 }

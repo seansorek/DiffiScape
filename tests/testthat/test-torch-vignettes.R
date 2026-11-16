@@ -1,32 +1,10 @@
-test_that("torch vignettes are self-contained fast examples", {
-  vignette_dir <- file.path(testthat::test_path(), "..", "..", "vignettes")
-  skip_if_not(dir.exists(vignette_dir),
-              "source vignettes are unavailable in the installed package")
-  vignette_files <- file.path(
-    vignette_dir,
-    c("torch-mlp.Rmd", "spline-gam.Rmd")
-  )
-  if (!all(file.exists(vignette_files))) {
-    expect_true(all(file.exists(vignette_files)))
-    return(invisible())
+test_that("migration vignettes use installed core operations and synthetic data", {
+  root <- file.path(testthat::test_path(), "..", "..", "vignettes")
+  skip_if_not(dir.exists(root), "source vignettes unavailable in installed package")
+  for (path in list.files(root, pattern = "Rmd$", full.names = TRUE)) {
+    contents <- paste(readLines(path), collapse = "\n")
+    expect_match(contents, "RETICULATE_PYTHON")
+    expect_match(contents, "xyFromCell")
+    expect_no_match(contents, "torch_module|ds_torch_setup|path/to/|pip install torch")
   }
-
-  for (vignette_file in vignette_files) {
-    contents <- paste(readLines(vignette_file, warn = FALSE), collapse = "\n")
-
-    expected_eval <- "FALSE"
-    expect_match(
-      contents,
-      paste0("opts_chunk\\$set\\([^\\n]*eval = ", expected_eval)
-    )
-    expect_no_match(contents, "path/to/")
-    expect_match(contents, "nrows = 100L, ncols = 100L")
-    expect_match(contents, "canopy =")
-    expect_match(contents, "impervious =")
-    expect_match(contents, "1000L")
-    expect_match(contents, "-1 \\* canopy \\+ 1 \\* impervious")
-    expect_match(contents, "n_epochs.*<- (?:[1-9]|[1-2][0-9])L")
-    expect_match(contents, "plot\\(results\\$loss_history")
-  }
-
 })

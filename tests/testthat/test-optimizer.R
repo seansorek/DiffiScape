@@ -32,7 +32,7 @@ test_that("fit_surrogate fits a GP model", {
   y <- rowSums(X^2)
 
   gp <- fit_surrogate(X, y)$model
-  expect_s4_class(gp, "km")
+  expect_equal(gp$engine, "smt")
 })
 
 
@@ -104,9 +104,10 @@ test_that("optimize_resistance returns expected result structure", {
   )
 
   cfg <- default_optimizer_config()
-  cfg$n_init <- 5L
-  cfg$n_iter <- 2L
-  cfg$seed   <- 42L
+  cfg$n_init <- 5
+  cfg$n_iter <- 2
+  cfg$n_candidates <- 30
+  cfg$seed <- 42
 
   out_dir <- withr::local_tempdir()
   result  <- optimize_resistance(basis, obs, config = cfg,
@@ -120,8 +121,16 @@ test_that("optimize_resistance returns expected result structure", {
   expect_equal(result$n_evaluations, 7L)
   expect_s3_class(result$surrogate, "ds_surrogate")
   expect_equal(result$surrogate$type, "gp")
-  expect_s4_class(result$surrogate$model, "km")
+  expect_equal(result$surrogate$model$engine, "smt")
   expect_type(result$bounds, "list")
+})
+
+
+test_that("optimize_resistance rejects fractional and out-of-range integer settings", {
+  expect_error(optimize_resistance(NULL, NULL, config = list(n_iter = 1.5)),
+               "n_iter must be a whole number")
+  expect_error(optimize_resistance(NULL, NULL, config = list(seed = 2^31)),
+               "seed must be a whole number")
 })
 
 
@@ -310,8 +319,8 @@ test_that("optimize_resistance reports NA (not 1e10) for failed evaluations and 
   # and its scale should not be dominated by an out-of-range sentinel.
   expect_s3_class(result$surrogate, "ds_surrogate")
   gp_model <- result$surrogate$model
-  expect_s4_class(gp_model, "km")
-  fitted_range <- range(gp_model@y)
+  expect_equal(gp_model$engine, "smt")
+  fitted_range <- range(gp_model$y)
   expect_true(diff(fitted_range) < 1e6)
 })
 
@@ -781,16 +790,10 @@ test_that(".optimize_neural forwards config$omniscape radius/block_size to ds_ja
 })
 
 
-# ---- GH #126: model_type = "conv" needs a rank-3 (H, W, C) basis -------
-# ResistanceConv (the Flax module behind model_type = "conv") requires a
-# (n_rows, n_cols, n_basis) raster, not the flattened (n_valid, n_basis)
-# matrix .optimize_neural() sends for every other model_type. Sending the
-# flattened matrix crashed inside Flax's Conv layer on every call. These
-# tests lock in that .optimize_neural() sends a proper 3-D grid (with NA
-# cells filled by the per-layer mean) only for model_type = "conv", while
-# leaving every other model_type on the pre-existing flattened matrix.
+# Conv receives the same valid-cell arrays as other models; Python owns
+# full-grid construction and the legacy mean-imputation convention.
 
-test_that(".optimize_neural sends a rank-3 (n_rows, n_cols, n_basis) basis array for model_type = 'conv'", {
+test_that(".optimize_neural sends the shared valid-cell array contract for conv", {
   skip_if_not_installed("reticulate")
   skip_if(!reticulate::py_module_available("numpy"), "numpy not installed")
   skip_on_cran()
@@ -825,7 +828,7 @@ test_that(".optimize_neural sends a rank-3 (n_rows, n_cols, n_basis) basis array
   )
 
   shape <- reticulate::py_to_r(captured_basis_np$shape)
-  expect_equal(as.integer(shape), c(n_rows, n_cols, 2L))
+  expect_equal(as.integer(shape), c(n_rows * n_cols, 2L))
 })
 
 
@@ -868,7 +871,7 @@ test_that(".optimize_neural still sends a flattened (n_valid, n_basis) basis for
 })
 
 
-test_that(".optimize_neural fills invalid (NA) cells with the per-layer mean in the conv grid", {
+test_that(".optimize_neural excludes invalid cells before Python constructs the conv grid", {
   skip_if_not_installed("reticulate")
   skip_if(!reticulate::py_module_available("numpy"), "numpy not installed")
   skip_on_cran()
@@ -906,10 +909,8 @@ test_that(".optimize_neural fills invalid (NA) cells with the per-layer mean in 
 
   grid <- reticulate::py_to_r(captured_basis_np)
   expect_false(anyNA(grid))
-  # Cell 5 (1-based, row-major) is grid position (row 2, col 2) on a 3x3
-  # raster; it should hold the mean of the 8 remaining valid values
-  # (1..9 excluding 5), i.e. 5.
-  expect_equal(grid[2, 2, 1], mean(c(1:4, 6:9)))
+  # R transfers valid cells only, in terra row-major order.
+  expect_equal(as.numeric(grid), as.numeric(c(1:4, 6:9)))
 })
 
 

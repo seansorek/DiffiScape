@@ -101,8 +101,6 @@ test_that("optimize_resistance_gradient runs end-to-end", {
           "jax not installed")
   skip_if(!reticulate::py_module_available("jaxscape"),
           "jaxscape not installed")
-  skip_if(!reticulate::py_module_available("jaxopt"),
-          "jaxopt not installed")
   skip_on_cran()
 
   set.seed(42)
@@ -219,8 +217,6 @@ test_that("ds_optimize dispatches gradient solver correctly", {
           "jax not installed")
   skip_if(!reticulate::py_module_available("jaxscape"),
           "jaxscape not installed")
-  skip_if(!reticulate::py_module_available("jaxopt"),
-          "jaxopt not installed")
   skip_on_cran()
 
   set.seed(42)

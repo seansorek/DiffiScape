@@ -16,7 +16,7 @@ test_that("torch rejects unsupported modeling arguments before running Python", 
   )
   for (args in cases) {
     expect_error(
-      do.call(ds_optimize, c(list(basis_stack = NULL, obs_points = NULL), args)),
+      do.call(ds_optimize, c(list(basis_stack = NULL, obs_points = NULL, solver = "torch"), args)),
       "does not support|supports only"
     )
   }

@@ -41,7 +41,7 @@ A list (converted from the Python dict) with \code{best_params},
 \code{best_loglik}, \code{loss_history}, \code{n_epochs_run}, \code{elapsed}, \code{converged}.
 }
 \description{
-Calls \code{diffiscape_jax.optimize.run_parametric_optimization}, which
+Calls \code{diffiscape.optimize.run_parametric_optimization}, which
 minimises the negative log-likelihood of a connectivity-based
 point-process model using L-BFGS or Adam with JAX auto-diff gradients.
 }

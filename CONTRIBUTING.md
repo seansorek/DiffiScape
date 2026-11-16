@@ -1,93 +1,36 @@
-# Contributing to DiffiScape
+# Contributing
 
-Thanks for your interest in DiffiScape. This is a multi-language package: an R
-front end with **Python** compute backends (**JAX** for surrogate and gradient solvers,
-**PyTorch** for neural networks). Read [ARCHITECTURE.md](ARCHITECTURE.md) first — it explains
-which code runs for which `solver`.
+Use Python 3.12 and the CPU constraints for routine changes:
 
-## Prerequisites
-
-| Backend | Needed for | Install |
-|---------|-----------|---------|
-| **R ≥ 4.1** | everything | the package itself + `Imports` in `DESCRIPTION` |
-| **Python ≥ 3.10** | all solvers (JAX surrogate/gradient and PyTorch) | `pip install -r inst/python/diffiscape_jax/requirements.txt` and optionally `pip install -r inst/python/diff_cs/requirements.txt` |
-
-Python is **required** (`Suggests` in `DESCRIPTION`): the R package installs without
-it, but you need Python to use any solver. If working on JAX, you need JAX deps; if
-working on PyTorch, you need torch deps.
-
-## Local setup
-
-```r
-# R side
-install.packages("devtools")
-devtools::install_deps(dependencies = TRUE)
-devtools::load_all()
+```sh
+python -m pip install -c python/constraints-cpu.txt './python[dev]'
+python -m build python
+python -m pip install --no-deps --force-reinstall python/dist/*.whl
 ```
 
-```bash
-# JAX backend (required for surrogate and gradient solvers)
-pip install -r inst/python/diffiscape_jax/requirements.txt
-# This installs: jax, jaxlib, numpy, jaxscape (with amjax), amjax, lineax,
-# equinox, flax, numpyro, jaxopt, optax
-```
+Run `python -m pytest /absolute/path/to/DiffiScape/python/tests` outside the
+checkout to validate the installed package. Install the sdist and rerun the
+public API smoke checks. Do not set PYTHONPATH for packaging gates.
 
-```bash
-# PyTorch backend (optional, for the torch solver)
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install -r inst/python/diff_cs/requirements.txt
-# GPU (optional): also `pip install cupy-cuda12x` — auto-detected at runtime.
-```
+In R, set RETICULATE_PYTHON to the same interpreter before starting R. Install R
+dependencies, run `devtools::document()`, `devtools::test()`, then `R CMD build .`
+and `R CMD check` on the source tarball. Integration tests need NOT_CRAN=true
+for a local full run. Ordinary package loading must stay lazy.
 
-From R, initialize the JAX backend once per session before using surrogate/gradient:
-`ds_install_jax_deps()` (or let `diffiscape()` do it automatically on first use).
+Put shared numerical changes in Python, and adapter checks in R. Add a tiny
+independent dense reference or finite-difference check for changed physical
+semantics. Match formulations, float64, masks, sources, grounding, tolerances,
+and solver-state reuse before comparing performance. Preserve existing failures
+and unrelated working-tree changes. `docs/JAX_MIGRATION_STATUS.md` records the
+scientific contract and tested evidence.
 
-## Running the tests
+Use upstream sparse solving and autodiff, Optax/SciPy optimization, NumPyro
+inference, SciPy splines, and SMT kriging. Do not add custom adjoints or samplers.
+Keep mgcv and arbitrary R callbacks explicitly R-only. Generated NAMESPACE and
+man pages must follow roxygen source. Update both package guides for API changes.
 
-| Suite | Command | Location |
-|-------|---------|----------|
-| R | `devtools::test()` or `R CMD check` | `tests/testthat/` |
-| Python JAX | `cd inst/python && pytest diffiscape_jax/tests/` | `inst/python/diffiscape_jax/tests/` |
-| Python PyTorch | `cd inst/python && pytest tests/` | `inst/python/tests/` |
-
-CI runs all three on every PR (`.github/workflows/{r,python,test-coverage}.yml`)
-and uploads coverage to Codecov under the `r` / `jax` / `torch` flags
-(configured in [codecov.yml](codecov.yml)). Please add or update tests for the
-backend you touch — the JAX optimize and sample modules, and the PyTorch Bayesian samplers,
-are areas where new tests are especially welcome.
-
-### Gradient changes
-
-If you modify a differentiable solver or a resistance net, run the matching
-finite-difference check so you don't ship a wrong gradient:
-
-- JAX: `verify_*` helpers in `inst/python/diffiscape_jax/tests/` (test modules).
-- PyTorch: `verify_circuit_gradient` / `verify_conv_gradient` /
-  `verify_spline_gradient` in `05_torch_pipeline.py`
-  (exposed in R as `verify_*_gradient`).
-
-## Conventions
-
-- **R**: roxygen2 doc comments (`@export` public functions); regenerate docs with
-  `devtools::document()` and commit the `man/*.Rd` + `NAMESPACE` changes. Internal
-  helpers are prefixed `.` (e.g. `.outer_objective`). Follow the existing British
-  spelling in user-facing strings (`standardise`, `residualise`).
-- **JAX**: use `jax.vmap` and `jax.grad` for clean functional code. Avoid mutable state.
-  Keep numeric defaults in module-level constants near the top of files.
-- **PyTorch**: keep new numeric defaults in the `DEFAULT_*` constants block at the
-  top of `05_torch_pipeline.py` rather than as scattered literals.
-
-## Pull requests
-
-- One logical change per PR; keep refactors separate from behavior changes.
-- For anything touching the science (solvers, likelihoods, gradients), note in the
-  PR how you verified numerical behavior is unchanged (e.g. a fixed-seed example or
-  a gradient check).
-- Make sure `R CMD check`, `pytest`, and the Julia tests pass for the backend(s)
-  you changed.
-
-## Known tech debt
-
-A prioritized backlog of structural cleanups (JAX-PyTorch code consolidation, improved
-test coverage for JAX samplers, S3 dispatch for resistance models) is tracked separately.
-If you hit one of these while working, reference it rather than expanding your PR's scope.
+`benchmarks/bench_full.py` measures the current physical CPU formulations with
+equal settings and synchronized JAX execution. June 2026 results are historical
+and are not migration acceptance evidence. Accelerator tests are separate.
+Publish Python before an R release requiring its API; coordinate release tags
+without adding monorepo orchestration.

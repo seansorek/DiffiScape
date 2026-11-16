@@ -114,25 +114,12 @@ default_intensity_config <- function() {
 #' @return A list with `z_obs`, `z_int`, `c_scale`, `mu`, `sigma`.
 #' @export
 standardise_connectivity <- function(C_obs, C_int, c_scale = NULL) {
-
-  C_obs <- pmax(C_obs, 0)
-  C_int <- pmax(C_int, 0)
-
-  if (is.null(c_scale)) {
-    pos <- C_obs[C_obs > 0]
-    c_scale <- if (length(pos) > 0) stats::median(pos) else 1
-  }
-
-  log_obs <- log1p(C_obs / c_scale)
-  mu      <- mean(log_obs)
-  sigma   <- stats::sd(log_obs)
-  if (sigma < 1e-10) sigma <- 1
-
-  z_obs <- (log_obs - mu) / sigma
-  z_int <- (log1p(C_int / c_scale) - mu) / sigma
-
-  list(z_obs = z_obs, z_int = z_int,
-       c_scale = c_scale, mu = mu, sigma = sigma)
+  if (!ds_jax_check()) ds_jax_setup()
+  module <- reticulate::import("diffiscape.likelihoods", convert = FALSE)
+  result <- reticulate::py_to_r(module$standardise_connectivity(as.list(C_obs), as.list(C_int), c_scale))
+  result$z_obs <- as.numeric(result$z_obs)
+  result$z_int <- as.numeric(result$z_int)
+  result
 }
 
 
@@ -149,33 +136,27 @@ standardise_connectivity <- function(C_obs, C_int, c_scale = NULL) {
 #' @return A list with `z_obs_resid`, `z_int_resid`, `aux_coefs`,
 #'   `aux_r2`, `aux_model`.
 #' @export
-residualise_connectivity <- function(z_obs, z_int,
-                                     covariates_obs,
-                                     covariates_int) {
+residualise_connectivity <- function(z_obs, z_int, covariates_obs, covariates_int) {
+  if (!ds_jax_check()) ds_jax_setup()
+  module <- reticulate::import("diffiscape.likelihoods", convert = FALSE)
+  result <- reticulate::py_to_r(module$residualise_connectivity(as.list(z_obs), as.list(z_int), covariates_obs, covariates_int))
+  result$z_obs_resid <- as.numeric(result$z_obs_resid)
+  result$z_int_resid <- as.numeric(result$z_int_resid)
+  result$aux_coefs <- stats::setNames(as.numeric(result$aux_coefs), c("(Intercept)", names(covariates_obs)))
+  result$aux_model <- structure(result$aux_model, class = "ds_residualisation")
+  result
+}
 
-  # Build data.frames
-  df_obs <- data.frame(z = z_obs)
-  df_int <- data.frame(dummy = seq_along(z_int))
-  for (nm in names(covariates_obs)) {
-    df_obs[[nm]] <- covariates_obs[[nm]]
-    df_int[[nm]] <- covariates_int[[nm]]
-  }
+#' @export
+coef.ds_residualisation <- function(object, ...) {
+  stats::setNames(as.numeric(object$coefficients), c("(Intercept)", unlist(object$names)))
+}
 
-  fmla <- stats::as.formula(paste("z ~",
-    paste(setdiff(names(df_obs), "z"), collapse = " + ")))
-  fit  <- stats::lm(fmla, data = df_obs)
-  smry <- summary(fit)
-
-  z_obs_resid <- stats::residuals(fit)
-  z_int_resid <- z_int - stats::predict(fit, newdata = df_int)
-
-  list(
-    z_obs_resid = as.numeric(z_obs_resid),
-    z_int_resid = as.numeric(z_int_resid),
-    aux_coefs   = stats::coef(fit),
-    aux_r2      = smry$r.squared,
-    aux_model   = fit
-  )
+#' @export
+predict.ds_residualisation <- function(object, newdata, ...) {
+  if (!ds_jax_check()) ds_jax_setup()
+  module <- reticulate::import("diffiscape.likelihoods", convert = FALSE)
+  as.numeric(reticulate::py_to_r(module$predict_residualisation(unclass(object), as.list(newdata))))
 }
 
 
@@ -191,22 +172,11 @@ residualise_connectivity <- function(z_obs, z_int,
 #'   names in `covariates`.
 #' @return Numeric vector of intensity values.
 #' @export
-compute_intensity <- function(z, alpha, gamma,
-                              covariates = NULL,
-                              betas      = NULL) {
-  log_lambda <- alpha + gamma * z
-
-  if (!is.null(covariates) && !is.null(betas)) {
-    for (nm in names(covariates)) {
-      beta_nm <- betas[nm]
-      if (length(beta_nm) == 0L || is.na(beta_nm)) beta_nm <- 0
-      if (beta_nm != 0) {
-        log_lambda <- log_lambda + beta_nm * covariates[[nm]]
-      }
-    }
-  }
-
-  exp(log_lambda)
+compute_intensity <- function(z, alpha, gamma, covariates = NULL, betas = NULL) {
+  if (!ds_jax_check()) ds_jax_setup()
+  module <- reticulate::import("diffiscape.likelihoods", convert = FALSE)
+  result <- module$compute_intensity(as.list(z), alpha, gamma, covariates, if (!is.null(betas)) as.list(betas) else NULL)
+  as.numeric(reticulate::py_to_r(result$`__array__`()))
 }
 
 
@@ -405,20 +375,8 @@ fit_intensity_nb <- function(connectivity_at_obs,
   # ---- optimise -----------------------------------------------------------
   n_cov   <- length(cov_names)
 
-  inits <- family$init_fn(n_cov)
-
-  opt <- stats::optim(
-    par    = inits$start,
-    fn     = family$negloglik_fn,
-    method = "L-BFGS-B",
-    lower  = inits$lower,
-    upper  = inits$upper,
-    z_obs  = z_obs, z_int = z_int,
-    int_weights = int_weights, obs_weights = obs_weights,
-    cov_obs = cov_obs, cov_int = cov_int, cov_names = cov_names,
-    y_obs   = response,
-    hessian = TRUE
-  )
+  opt <- .fit_family(family, z_obs, z_int, int_weights, obs_weights,
+                       cov_obs, cov_int, cov_names, response)
 
   # ---- extract results ----------------------------------------------------
   n_extra <- family$n_extra_params

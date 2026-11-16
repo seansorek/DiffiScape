@@ -29,7 +29,7 @@ ds_jax_neural_optimize(
 \item{cell_area}{Numeric cell area in square map units.}
 
 \item{model_type}{Character; \code{"mlp"} (default), \code{"conv"},
-\code{"spline_gam"}, or \code{"irl"}.}
+\code{"spline_gam"} (legacy RBF).}
 
 \item{model_config}{Named list of model-specific parameters forwarded
 to the Flax module constructor.}
@@ -48,8 +48,8 @@ A list (converted from the Python dict) with \code{resistance},
 \code{best_loglik}, \code{loss_history}, \code{n_epochs_run}, \code{elapsed}, \code{model_type}.
 }
 \description{
-Calls \code{diffiscape_jax.optimize.run_neural_optimization}, which
-trains a Flax neural network (MLP, Conv, Spline-GAM, or IRL)
+Calls \code{diffiscape.optimize.run_neural_optimization}, which
+trains a Flax neural network (MLP, Conv, or the legacy RBF model)
 to produce a resistance surface that maximises the connectivity-based
 point-process log-likelihood.
 }

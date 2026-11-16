@@ -5,105 +5,45 @@ on:
   push:
     branches: [main, master]
     paths:
-      - 'inst/python/**'
+      - 'python/**'
       - '.github/workflows/python.yml'
   pull_request:
-    branches: [main, master]
     paths:
-      - 'inst/python/**'
+      - 'python/**'
       - '.github/workflows/python.yml'
 
 jobs:
-  lint:
-    name: Lint (ruff)
+  test-jax:
+    name: Python 3.12 (installed JAX package)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
-      - name: Install ruff
-        run: pip install ruff
-
-      - name: Run ruff check
-        run: ruff check inst/python/
-        continue-on-error: true
-
-  test:
-    name: Python ${{ matrix.python-version }} (torch)
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.11', '3.12']
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
+          cache: pip
+          cache-dependency-path: python/constraints-cpu.txt
+      - name: Install tested CPU stack and build packages
+        run: |
+          python -m pip install -c python/constraints-cpu.txt './python[dev]'
+          python -m build python
+          python -m pip install --no-deps --force-reinstall python/dist/*.whl
+      - name: Test installed wheel outside source directory
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -m pytest "$GITHUB_WORKSPACE/python/tests" --cov=diffiscape --cov-report=xml:coverage-jax.xml -v
+      - name: Test source distribution installation
+        working-directory: ${{ runner.temp }}
+        run: |
+          python -m pip install --no-deps --force-reinstall "$GITHUB_WORKSPACE"/python/dist/*.tar.gz
+          python -m pytest "$GITHUB_WORKSPACE/python/tests/test_api.py" -q
+      - uses: actions/upload-artifact@v4
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: 'pip'
-          cache-dependency-path: inst/python/diff_cs/requirements.txt
-
-      - name: Install dependencies
-        run: |
-          pip install torch --index-url https://download.pytorch.org/whl/cpu
-          pip install -r inst/python/diff_cs/requirements.txt pytest-cov
-
-      - name: Run tests with coverage
-        working-directory: inst/python
-        run: |
-          pytest tests/ \
-            --cov=diff_cs \
-            --cov-report=xml:coverage-torch.xml \
-            --cov-report=term-missing \
-            -v
-
+          name: python-distributions
+          path: python/dist/*
       - uses: codecov/codecov-action@v4
-        if: matrix.python-version == '3.11'
         with:
-          files: inst/python/coverage-torch.xml
-          flags: python
-          token: ${{ secrets.CODECOV_TOKEN }}
-          fail_ci_if_error: false
-
-  test-jax:
-    name: Python ${{ matrix.python-version }} (jax)
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.11', '3.12']
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: 'pip'
-          cache-dependency-path: inst/python/diffiscape_jax/requirements.txt
-
-      - name: Install dependencies
-        run: |
-          pip install -r inst/python/diffiscape_jax/requirements.txt pytest-cov
-
-      - name: Run tests with coverage
-        working-directory: inst/python
-        run: |
-          pytest diffiscape_jax/tests/ \
-            --cov=diffiscape_jax \
-            --cov-report=xml:coverage-jax.xml \
-            --cov-report=term-missing \
-            -v
-
-      - uses: codecov/codecov-action@v4
-        if: matrix.python-version == '3.11'
-        with:
-          files: inst/python/coverage-jax.xml
+          files: ${{ runner.temp }}/coverage-jax.xml
           flags: jax
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false

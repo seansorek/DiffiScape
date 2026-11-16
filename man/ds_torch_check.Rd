@@ -2,14 +2,13 @@
 % Please edit documentation in R/torch_bridge.R
 \name{ds_torch_check}
 \alias{ds_torch_check}
-\title{Check whether the PyTorch backend is loaded}
+\title{Check the deprecated backend}
 \usage{
 ds_torch_check()
 }
 \value{
-Logical; \code{TRUE} if \code{\link[=ds_torch_setup]{ds_torch_setup()}} has been called
-successfully.
+FALSE; the Torch implementation is retired.
 }
 \description{
-Check whether the PyTorch backend is loaded
+Check the deprecated backend
 }

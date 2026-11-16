@@ -7,8 +7,8 @@
 predict_surrogate(surrogate, newdata)
 }
 \arguments{
-\item{surrogate}{A \code{"ds_surrogate"} object from \code{\link[=fit_surrogate]{fit_surrogate()}}, or a raw
-\code{\link[DiceKriging:km]{DiceKriging::km()}} object.}
+\item{surrogate}{A \code{"ds_surrogate"} object from \code{\link[=fit_surrogate]{fit_surrogate()}}, or its
+serialized Python \code{model} field. Legacy \code{km} objects must be refitted.}
 
 \item{newdata}{Numeric matrix or data.frame of query points.}
 }

@@ -12,11 +12,6 @@ test_that("ds_jax_sample_advi exists and is a function", {
 })
 
 
-test_that(".build_flax_model exists and is a function", {
-  expect_true(is.function(DiffiScape:::.build_flax_model))
-})
-
-
 test_that(".save_jax_mcmc_artifacts exists and is a function", {
   expect_true(is.function(DiffiScape:::.save_jax_mcmc_artifacts))
 })
@@ -143,18 +138,17 @@ test_that("ds_jax_sample_nuts returns valid structure", {
               "numpyro not installed in active Python env")
   skip_if_not(reticulate::py_module_available("flax"),
               "flax not installed in active Python env")
-  skip("Integration test: requires full JAX + NumPyro stack and is slow")
 
   ds_jax_setup()
 
-  r <- terra::rast(nrows = 6, ncols = 6,
-                   vals = matrix(runif(72), ncol = 2))
-  obs <- data.frame(x = runif(10, -180, 180), y = runif(10, -90, 90))
+  r <- terra::rast(nrows = 2, ncols = 3, xmin = 0, xmax = 3, ymin = 0, ymax = 2,
+    crs = "EPSG:3857", vals = seq(0, 1, length.out = 6))
+  obs <- as.data.frame(terra::xyFromCell(r, c(1, 3, 3, 6)))
 
   result <- ds_jax_sample_nuts(
     basis_stack = r, obs_points = obs,
-    n_samples = 5L, warmup = 3L,
-    model_type = "mlp", model_config = list(hidden_dim = 8L),
+    n_samples = 3L, warmup = 3L, max_treedepth = 2L, radius = 1L, block_size = 1L,
+    model_type = "mlp", model_config = list(hidden_dim = 2L, n_hidden_layers = 1L),
     seed = 42L, verbose = FALSE
   )
 
@@ -181,20 +175,19 @@ test_that("ds_jax_sample_advi returns valid structure", {
               "numpyro not installed in active Python env")
   skip_if_not(reticulate::py_module_available("flax"),
               "flax not installed in active Python env")
-  skip("Integration test: requires full JAX + NumPyro stack and is slow")
 
   ds_jax_setup()
 
-  r <- terra::rast(nrows = 6, ncols = 6,
-                   vals = matrix(runif(72), ncol = 2))
-  obs <- data.frame(x = runif(10, -180, 180), y = runif(10, -90, 90))
+  r <- terra::rast(nrows = 2, ncols = 3, xmin = 0, xmax = 3, ymin = 0, ymax = 2,
+    crs = "EPSG:3857", vals = seq(0, 1, length.out = 6))
+  obs <- as.data.frame(terra::xyFromCell(r, c(1, 3, 3, 6)))
 
-  result <- ds_jax_sample_advi(
+  result <- suppressWarnings(ds_jax_sample_advi(
     basis_stack = r, obs_points = obs,
-    n_samples = 5L, max_iter = 10L,
-    model_type = "mlp", model_config = list(hidden_dim = 8L),
+    n_samples = 3L, max_iter = 3L, radius = 1L, block_size = 1L,
+    model_type = "mlp", model_config = list(hidden_dim = 2L, n_hidden_layers = 1L),
     seed = 42L, verbose = FALSE
-  )
+  ))
 
   expect_type(result, "list")
   expected_names <- c("samples_effective_loglinear", "samples_alpha",

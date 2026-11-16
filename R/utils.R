@@ -82,10 +82,9 @@ extract_raster_values <- function(raster, points) {
 #' @return A named list with `AIC`, `BIC`, and `AICc`.
 #' @export
 compute_information_criteria <- function(loglik, k, n) {
-  aic <- -2 * loglik + 2 * k
-  bic <- -2 * loglik + log(n) * k
-  aicc <- aic + (2 * k * (k + 1)) / max(n - k - 1, 1)
-  list(AIC = aic, BIC = bic, AICc = aicc)
+  if (!ds_jax_check()) ds_jax_setup()
+  module <- reticulate::import("diffiscape.diagnostics", convert = FALSE)
+  reticulate::py_to_r(module$information_criteria(loglik, k, n))
 }
 
 
@@ -175,4 +174,12 @@ validate_raster_alignment <- function(...) {
     n_valid    = sum(valid_mask),
     n_obs      = sum(obs_counts_valid)
   )
+}
+
+.as_backend_integer <- function(value, name) {
+  if (!is.numeric(value) || length(value) != 1L || !is.finite(value) ||
+      abs(value) > .Machine$integer.max || value != trunc(value)) {
+    stop(name, " must be a whole number in the R integer range.", call. = FALSE)
+  }
+  as.integer(value)
 }

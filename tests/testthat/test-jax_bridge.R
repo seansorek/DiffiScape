@@ -32,15 +32,12 @@ test_that("ds_jax_call rejects unknown module names", {
 })
 
 
-test_that("Python backend is vendored under inst/python/diffiscape_jax/", {
-  expected <- c("__init__.py", "core.py", "window.py")
-  for (f in expected) {
-    p <- system.file("python", "diffiscape_jax", f, package = "DiffiScape")
-    expect_true(nzchar(p),
-                info = sprintf("missing inst/python/diffiscape_jax/%s", f))
-    expect_true(file.exists(p),
-                info = sprintf("missing inst/python/diffiscape_jax/%s", f))
-  }
+test_that("JAX package is installed independently", {
+  skip_on_cran()
+  skip_if_not_installed("reticulate")
+  skip_if_not(reticulate::py_module_available("diffiscape"))
+  ds_jax_setup(force = TRUE)
+  expect_equal(reticulate::py_to_r(DiffiScape:::.jax_env$package$`__version__`), "0.1.0")
 })
 
 

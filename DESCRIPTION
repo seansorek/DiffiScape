@@ -4,33 +4,28 @@ Version: 0.1.0
 Authors@R: 
     person("Sean", "Sorek", , "sssorek1@gmail.com", role = c("aut", "cre"))
 Description: Gradient-based and surrogate-based optimization of landscape
-    connectivity surfaces. Supports PyTorch (default) and JAX backends for
-    differentiable circuit-theory connectivity computation, with automatic
-    differentiation to fit Poisson Point Process models of animal movement.
-    Users supply environmental rasters and GPS locations; DiffiScape estimates
-    resistance parameters that best explain observed spatial intensity. Supports
-    negative binomial and GAM-based intensity models via 'mgcv'. Requires
-    Python via 'reticulate'; PyTorch is required for the default backend, JAX
-    (via JAXScape, Flax, NumPyro) for JAX solver modes.
+    connectivity surfaces using the independently installed 'diffiscape' Python
+    package. JAX, JAXScape, Flax, Optax and NumPyro provide differentiable circuit
+    calculations, resistance fitting and posterior inference. Users supply
+    environmental rasters and GPS locations; the R interface preserves spatial
+    metadata and plots. Built-in intensity families share the Python core;
+    GAM fitting via 'mgcv' and custom R callbacks remain R-only extensions.
 License: GPL (>= 3)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 Imports:
+    reticulate (>= 1.41),
     terra,
     mgcv,
     numDeriv,
-    DiceKriging,
-    lhs,
     Matrix,
     tools,
     stats,
     graphics,
     grDevices,
-    methods,
     utils,
     withr
 Suggests:
-    reticulate,
     ggplot2,
     spdep,
     testthat (>= 3.0.0),
@@ -38,4 +33,4 @@ Suggests:
     rmarkdown
 VignetteBuilder: knitr
 Config/testthat/edition: 3
-Config/roxygen2/version: 8.0.0
+Config/roxygen2/version: 8.1.1

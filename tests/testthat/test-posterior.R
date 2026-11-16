@@ -518,59 +518,20 @@ test_that("loo_cv_surrogate reports n_failed = 0 when all LOO fits succeed", {
   expect_equal(length(res$observed), length(opt_result$y_evaluated))
 })
 
-test_that("loo_cv_surrogate surfaces n_failed and shrinks vectors when LOO fits fail", {
-  skip_on_cran()
-  opt_result <- .make_loo_opt_result(seed = 4)
-  n <- length(opt_result$y_evaluated)
-
-  # Fail two refits at the public fitting boundary.
-  real_fit_surrogate <- fit_surrogate
-  call_count <- 0L
-  local_mocked_bindings(
-    fit_surrogate = function(X, y, type = "gp", config = list()) {
-      call_count <<- call_count + 1L
-      if (call_count %in% c(1L, 3L)) stop("forced failure")
-      real_fit_surrogate(X, y, type = type, config = config)
-    },
-    .package = "DiffiScape"
-  )
-
-  res <- loo_cv_surrogate(opt_result)
-
-  expect_identical(res$n_failed, 2L)
-  expect_equal(length(res$observed), n - 2L)
-  expect_equal(length(res$predicted), n - 2L)
-  expect_equal(length(res$residuals), n - 2L)
-  expect_equal(res$residuals, res$observed - res$predicted)
-})
-
-
-test_that("loo_cv_surrogate threads opt_result$config$surrogate_config through to LOO refits", {
-  skip_on_cran()
-  opt_result <- .make_loo_opt_result(seed = 5)
-  opt_result$surrogate <- structure(
-    list(type = "gp", model = opt_result$surrogate, predictor_names = colnames(opt_result$X_evaluated)),
-    class = "ds_surrogate"
-  )
-  opt_result$config <- list(surrogate_type = "gp",
-                            surrogate_config = list(nugget.estim = FALSE, nugget = 0.5))
-
-  seen_configs <- list()
-  real_fit_surrogate <- fit_surrogate
-  local_mocked_bindings(
-    fit_surrogate = function(X, y, type = c("gp", "rf"), config = list()) {
-      seen_configs[[length(seen_configs) + 1L]] <<- config
-      real_fit_surrogate(X, y, type = type, config = config)
-    },
-    .package = "DiffiScape"
-  )
-
-  loo_cv_surrogate(opt_result)
-
-  expect_true(length(seen_configs) > 0)
-  for (cfg in seen_configs) {
-    expect_identical(cfg, list(nugget.estim = FALSE, nugget = 0.5))
-  }
+test_that("loo_cv_surrogate delegates refits and configuration to Python", {
+  captured <- NULL
+  local_mocked_bindings(.py_surrogate = function(fn, X, y, config) {
+    captured <<- list(fn = fn, X = X, y = y, config = config)
+    list(observed = c(1, 2), predicted = c(.9, 2.1), residuals = c(.1, -.1),
+      rmse = .1, r_squared = .96, coverage_95 = 1, n_failed = 2L)
+  }, .package = "DiffiScape")
+  result <- loo_cv_surrogate(list(surrogate = list(engine = "smt"),
+    X_evaluated = matrix(1:8, ncol = 2), y_evaluated = c(1, 2, NA, 4),
+    config = list(surrogate_config = list(eval_noise = FALSE, noise0 = .5))))
+  expect_equal(captured$fn, "loo_cv")
+  expect_identical(captured$config, list(eval_noise = FALSE, noise0 = .5))
+  expect_true(is.na(captured$y[3]))
+  expect_identical(result$n_failed, 2L)
 })
 
 

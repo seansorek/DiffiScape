@@ -1,8 +1,8 @@
 # Tests for R/pipeline.R
 
-test_that("torch is the default solver", {
-  expect_identical(eval(formals(ds_optimize)$solver)[[1]], "torch")
-  expect_identical(eval(formals(diffiscape)$solver)[[1]], "torch")
+test_that("adam is the default solver", {
+  expect_identical(eval(formals(ds_optimize)$solver)[[1]], "adam")
+  expect_identical(eval(formals(diffiscape)$solver)[[1]], "adam")
 })
 
 test_that("ds_load_data reads CSV correctly", {

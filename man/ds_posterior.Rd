@@ -18,7 +18,9 @@ ds_posterior(
   available_points = NULL,
   available_covariates = NULL,
   link = link_exp(),
-  family = NULL
+  family = NULL,
+  method = "nuts",
+  ...
 )
 }
 \arguments{
@@ -55,10 +57,16 @@ supplied and the intensity model includes covariates.}
 \item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}
 
 \item{family}{An \link{intensity_family} object, or \code{NULL}.}
+
+\item{method}{Physical inference: \code{"nuts"} or \code{"advi"}.}
+
+\item{...}{Physical NumPyro settings such as \code{warmup}, \code{max_treedepth},
+\code{target_accept}, \code{max_iter}, or \code{fix_smoothing}.}
 }
 \value{
 A list with \code{laplace}, \code{samples}, \code{summary}.
 }
 \description{
-Wrapper around Laplace approximation + Monte Carlo composition.
+Physical fits use NumPyro with the fitted model, penalties, and proper priors.
+R-only profile objectives retain Laplace approximation and Monte Carlo composition.
 }

@@ -20,5 +20,5 @@ Invisible \code{TRUE}.
 }
 \description{
 Convenience wrapper around \code{\link[reticulate:py_install]{reticulate::py_install()}} that installs the
-packages required by the \code{diffiscape_jax} module.
+packages required by the \code{diffiscape} module.
 }

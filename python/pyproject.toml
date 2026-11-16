@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "diffiscape"
+version = "0.1.0"
+description = "Differentiable landscape connectivity and resistance fitting"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE.md"]
+authors = [{name = "Sean Sorek", email = "sssorek1@gmail.com"}]
+dependencies = [
+  "jax>=0.11,<0.13", "jaxlib>=0.11,<0.13", "numpy>=2.4,<3", "scipy>=1.16,<2",
+  "jaxscape[amjax]>=0.0.15,<0.0.16", "amjax>=0.0.3,<0.0.4",
+  "lineax>=0.1.1,<0.2", "flax>=0.12,<0.13", "optax>=0.2.8,<0.3",
+  "numpyro>=0.22,<0.23",
+  "smt>=2.15,<2.16",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=9,<10", "pytest-cov>=7,<8", "build>=1.2,<2"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

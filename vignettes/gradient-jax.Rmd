@@ -1,8 +1,8 @@
 ---
-title: "Gradient-Based Optimization via JAX"
+title: "Physical and legacy window gradient fitting"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Gradient-Based Optimization via JAX}
+  %\VignetteIndexEntry{Physical and legacy window gradient fitting}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -11,139 +11,28 @@ vignette: >
 knitr::opts_chunk$set(echo = TRUE, eval = FALSE, message = FALSE, warning = FALSE)
 ```
 
-This vignette demonstrates the gradient-based pipeline: L-BFGS optimization of
-resistance parameters using exact gradients computed via JAX (JAX automatic
-differentiation) through a differentiable circuit solver. Compared to the
-surrogate approach in vignette 06, this pipeline converges in minutes rather
-than hours, but is sensitive to initialisation and local optima.
+The default physical fit uses global absorption. The legacy window formulation accumulates effective resistance maps; it is a separate scientific model, not physical current.
 
-Internally DiffiScape uses a logit reparameterization of the bounded resistance
-parameters and an adaptive standardization restart loop to improve convergence.
+Install the matching Python package as described in the README and set
+RETICULATE_PYTHON before starting R. These synthetic examples use a projected
+CPU grid. Short runs demonstrate the API; assess convergence and sampler
+diagnostics before scientific use.
 
-## Setup
-
-```{r paths}
+```{r example}
 library(DiffiScape)
 library(terra)
-
-obs_data_path <- "path/to/train_points.rds"
-nlcd_dir      <- "path/to/nlcd_data/"
-output_dir    <- "output/gradient"
-dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
-```
-
-## Load data
-
-```{r load-data}
-obs_points  <- readRDS(obs_data_path)
-basis_stack <- ds_create_basis(nlcd_dir, pattern = "*.tif", rescale = TRUE)
-```
-
-## Initialise JAX
-
-```{r init-jax}
-ds_jax_setup()
-```
-
-## Configure
-
-The negative binomial intensity model is more robust than Poisson when counts
-are overdispersed. Connectivity is computed by the JAXScape circuit-theory
-solver with JAX automatic differentiation gradients.
-
-```{r config}
+basis <- rast(nrows = 4L, ncols = 5L, xmin = 0, xmax = 5,
+              ymin = 0, ymax = 4, crs = "EPSG:3857",
+              vals = seq(0, 1, length.out = 20))
+pts <- as.data.frame(xyFromCell(basis, c(1, 3, 3, 5, 8, 12, 15, 18, 20)))
+output_dir <- tempdir()
+results <- ds_optimize(basis, pts, solver = "lbfgs",
+  config = list(fit = list(n_epochs = 5L, source_spacing = 2L)),
+  bounds = list(r_0 = c(1, 5), z_1 = c(-2, 2)), output_dir = output_dir)
 cfg <- default_optimizer_config()
-cfg$distribution  <- "negbin"
-cfg$connectivity  <- list(radius = 15L, block_size = 5L)
-
-icfg <- default_intensity_config()
-```
-
-## Warm-start from surrogate results (optional)
-
-If you ran the surrogate pipeline (vignette 06), you can warm-start gradient
-optimization from those results to save time.
-
-```{r warm-start}
-surrogate_summary <- readRDS("output/surrogate/final_summary.rds")
-theta_init <- surrogate_summary$resistance_params   # named numeric vector
-```
-
-## Optimise
-
-`solver = "gradient"` selects the JAX gradient backend. The optimiser
-applies L-BFGS with logit reparameterization and restarts if connectivity
-standardization constants shift during the run.
-
-```{r optimize}
-opt <- ds_optimize(
-  basis_stack      = basis_stack,
-  obs_points       = obs_points,
-  config           = cfg,
-  intensity_config = icfg,
-  output_dir       = output_dir,
-  solver           = "gradient"
-)
-
-cat("Best log-likelihood:", opt$best_loglik, "\n")
-cat("Convergence message:", opt$convergence, "\n")
-print(opt$best_params)
-```
-
-## Final connectivity and intensity
-
-```{r connectivity}
-resistance   <- create_resistance_surface(opt$best_params, basis_stack)
-jax_result   <- ds_jax_connectivity(resistance, radius = 15L, block_size = 5L)
-connectivity <- jax_result$cum_current
-
-terra::writeRaster(resistance,   file.path(output_dir, "optimized_resistance.tif"),  overwrite = TRUE)
-terra::writeRaster(connectivity, file.path(output_dir, "optimized_connectivity.tif"), overwrite = TRUE)
-```
-
-```{r fit-intensity}
-intensity_fit <- ds_fit_intensity(
-  opt_result         = opt,
-  basis_stack        = basis_stack,
-  obs_points         = obs_points,
-  omniscape_settings = list(radius = 15L, block_size = 5L),
-  intensity_config      = icfg,
-  solver                = "gradient"
-)
-
-cat("Intensity log-likelihood:", intensity_fit$loglik, "\n")
-```
-
-```{r predict}
-intensity_map <- ds_predict(intensity_fit, connectivity)
-
-terra::writeRaster(intensity_map, file.path(output_dir, "predicted_intensity.tif"), overwrite = TRUE)
-```
-
-## Diagnostics
-
-```{r diagnose}
-diag <- ds_diagnose(intensity_fit, obs_points, connectivity, plot = TRUE)
-```
-
-## Extract connectivity at observations
-
-```{r extract-connectivity}
-C_obs <- extract_connectivity(connectivity, obs_points)
-cat("Mean connectivity at observations:", mean(C_obs, na.rm = TRUE), "\n")
-```
-
-## Save
-
-```{r save}
-saveRDS(
-  list(
-    resistance_params = opt$best_params,
-    intensity_params  = intensity_fit$intensity_params,
-    loglik            = intensity_fit$loglik,
-    convergence       = opt$convergence,
-    n_restarts        = opt$n_restarts
-  ),
-  file.path(output_dir, "final_summary.rds")
-)
+cfg$n_iter <- 3L
+cfg$omniscape$radius <- 1L
+cfg$omniscape$block_size <- 1L
+legacy <- ds_optimize(basis, pts, solver = "gradient", config = cfg,
+  bounds = list(r_0 = c(1, 5), z_1 = c(-2, 2)), output_dir = output_dir)
 ```
