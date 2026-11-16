@@ -1,6 +1,6 @@
 Package: DiffiScape
 Title: Differentiable Landscape Connectivity Optimization
-Version: 0.1.0
+Version: 0.3.0
 Authors@R: 
     person("Sean", "Sorek", , "sssorek1@gmail.com", role = c("aut", "cre"))
 Description: Fits landscape resistance and animal occurrence intensity from

@@ -5,7 +5,7 @@
 .onLoad <- function(libname, pkgname) {
 
   if (requireNamespace("reticulate", quietly = TRUE)) {
-    reticulate::py_require("diffiscape>=0.1.0,<0.2", python_version = ">=3.12")
+    reticulate::py_require("diffiscape>=0.3.0,<0.4", python_version = ">=3.12")
     .jax_env$package <- reticulate::import("diffiscape", delay_load = TRUE,
                                            convert = FALSE)
   }
