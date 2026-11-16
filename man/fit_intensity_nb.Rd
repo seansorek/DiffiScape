@@ -56,7 +56,7 @@ finite negative or zero values are valid observations.}
 \value{
 A list with \code{estimates}, \code{se}, \code{loglik}, \code{convergence},
 \code{c_scale}, \code{log_conn_mean}, \code{log_conn_sd},
-\code{residualisation_info}.
+\code{residualisation_info}, and the fitted \code{family}.
 }
 \description{
 Inner-loop MLE for \code{alpha}, \code{gamma}, optional covariate betas, and NB

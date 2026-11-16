@@ -13,13 +13,13 @@ posterior_sample(
   n_inner = 5L,
   bounds = NULL,
   omniscape_settings = list(),
-  intensity_config = default_intensity_config(),
+  intensity_config = NULL,
   covariates_obs = NULL,
   covariates_rasters = NULL,
   residualise = FALSE,
   available_points = NULL,
   available_covariates = NULL,
-  link = link_exp(),
+  link = NULL,
   family = NULL,
   seed = 42L
 )
@@ -39,9 +39,11 @@ posterior_sample(
 
 \item{bounds}{Named list of parameter bounds.}
 
-\item{omniscape_settings}{List with connectivity settings.}
+\item{omniscape_settings}{Named window settings that override saved
+optimization settings.}
 
-\item{intensity_config}{List from \code{\link[=default_intensity_config]{default_intensity_config()}}.}
+\item{intensity_config}{Intensity config. \code{NULL} uses the saved config or
+\code{\link[=default_intensity_config]{default_intensity_config()}}.}
 
 \item{covariates_obs}{Named list of covariate vectors.}
 
@@ -59,9 +61,10 @@ integration.}
 \code{available_points} locations.  Required when \code{available_points} is
 supplied and the intensity model includes covariates.}
 
-\item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}
+\item{link}{A \link{resistance_link} object. \code{NULL} uses the saved link or \code{\link[=link_exp]{link_exp()}}.}
 
-\item{family}{An \link{intensity_family} object, or \code{NULL}.}
+\item{family}{An \link{intensity_family} object. \code{NULL} uses the saved optimizer
+family or the family from the intensity config or distribution.}
 
 \item{seed}{Random seed.}
 }

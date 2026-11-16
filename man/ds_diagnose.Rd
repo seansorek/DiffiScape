@@ -19,7 +19,8 @@ ds_diagnose(
 
 \item{obs_points}{Data.frame with \verb{x, y}.}
 
-\item{connectivity}{A \link[terra:SpatRaster]{terra::SpatRaster}.}
+\item{connectivity}{A \link[terra:SpatRaster]{terra::SpatRaster}. For a physical fit, its dimensions,
+valid-cell mask, and cell area must match the fitted grid.}
 
 \item{intensity_config}{Intensity config.}
 

@@ -433,6 +433,17 @@ optimize_resistance_gradient <- function(basis_stack,
 
 # --------------- Full-model evaluation function -----------------------------
 
+.profile_model_settings <- function(config, omniscape_settings = list(),
+                                    intensity_config = NULL, link = NULL, family = NULL) {
+  intensity_config <- intensity_config %||% config$intensity_config %||% default_intensity_config()
+  list(
+    omniscape = utils::modifyList(config$omniscape %||% list(), omniscape_settings),
+    intensity_config = intensity_config,
+    link = link %||% config$resistance_link %||% link_exp(),
+    family = family %||% config$family %||% intensity_config$family
+  )
+}
+
 #' Evaluate the full model for one set of resistance parameters
 #'
 #' Creates a resistance surface, runs connectivity computation, and fits
@@ -463,7 +474,8 @@ optimize_resistance_gradient <- function(basis_stack,
 #'   supplied and the intensity model includes covariates.
 #' @param .min_obs Internal minimum valid observation count for Laplace refits.
 #' @return A list with `loglik`, `intensity_params`, `intensity_se`,
-#'   `hessian`, `total_time`, `omniscape_time`, `convergence`, `distribution`.
+#'   `hessian`, `total_time`, `omniscape_time`, `convergence`, `distribution`,
+#'   and the `connectivity` raster.
 #' @export
 evaluate_full_model <- function(resistance_params,
                                 basis_stack,
@@ -606,6 +618,7 @@ evaluate_full_model <- function(resistance_params,
     hessian          = int_fit$hessian,
     convergence      = int_fit$convergence,
     distribution     = distribution,
+    connectivity     = connectivity,
     total_time       = elapsed,
     omniscape_time   = omni$elapsed_seconds
   )
@@ -888,12 +901,13 @@ optimize_resistance <- function(basis_stack,
   if (file.exists(log_file)) unlink(log_file)
   eval_counter <- new.env(parent = emptyenv())
   eval_counter$n <- 0L
+  profile <- .profile_model_settings(config, intensity_config = intensity_config)
   objective <- function(theta) {
     if (inherits(theta, "python.builtin.object")) theta <- reticulate::py_to_r(theta)
-    .outer_objective(as.numeric(theta), basis_stack, obs_points, config$omniscape,
-      eval_counter, log_file, config$distribution, intensity_config,
+    .outer_objective(as.numeric(theta), basis_stack, obs_points, profile$omniscape,
+      eval_counter, log_file, config$distribution, profile$intensity_config,
       covariates_obs, covariates_rasters, residualise,
-      link = config$resistance_link %||% link_exp(), family = config$family,
+      link = profile$link, family = profile$family,
       available_points = available_points, available_covariates = available_covariates)
   }
   if (!ds_jax_check()) ds_jax_setup()
@@ -912,6 +926,7 @@ optimize_resistance <- function(basis_stack,
   result$bounds <- bounds
   result$distribution <- config$distribution
   result$config <- config
+  result$config$intensity_config <- profile$intensity_config
   saveRDS(result, file.path(output_dir, "optimization_results.rds"))
   result
 }

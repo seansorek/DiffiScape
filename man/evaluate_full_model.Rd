@@ -64,7 +64,8 @@ supplied and the intensity model includes covariates.}
 }
 \value{
 A list with \code{loglik}, \code{intensity_params}, \code{intensity_se},
-\code{hessian}, \code{total_time}, \code{omniscape_time}, \code{convergence}, \code{distribution}.
+\code{hessian}, \code{total_time}, \code{omniscape_time}, \code{convergence}, \code{distribution},
+and the \code{connectivity} raster.
 }
 \description{
 Creates a resistance surface, runs connectivity computation, and fits

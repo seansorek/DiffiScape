@@ -9,14 +9,14 @@ ds_fit_intensity(
   basis_stack,
   obs_points,
   omniscape_settings = list(),
-  intensity_config = default_intensity_config(),
+  intensity_config = NULL,
   covariates_obs = NULL,
   covariates_rasters = NULL,
   residualise = FALSE,
   available_points = NULL,
   available_covariates = NULL,
   solver = c("surrogate", "gradient", "adam", "lbfgs", "enzyme", "torch"),
-  link = link_exp(),
+  link = NULL,
   family = NULL
 )
 }
@@ -27,9 +27,11 @@ ds_fit_intensity(
 
 \item{obs_points}{Data.frame with \verb{x, y}.}
 
-\item{omniscape_settings}{List of Omniscape settings.}
+\item{omniscape_settings}{Named window settings that override settings
+saved with the optimization result.}
 
-\item{intensity_config}{Intensity config.}
+\item{intensity_config}{Intensity config. \code{NULL} uses the saved config or
+\code{\link[=default_intensity_config]{default_intensity_config()}}.}
 
 \item{covariates_obs}{Named list of covariate vectors.}
 
@@ -53,9 +55,10 @@ The deprecated \code{"enzyme"} aliases \code{"gradient"}. For \code{"adam"}, \co
 and the deprecated \code{"torch"} translation, use the intensity fit already
 returned by \code{\link[=ds_optimize]{ds_optimize()}} or \code{\link[=run_jax_pipeline]{run_jax_pipeline()}}.}
 
-\item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}
+\item{link}{A \link{resistance_link} object. \code{NULL} uses the saved link or \code{\link[=link_exp]{link_exp()}}.}
 
-\item{family}{An \link{intensity_family} object, or \code{NULL}.}
+\item{family}{An \link{intensity_family} object. \code{NULL} uses the saved optimizer
+family or the family from the intensity config or distribution.}
 }
 \value{
 Result from \code{\link[=evaluate_full_model]{evaluate_full_model()}}.

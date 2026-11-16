@@ -210,7 +210,7 @@ compute_intensity <- function(z, alpha, gamma, covariates = NULL, betas = NULL) 
 #'   finite negative or zero values are valid observations.
 #' @return A list with `estimates`, `se`, `loglik`, `convergence`,
 #'   `c_scale`, `log_conn_mean`, `log_conn_sd`,
-#'   `residualisation_info`.
+#'   `residualisation_info`, and the fitted `family`.
 #' @export
 fit_intensity_nb <- function(connectivity_at_obs,
                              connectivity_raster,
@@ -450,7 +450,8 @@ fit_intensity_nb <- function(connectivity_at_obs,
     log_conn_sd      = std$sigma,
     is_residualised  = !is.null(resid_info),
     residualisation_info = resid_info,
-    hessian          = opt$hessian
+    hessian          = opt$hessian,
+    family           = family
   )
 }
 
@@ -683,6 +684,43 @@ fit_intensity_gam <- function(connectivity_at_obs,
 
 # ===================== INTENSITY PREDICTION =================================
 
+.prepare_intensity_prediction <- function(fit, connectivity_raster, covariates_rasters) {
+  connectivity <- terra::values(connectivity_raster)[, 1L]
+  valid <- !is.na(connectivity)
+  covariates <- lapply(covariates_rasters, function(raster) {
+    values <- terra::values(raster)[valid, 1L]
+    pmax(pmin(values, 1), 0)
+  })
+
+  connectivity <- pmax(connectivity[valid], fit$min_connectivity %||% 0)
+  z <- (log1p(connectivity / fit$c_scale) - fit$log_conn_mean) / fit$log_conn_sd
+
+  if (isTRUE(fit$is_residualised) && !is.null(fit$residualisation_info)) {
+    aux_model <- fit$residualisation_info$aux_model
+    newdata <- data.frame(z = z)
+    for (name in setdiff(names(stats::coef(aux_model)), "(Intercept)")) {
+      newdata[[name]] <- covariates[[name]] %||% rep(0, length(z))
+    }
+    z <- z - as.numeric(stats::predict(aux_model, newdata = newdata))
+  }
+
+  list(valid = valid, z = z, covariates = covariates)
+}
+
+.predict_intensity_values <- function(estimates, z, covariates) {
+  estimates <- as.list(estimates)
+  alpha <- estimates[["alpha"]]
+  if (is.null(alpha) || is.na(alpha)) alpha <- 0
+  log_intensity <- alpha + estimates[["gamma"]] * z
+  for (name in names(covariates)) {
+    beta <- estimates[[paste0("beta_", name)]]
+    if (!is.null(beta) && !is.na(beta)) {
+      log_intensity <- log_intensity + beta * covariates[[name]]
+    }
+  }
+  exp(log_intensity)
+}
+
 #' Predict intensity surface from a fitted model
 #'
 #' @param fit Result from [fit_intensity_nb()] or [fit_intensity_gam()].
@@ -702,47 +740,11 @@ predict_intensity <- function(fit,
                                   covariates_rasters))
   }
 
-  # Parametric prediction
-  alpha_raw <- fit$estimates[["alpha"]]
-  alpha <- if (is.null(alpha_raw) || is.na(alpha_raw)) 0 else alpha_raw
-  gamma <- fit$estimates[["gamma"]]
-
-  C_vals <- terra::values(connectivity_raster)
-  mc     <- fit$min_connectivity %||% 0
-  C_safe <- pmax(C_vals, mc)
-  z_vals <- (log1p(C_safe / fit$c_scale) - fit$log_conn_mean) /
-            fit$log_conn_sd
-
-  # Apply residualisation if it was used at fit time (#29)
-  if (isTRUE(fit$is_residualised) && !is.null(fit$residualisation_info)) {
-    aux_mod <- fit$residualisation_info$aux_model
-    nd <- data.frame(dummy = seq_along(z_vals))
-    nd$z <- z_vals
-    for (nm in setdiff(names(stats::coef(aux_mod)), "(Intercept)")) {
-      if (!is.null(covariates_rasters) && nm %in% names(covariates_rasters)) {
-        nd[[nm]] <- as.numeric(pmax(pmin(terra::values(covariates_rasters[[nm]]), 1), 0))
-      } else {
-        nd[[nm]] <- rep(0, length(z_vals))
-      }
-    }
-    z_vals <- z_vals - as.numeric(stats::predict(aux_mod, newdata = nd))
-  }
-
-  log_lambda <- alpha + gamma * z_vals
-
-  # Add covariate contributions
-  if (!is.null(covariates_rasters)) {
-    for (nm in names(covariates_rasters)) {
-      beta_nm <- fit$estimates[[paste0("beta_", nm)]]
-      if (!is.null(beta_nm) && !is.na(beta_nm)) {
-        cv <- pmax(pmin(terra::values(covariates_rasters[[nm]]), 1), 0)
-        log_lambda <- log_lambda + beta_nm * cv
-      }
-    }
-  }
-
+  data <- .prepare_intensity_prediction(fit, connectivity_raster, covariates_rasters)
+  intensity <- rep(NA_real_, length(data$valid))
+  intensity[data$valid] <- .predict_intensity_values(fit$estimates, data$z, data$covariates)
   out <- connectivity_raster[[1]]
-  terra::values(out) <- exp(log_lambda)
+  terra::values(out) <- intensity
   names(out) <- "intensity"
   out
 }
@@ -800,41 +802,18 @@ fit_intensity_selection <- function(connectivity_at_obs,
                                    covariates_rasters) {
 
   gam_mod <- fit$gam_model
-  coords  <- terra::crds(connectivity_raster, na.rm = FALSE)
-  C_all   <- terra::values(connectivity_raster)
-
-  valid <- !is.na(C_all)
-  mc    <- fit$min_connectivity %||% 0
-  C_v   <- pmax(C_all[valid], mc)
-  z_v   <- (log1p(C_v / fit$c_scale) - fit$log_conn_mean) / fit$log_conn_sd
-
-  # Apply residualisation if it was used at fit time (#29)
-  if (isTRUE(fit$is_residualised) && !is.null(fit$residualisation_info)) {
-    aux_mod <- fit$residualisation_info$aux_model
-    aux_nd <- data.frame(dummy = seq_along(z_v))
-    aux_nd$z <- z_v
-    for (nm in setdiff(names(stats::coef(aux_mod)), "(Intercept)")) {
-      if (!is.null(covariates_rasters) && nm %in% names(covariates_rasters)) {
-        cv <- as.numeric(terra::values(covariates_rasters[[nm]]))
-        aux_nd[[nm]] <- pmax(pmin(cv[valid], 1), 0)
-      } else {
-        aux_nd[[nm]] <- rep(0, length(z_v))
-      }
-    }
-    z_v <- z_v - as.numeric(stats::predict(aux_mod, newdata = aux_nd))
-  }
+  data <- .prepare_intensity_prediction(fit, connectivity_raster, covariates_rasters)
+  valid <- data$valid
+  coords <- terra::xyFromCell(connectivity_raster, which(valid))
 
   nd <- data.frame(
-    connectivity = z_v,
-    x_coord      = coords[valid, 1],
-    y_coord      = coords[valid, 2]
+    connectivity = data$z,
+    x_coord      = coords[, 1],
+    y_coord      = coords[, 2]
   )
 
-  if (!is.null(covariates_rasters)) {
-    for (nm in names(covariates_rasters)) {
-      cv <- terra::values(covariates_rasters[[nm]])
-      nd[[nm]] <- pmax(pmin(cv[valid], 1), 0)
-    }
+  for (name in names(data$covariates)) {
+    nd[[name]] <- data$covariates[[name]]
   }
 
   # Early error when the GAM expects covariates that are not in newdata
@@ -849,7 +828,7 @@ fit_intensity_selection <- function(connectivity_at_obs,
 
   pred_link <- stats::predict(gam_mod, newdata = nd, type = "response")
 
-  out_v <- rep(NA_real_, length(C_all))
+  out_v <- rep(NA_real_, length(valid))
   out_v[valid] <- as.numeric(pred_link)
   out <- connectivity_raster[[1]]
   terra::values(out) <- out_v

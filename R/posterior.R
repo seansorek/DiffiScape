@@ -30,9 +30,10 @@
 #'   `TRUE` automatically when `opt_result` has no `$surrogate` (i.e., from
 #'   [optimize_resistance_gradient()]).
 #' @param step Finite-difference step size for Hessian computation.
-#' @param omniscape_settings Named list of solver overrides: `radius`
-#'   (default `13L`) and `block_size` (default `5L`). Used when `refit = TRUE`.
-#' @param intensity_config Optional [default_intensity_config()] list.
+#' @param omniscape_settings Named window settings that override saved
+#'   optimization settings when `refit = TRUE`.
+#' @param intensity_config Intensity config. `NULL` uses the saved config or
+#'   [default_intensity_config()].
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param residualise Logical.
@@ -44,8 +45,9 @@
 #' @param available_covariates Named list of covariate vectors at
 #'   `available_points` locations.  Required when `available_points` is
 #'   supplied and the intensity model includes covariates.
-#' @param link A [resistance_link] object (default [link_exp()]).
-#' @param family An [intensity_family] object, or `NULL`.
+#' @param link A [resistance_link] object. `NULL` uses the saved link or [link_exp()].
+#' @param family An [intensity_family] object. `NULL` uses the saved optimizer
+#'   family or the family from the intensity config or distribution.
 #' @return A list with `mode`, `covariance`, `precision`, `std_error`.
 #' @export
 laplace_resistance <- function(opt_result,
@@ -54,13 +56,13 @@ laplace_resistance <- function(opt_result,
                                refit                = TRUE,
                                step                 = 1e-3,
                                omniscape_settings   = list(),
-                               intensity_config     = default_intensity_config(),
+                               intensity_config     = NULL,
                                covariates_obs       = NULL,
                                covariates_rasters   = NULL,
                                residualise          = FALSE,
                                available_points     = NULL,
                                available_covariates = NULL,
-                               link                 = link_exp(),
+                               link                 = NULL,
                                family               = NULL) {
 
   n_basis  <- length(opt_result$bounds) - 1L
@@ -97,20 +99,22 @@ laplace_resistance <- function(opt_result,
 
   } else if (refit && !is.null(basis_stack) && !is.null(obs_points)) {
     n_basis <- terra::nlyr(basis_stack)
+    profile <- .profile_model_settings(opt_result$config, omniscape_settings,
+                                       intensity_config, link, family)
     refit_fn <- function(theta) {
       result <- evaluate_full_model(
         resistance_params    = params_vector_to_list(theta, n_basis),
         basis_stack          = basis_stack,
         obs_points           = obs_points,
         distribution         = opt_result$distribution,
-        omniscape_settings   = omniscape_settings,
-        intensity_config     = intensity_config,
+        omniscape_settings   = profile$omniscape,
+        intensity_config     = profile$intensity_config,
         covariates_obs       = covariates_obs,
         covariates_rasters   = covariates_rasters,
         residualise          = residualise,
         verbose              = FALSE,
-        link                 = link,
-        family               = family,
+        link                 = profile$link,
+        family               = profile$family,
         available_points     = available_points,
         available_covariates = available_covariates,
         .min_obs             = 3L
@@ -252,8 +256,10 @@ laplace_resistance <- function(opt_result,
 #' @param n_draws Number of posterior draws.
 #' @param n_inner Number of inner-loop draws per outer draw.
 #' @param bounds Named list of parameter bounds.
-#' @param omniscape_settings List with connectivity settings.
-#' @param intensity_config List from [default_intensity_config()].
+#' @param omniscape_settings Named window settings that override saved
+#'   optimization settings.
+#' @param intensity_config Intensity config. `NULL` uses the saved config or
+#'   [default_intensity_config()].
 #' @param covariates_obs Named list of covariate vectors.
 #' @param covariates_rasters Named list of covariate rasters.
 #' @param residualise Logical.
@@ -265,8 +271,9 @@ laplace_resistance <- function(opt_result,
 #' @param available_covariates Named list of covariate vectors at
 #'   `available_points` locations.  Required when `available_points` is
 #'   supplied and the intensity model includes covariates.
-#' @param link A [resistance_link] object (default [link_exp()]).
-#' @param family An [intensity_family] object, or `NULL`.
+#' @param link A [resistance_link] object. `NULL` uses the saved link or [link_exp()].
+#' @param family An [intensity_family] object. `NULL` uses the saved optimizer
+#'   family or the family from the intensity config or distribution.
 #' @param seed Random seed.
 #' @details
 #' **Approximation note.** The joint posterior produced by this function is a
@@ -289,13 +296,13 @@ posterior_sample <- function(laplace,
                              n_inner              = 5L,
                              bounds               = NULL,
                              omniscape_settings   = list(),
-                             intensity_config     = default_intensity_config(),
+                             intensity_config     = NULL,
                              covariates_obs       = NULL,
                              covariates_rasters   = NULL,
                              residualise          = FALSE,
                              available_points     = NULL,
                              available_covariates = NULL,
-                             link                 = link_exp(),
+                             link                 = NULL,
                              family               = NULL,
                              seed                 = 42L) {
 
@@ -303,6 +310,8 @@ posterior_sample <- function(laplace,
 
   n_basis  <- terra::nlyr(basis_stack)
   if (is.null(bounds)) bounds <- opt_result$bounds
+  profile <- .profile_model_settings(opt_result$config, omniscape_settings,
+                                     intensity_config, link, family)
 
   pnames <- names(bounds)
   mu     <- laplace$mode
@@ -353,14 +362,14 @@ posterior_sample <- function(laplace,
         basis_stack          = basis_stack,
         obs_points           = obs_points,
         distribution         = opt_result$distribution,
-        omniscape_settings   = omniscape_settings,
-        intensity_config     = intensity_config,
+        omniscape_settings   = profile$omniscape,
+        intensity_config     = profile$intensity_config,
         covariates_obs       = covariates_obs,
         covariates_rasters   = covariates_rasters,
         residualise          = residualise,
         verbose              = FALSE,
-        link                 = link,
-        family               = family,
+        link                 = profile$link,
+        family               = profile$family,
         available_points     = available_points,
         available_covariates = available_covariates
       ),

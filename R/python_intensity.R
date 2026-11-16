@@ -20,7 +20,7 @@
                     gaussian = if (is.null(config$known_sd)) "log_sd" else character(), character())
   family <- intensity_family(name, nll,
     deviance_residuals_fn = function(observed, fitted, extra_params) {
-      size <- extra_params[["size"]] %||% 1
+      size <- as.list(extra_params)[["size"]] %||% 1
       if (is.na(size)) size <- 1
       values <- module()$deviance_residuals(as.list(observed), as.list(fitted), family = name, size = size)
       as.numeric(reticulate::py_to_r(values$`__array__`()))
