@@ -219,7 +219,7 @@ ds_optimize <- function(basis_stack,
          "available_covariates, residualise = TRUE, or bounds. Use solver = ",
          "'surrogate' for these settings.", call. = FALSE)
   }
-  # The legacy outer config defaults to negbin; Torch always fits a Poisson PPP.
+  # The legacy outer config defaults to negbin. Physical fitting uses a Poisson PPP.
   family <- config$family %||% intensity_config$family
   if ((!is.null(family) && (!inherits(family, "intensity_family") ||
                             !identical(family$name, "poisson"))) ||
@@ -316,21 +316,11 @@ ds_optimize <- function(basis_stack,
 #' @param available_covariates Named list of covariate vectors at
 #'   `available_points` locations.  Required when `available_points` is
 #'   supplied and the intensity model includes covariates.
-#' @param solver Character; `"surrogate"`, `"gradient"`, or `"enzyme"`
-#'   (deprecated, alias for `"gradient"`).  Retained for compatibility with
-#'   [ds_optimize()]'s solver dispatch and to preserve the `"enzyme"`
-#'   deprecation message, but no longer affects this function's internal
-#'   connectivity-computation logic: both `"surrogate"` and `"gradient"`
-#'   route through the same [evaluate_full_model()] call (JAX connectivity
-#'   via [ds_jax_connectivity()]).  `"torch"` are accepted as
-#'   *values* (so a caller forwarding [ds_optimize()]'s solver gets a
-#'   clear, actionable error instead of a generic `match.arg()` failure)
-#'   but are **not supported** by this function: those backends fit
-#'   resistance and intensity jointly inside a single [ds_optimize()] /
-#'   [run_torch_pipeline()] call, so there is nothing left for
-#'   `ds_fit_intensity()` to do for them -- calling this function with
-#'   `solver = "torch"` raises an error directing you to the
-#'   already-complete result from [run_torch_pipeline()].
+#' @param solver Use `"surrogate"` (default) or `"gradient"` to fit intensity
+#'   against legacy window effective resistance via [evaluate_full_model()].
+#'   The deprecated `"enzyme"` aliases `"gradient"`. For `"adam"`, `"lbfgs"`,
+#'   and the deprecated `"torch"` translation, use the intensity fit already
+#'   returned by [ds_optimize()] or [run_jax_pipeline()].
 #' @param link A [resistance_link] object (default [link_exp()]).
 #' @param family An [intensity_family] object, or `NULL`.
 #' @return Result from [evaluate_full_model()].
@@ -413,9 +403,9 @@ ds_fit_intensity <- function(opt_result,
 .ds_fit_intensity_dispatch.ds_solver_torch <- function(spec, ...) {
   stop(
     "ds_fit_intensity() does not support solver = '", spec$solver, "' -- ",
-    "these backends fit resistance and intensity jointly in a single ",
+    "physical solvers fit resistance and intensity jointly in a single ",
     "ds_optimize() call; the result already contains intensity_params, ",
-    "intensity_se, etc. See ?run_torch_pipeline.",
+    "intensity_se, etc. See ?run_jax_pipeline.",
     call. = FALSE
   )
 }

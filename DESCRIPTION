@@ -3,13 +3,14 @@ Title: Differentiable Landscape Connectivity Optimization
 Version: 0.1.0
 Authors@R: 
     person("Sean", "Sorek", , "sssorek1@gmail.com", role = c("aut", "cre"))
-Description: Gradient-based and surrogate-based optimization of landscape
-    connectivity surfaces using the independently installed 'diffiscape' Python
-    package. JAX, JAXScape, Flax, Optax and NumPyro provide differentiable circuit
-    calculations, resistance fitting and posterior inference. Users supply
-    environmental rasters and GPS locations; the R interface preserves spatial
-    metadata and plots. Built-in intensity families share the Python core;
-    GAM fitting via 'mgcv' and custom R callbacks remain R-only extensions.
+Description: Fits landscape resistance and animal occurrence intensity from
+    environmental rasters and location data using differentiable circuit
+    connectivity. The independently installed 'diffiscape' Python package
+    provides JAX-based connectivity, gradient and Gaussian-process surrogate
+    optimization, built-in intensity likelihoods, and NumPyro posterior
+    inference. The R interface handles spatial inputs, raster outputs, and
+    plotting. The derivative-free workflow also supports 'mgcv' generalized
+    additive models and custom R callbacks.
 License: GPL (>= 3)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)

@@ -47,21 +47,11 @@ integration.}
 \code{available_points} locations.  Required when \code{available_points} is
 supplied and the intensity model includes covariates.}
 
-\item{solver}{Character; \code{"surrogate"}, \code{"gradient"}, or \code{"enzyme"}
-(deprecated, alias for \code{"gradient"}).  Retained for compatibility with
-\code{\link[=ds_optimize]{ds_optimize()}}'s solver dispatch and to preserve the \code{"enzyme"}
-deprecation message, but no longer affects this function's internal
-connectivity-computation logic: both \code{"surrogate"} and \code{"gradient"}
-route through the same \code{\link[=evaluate_full_model]{evaluate_full_model()}} call (JAX connectivity
-via \code{\link[=ds_jax_connectivity]{ds_jax_connectivity()}}).  \code{"torch"} are accepted as
-\emph{values} (so a caller forwarding \code{\link[=ds_optimize]{ds_optimize()}}'s solver gets a
-clear, actionable error instead of a generic \code{match.arg()} failure)
-but are \strong{not supported} by this function: those backends fit
-resistance and intensity jointly inside a single \code{\link[=ds_optimize]{ds_optimize()}} /
-\code{\link[=run_torch_pipeline]{run_torch_pipeline()}} call, so there is nothing left for
-\code{ds_fit_intensity()} to do for them -- calling this function with
-\code{solver = "torch"} raises an error directing you to the
-already-complete result from \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.}
+\item{solver}{Use \code{"surrogate"} (default) or \code{"gradient"} to fit intensity
+against legacy window effective resistance via \code{\link[=evaluate_full_model]{evaluate_full_model()}}.
+The deprecated \code{"enzyme"} aliases \code{"gradient"}. For \code{"adam"}, \code{"lbfgs"},
+and the deprecated \code{"torch"} translation, use the intensity fit already
+returned by \code{\link[=ds_optimize]{ds_optimize()}} or \code{\link[=run_jax_pipeline]{run_jax_pipeline()}}.}
 
 \item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}
 

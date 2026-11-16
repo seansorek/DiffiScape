@@ -4,14 +4,13 @@ This is the implementation record for [the migration plan](JAX_MIGRATION_PLAN.md
 Evidence below is from November 3, 2026 on native Windows, Python 3.12.10, CPU.
 An unchecked gate is not a supported replacement or a completed phase.
 
-Scope update: the concurrent simplification PR is [#136](https://github.com/seansorek/DiffiScape/pull/136),
-head `222b38a45d53332af6cb019bb71d14b11e0c0079`. Its working-tree changes were
-preserved, including IRL/RF retirement, likelihood/Laplace fixes, unsupported-input
-guards and automatic-merge removal. IRL has not been restored in JAX. PR #136
-remains open; this integration does not merge or publish it. The working branch
-is `codex/jax-migration`, based directly on that PR head. All 203 present working
-files were SHA-256 checked before and after changing the branch base and remained
-byte-for-byte identical; `main` and unrelated edits were preserved.
+The JAX migration merged into the head branch of the simplification PR on
+November 16, 2026. The combined changes include IRL and random-forest surrogate
+retirement, likelihood and Laplace fixes, unsupported-input guards, and removal
+of the automatic merge workflow.
+[Combined changes in PR #136](https://github.com/seansorek/DiffiScape/pull/136)
+and [JAX migration in PR #137](https://github.com/seansorek/DiffiScape/pull/137).
+
 Torch sampler corrections are superseded by NumPyro; the best-parameter snapshot
 and single-covariate behavior are covered in the replacement tests.
 
@@ -214,9 +213,10 @@ before an R release requiring its API; no release has been published by this tas
 ## Final validation — all implementation gates passed
 
 - Runtime R/Python source totals **17,947 → 10,223 lines**, a net reduction of
-  **7,724 lines relative to PR #136**. This excludes tests, external documentation,
-  benchmarks and dependencies. Existing custom R-link sensitivity and profile
-  callback extensions remain R-only; shared GP diagnostics now run in Python.
+  **7,724 lines relative to the pre-migration simplification commit**. This
+  excludes tests, external documentation, benchmarks and dependencies. Existing
+  custom R-link sensitivity and profile callback extensions remain R-only.
+  Shared GP diagnostics now run in Python.
 - **Installed wheel:** `python -m pytest <absolute path>/python/tests -vv`
   from outside the repository: **148 passed**, 283.13 seconds. Seven warnings:
   six existing pytest class-fixture deprecations (pytest is pinned below 10),

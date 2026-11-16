@@ -1,8 +1,10 @@
 # DiffiScape
 
-DiffiScape fits landscape resistance from environmental rasters and animal
-locations using differentiable circuit connectivity. One Python scientific core
-serves both independently installable Python and R packages.
+DiffiScape fits landscape resistance and animal occurrence intensity from
+environmental rasters and location data using differentiable circuit connectivity.
+The installable Python package provides the shared JAX core for optimization,
+built-in intensity likelihoods, and posterior inference. The R package uses that
+core and adds spatial data handling, raster outputs, and plotting.
 
 ## CPU installation
 
@@ -66,9 +68,9 @@ Spline posteriors now use the approved proper priors described in the
 [Python guide](python/README.md), retaining the existing penalties.
 Curriculum absorption, old checkpoint UQ, neural warm starts, and Torch-specific
 device choices raise migration errors. Stochastic focal subsampling and the
-previous unused weight-decay option are retired with messages. IRL and RF
-surrogates were removed by the concurrent simplification work. Raw DiceKriging
-fits require refitting as SMT surrogates.
+previous unused weight-decay option are retired with messages. IRL and
+random-forest surrogates are retired. Refit legacy DiceKriging models as SMT
+surrogates.
 
 CPU is validated on Windows. GPU installation and numerical validation are
 separate; these results do not establish accelerator support.

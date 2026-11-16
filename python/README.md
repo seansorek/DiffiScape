@@ -1,7 +1,9 @@
 # DiffiScape Python
 
-An array-based scientific core for landscape connectivity, resistance fitting,
-intensity families, surrogate optimization, and NumPyro inference. R is not required.
+The shared JAX core for differentiable landscape connectivity, resistance
+fitting, built-in intensity likelihoods, Gaussian-process surrogate
+optimization, and NumPyro posterior inference. The Python API runs independently
+of the R interface.
 
 Install the tested CPU stack with Python 3.12:
 
