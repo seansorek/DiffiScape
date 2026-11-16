@@ -452,7 +452,9 @@ diagnose_model <- function(intensity_fit,
 #'
 #' @param posterior_samples Data.frame from [posterior_sample()] (one row
 #'   per draw, columns include intensity parameters such as `alpha`,
-#'   `gamma`, `beta_*`, and optionally `size`).
+#'   `gamma`, `beta_*`, and optionally `size` and `pi`). For negative-binomial
+#'   and zero-inflated fits, rows with invalid size or pi are skipped with
+#'   a warning before selecting the simulations.
 #' @param intensity_fit Result from [fit_intensity_nb()],
 #'   [evaluate_full_model()], or [ds_fit_intensity()].  Supplies the
 #'   fitted connectivity standardisation and residualisation.
@@ -561,6 +563,22 @@ ds_ppc <- function(posterior_samples,
 
   # --- Select posterior draws ---
   draw_idx <- seq(1L, nrow(posterior_samples), by = thin)
+  valid_draws <- rep(TRUE, length(draw_idx))
+  if (family_name %in% c("negbin", "zinb") && "size" %in% names(posterior_samples)) {
+    size_draws <- posterior_samples$size[draw_idx]
+    valid_draws <- is.finite(size_draws) & size_draws > 0
+  }
+  if (family_name == "zinb" && "pi" %in% names(posterior_samples)) {
+    pi_draws <- posterior_samples$pi[draw_idx]
+    valid_draws <- valid_draws & is.finite(pi_draws) & pi_draws >= 0 & pi_draws <= 1
+  }
+  if (!any(valid_draws)) {
+    stop("No posterior draws with valid size and pi. Regenerate the posterior samples.", call. = FALSE)
+  }
+  if (!all(valid_draws)) {
+    warning("Skipping ", sum(!valid_draws), " posterior draws with invalid size or pi.", call. = FALSE)
+    draw_idx <- draw_idx[valid_draws]
+  }
   if (length(draw_idx) > n_sim) {
     draw_idx <- sort(sample(draw_idx, n_sim))
   } else if (length(draw_idx) < n_sim) {
@@ -626,10 +644,7 @@ ds_ppc <- function(posterior_samples,
     size_i <- row[["size"]]
     mu_cells_i <- .predict_intensity_values(row, data$z, data$covariates) * cell_area
 
-    # row$pi comes from posterior_sample(), which draws directly from the
-    # fit's natural-scale estimates (see fit_intensity_nb() in intensity.R),
-    # so it is already a probability on (0, 1) and must NOT be re-transformed
-    # via plogis()/inverse-logit here (see #109).
+    # The saved pi is on the probability scale (#109).
     pi_val_i <- if (family_name == "zinb" && "pi" %in% names(row)) {
       row[["pi"]]
     } else {

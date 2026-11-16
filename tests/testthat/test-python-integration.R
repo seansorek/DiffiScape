@@ -75,9 +75,12 @@ test_that("the default physical model predicts, samples and diagnoses without To
   expect_identical(fitted$solver, "global_absorption")
   expect_match(fitted$method, "jax")
   expect_equal(terra::values(ds_predict(fitted, basis_stack = raster)), terra::values(fitted$intensity_raster))
-  posterior <- ds_posterior(fitted, raster, points, n_draws = 3L, warmup = 3L, max_treedepth = 2L)
+  posterior <- ds_posterior(fitted, raster, points, n_draws = 3,
+    warmup = 3, max_treedepth = 2, max_iter = 3)
   expect_length(as.numeric(posterior$samples$alpha), 3)
   expect_true(all(as.numeric(posterior$samples$gamma) > 0))
+  expect_error(ds_posterior(fitted, raster, points, warmup = 2.5),
+    "warmup must be a whole number")
   diagnostics <- ds_diagnose(fitted, points, fitted$connectivity_raster, plot = FALSE)
   expect_true(is.finite(diagnostics$mean_deviance))
   ppc <- ds_ppc(posterior, fitted, points, fitted$connectivity_raster,

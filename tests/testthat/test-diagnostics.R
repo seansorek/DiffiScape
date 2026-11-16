@@ -692,6 +692,20 @@ test_that("fit_intensity_nb reports ZINB pi small (not > 0.5) for a negative fit
 })
 
 
+test_that("ds_ppc skips unsupported rows from saved count posterior draws", {
+  skip_on_cran()
+  p <- .make_ppc_inputs_zinb()
+  draws <- p$samples[1:5, ]
+  draws$size[1] <- 0
+  draws$pi[2:4] <- c(-0.1, 1.1, NA)
+  check <- function(samples) ds_ppc(samples, p$zinb_fit, p$obs_pts, p$raster,
+    n_sim = 1L, test_quantities = "total_count", plot = FALSE, seed = 3)
+
+  expect_warning(ppc <- check(draws), "Skipping 4 posterior draws")
+  expect_equal(ppc, check(draws[5, , drop = FALSE]))
+  expect_error(check(draws[1:4, ]), "No posterior draws with valid")
+})
+
 test_that("ds_ppc simulated total counts are not deflated by ~50% when the true ZINB pi is small (#109)", {
   skip_on_cran()
   p <- .make_ppc_inputs_zinb(seed = 109, logit_pi_fixed = -5)

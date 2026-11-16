@@ -25,7 +25,9 @@ ds_ppc(
 \arguments{
 \item{posterior_samples}{Data.frame from \code{\link[=posterior_sample]{posterior_sample()}} (one row
 per draw, columns include intensity parameters such as \code{alpha},
-\code{gamma}, \verb{beta_*}, and optionally \code{size}).}
+\code{gamma}, \verb{beta_*}, and optionally \code{size} and \code{pi}). For negative-binomial
+and zero-inflated fits, rows with invalid size or pi are skipped with
+a warning before selecting the simulations.}
 
 \item{intensity_fit}{Result from \code{\link[=fit_intensity_nb]{fit_intensity_nb()}},
 \code{\link[=evaluate_full_model]{evaluate_full_model()}}, or \code{\link[=ds_fit_intensity]{ds_fit_intensity()}}.  Supplies the

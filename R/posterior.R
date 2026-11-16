@@ -280,12 +280,13 @@ laplace_resistance <- function(opt_result,
 #' plug-in (asymptotic) approximation, *not* a full Bayesian posterior.  The
 #' outer resistance draw comes from the Laplace approximation to the PPP
 #' log-likelihood; the inner intensity draw is an independent normal centred on
-#' the conditional MLE with frequentist asymptotic standard errors.  Because the
-#' two stages are sampled independently, the correlation between the inner
-#' standard errors and the outer \eqn{\theta} draw is ignored, which can cause
-#' joint credible intervals -- especially for connectivity parameters such as
-#' \eqn{\gamma} -- to be too narrow.  Interpret credible intervals as approximate
-#' guides rather than exact probability statements.
+#' the conditional MLE with frequentist asymptotic standard errors. Draws of
+#' negative-binomial size and zero-inflation probability are truncated to their
+#' valid ranges. Because the two stages are sampled independently, the
+#' correlation between the inner standard errors and the outer \eqn{\theta}
+#' draw is ignored, which can cause joint credible intervals, especially for
+#' connectivity parameters such as \eqn{\gamma}, to be too narrow. Treat
+#' credible intervals as approximate guides.
 #' @return A data.frame with posterior samples (one row per draw).
 #' @export
 posterior_sample <- function(laplace,
@@ -392,9 +393,9 @@ posterior_sample <- function(laplace,
     inner_mu <- result$intensity_params
     inner_se <- result$intensity_se
 
-    if (any(is.na(inner_se))) {
+    if (any(!is.finite(inner_se))) {
       warning(sprintf(
-        "posterior draw %d: some inner standard errors are NA; using point estimate only.",
+        "posterior draw %d: some inner standard errors are NA or infinite; using point estimate only.",
         d
       ), call. = FALSE)
       inner_draws <- matrix(inner_mu, nrow = 1, ncol = length(inner_mu))
@@ -404,6 +405,20 @@ posterior_sample <- function(laplace,
       colnames(inner_draws) <- names(inner_mu)
       for (k in seq_len(n_inner)) {
         inner_draws[k, ] <- stats::rnorm(length(inner_mu), inner_mu, inner_se)
+      }
+      for (name in intersect(c("size", "pi"), names(inner_mu))) {
+        center <- inner_mu[[name]]
+        se <- inner_se[[name]]
+        if (se == 0) next
+        limits <- if (name == "size") c(.Machine$double.xmin, .Machine$double.xmax) else c(0, 1)
+        cdf <- stats::pnorm(limits, center, se)
+        # Very wide probability draws approach a uniform distribution.
+        draw <- if (cdf[1] == cdf[2]) {
+          stats::runif(n_inner, limits[1], limits[2])
+        } else {
+          stats::qnorm(stats::runif(n_inner, cdf[1], cdf[2]), center, se)
+        }
+        inner_draws[, name] <- pmin(pmax(draw, limits[1]), limits[2])
       }
     }
 

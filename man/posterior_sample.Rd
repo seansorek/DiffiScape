@@ -81,10 +81,11 @@ the asymptotic normal.
 plug-in (asymptotic) approximation, \emph{not} a full Bayesian posterior.  The
 outer resistance draw comes from the Laplace approximation to the PPP
 log-likelihood; the inner intensity draw is an independent normal centred on
-the conditional MLE with frequentist asymptotic standard errors.  Because the
-two stages are sampled independently, the correlation between the inner
-standard errors and the outer \eqn{\theta} draw is ignored, which can cause
-joint credible intervals -- especially for connectivity parameters such as
-\eqn{\gamma} -- to be too narrow.  Interpret credible intervals as approximate
-guides rather than exact probability statements.
+the conditional MLE with frequentist asymptotic standard errors. Draws of
+negative-binomial size and zero-inflation probability are truncated to their
+valid ranges. Because the two stages are sampled independently, the
+correlation between the inner standard errors and the outer \eqn{\theta}
+draw is ignored, which can cause joint credible intervals, especially for
+connectivity parameters such as \eqn{\gamma}, to be too narrow. Treat
+credible intervals as approximate guides.
 }

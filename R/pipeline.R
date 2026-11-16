@@ -519,10 +519,15 @@ ds_posterior <- function(opt_result,
         (!is.null(family) && !identical(family$name, "poisson"))) {
       stop("Physical posterior inference uses the fitted Poisson model and does not support changing covariates, availability, links, or family.", call. = FALSE)
     }
+    options <- list(...)
+    for (name in intersect(c("warmup", "max_treedepth", "max_iter"), names(options))) {
+      options[[name]] <- .as_backend_integer(options[[name]], name)
+    }
+    n_samples <- .as_backend_integer(n_draws, "n_draws")
     prep <- .prepare_backend_inputs(basis_stack, obs_points, opt_result$python_fit$configuration)
-    result <- .jax_env$package$sample(prep$basis_np, prep$obs_np, prep$vmask_np,
+    result <- do.call(.jax_env$package$sample, c(list(prep$basis_np, prep$obs_np, prep$vmask_np,
       as.integer(prep$n_rows), as.integer(prep$n_cols), cell_area = prep$cell_area,
-      fitted = opt_result$python_fit, method = method, n_samples = as.integer(n_draws), ...)
+      fitted = opt_result$python_fit, method = method, n_samples = n_samples), options))
     posterior <- reticulate::py_to_r(result)
     effects_module <- reticulate::import("diffiscape.physical_models", convert = FALSE)
     effects <- reticulate::py_to_r(effects_module$partial_effects(opt_result$python_fit, posterior))

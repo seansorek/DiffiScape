@@ -422,6 +422,28 @@ test_that("posterior_sample warns when covariance is not positive-definite", {
   )
 }
 
+test_that("composition draws respect the support of size and pi", {
+  args <- .make_minimal_posterior_args()
+  args$laplace <- list(mode = c(0, 0), covariance = diag(0.01, 2L))
+  args$opt_result$bounds$z_1 <- c(-2, 2)
+  local_mocked_bindings(
+    evaluate_full_model = function(...) list(
+      loglik = -100,
+      intensity_params = c(alpha = 1, size = 0.1, pi = 0.1),
+      intensity_se = c(alpha = 0, size = 0.5, pi = 0.8)
+    ),
+    .package = "DiffiScape"
+  )
+  draws <- posterior_sample(args$laplace, args$opt_result,
+    args$basis_stack, args$obs_points, n_draws = 1L, n_inner = 30L)
+
+  expect_equal(nrow(draws), 30L)
+  expect_true(all(is.finite(draws$size) & draws$size > 0))
+  expect_true(all(draws$pi >= 0 & draws$pi <= 1))
+  expect_gt(stats::sd(draws$size), 0)
+  expect_gt(stats::sd(draws$pi), 0)
+})
+
 test_that("posterior_sample warns on non-zero inner convergence", {
   skip_on_cran()
   args <- .make_minimal_posterior_args()
