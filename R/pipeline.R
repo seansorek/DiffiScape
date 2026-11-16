@@ -807,6 +807,7 @@ diffiscape <- function(obs_data,
     # --- Step 6: Diagnostics ---
     message("\n[6/6] Diagnostics...")
     final_connectivity <- intensity_fit$connectivity
+    # A live SpatRaster cannot be restored from inside the saved result list.
     intensity_fit$connectivity <- NULL
 
     diagnostics <- ds_diagnose(

@@ -401,7 +401,7 @@ test_that("diffiscape skips posterior when n_posterior is 0", {
 })
 
 
-test_that("diffiscape dispatches to ds_jax_connectivity for gradient solver", {
+test_that("diffiscape routes the enzyme alias to the gradient solver", {
   skip_on_cran()
   skip_if_not_installed("terra")
 
@@ -410,18 +410,15 @@ test_that("diffiscape dispatches to ds_jax_connectivity for gradient solver", {
   mock_fit  <- list(loglik = -10, intensity_params = c(0.1, 0.2),
                     intensity_fit_obj = list(), distribution = "negbin")
   mock_diag <- list(deviance_residuals = numeric(0))
-  mock_conn <- terra::rast(nrows = 2, ncols = 2, vals = 1)
 
-  jax_called <- FALSE
+  received_solver <- NULL
 
   local_mocked_bindings(
-    ds_optimize   = function(...) mock_opt,
-    ds_fit_intensity = function(...) mock_fit,
-    create_resistance_surface = function(...) mock_conn,
-    ds_jax_connectivity = function(...) {
-      jax_called <<- TRUE
-      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
+    ds_optimize = function(..., solver) {
+      received_solver <<- solver
+      mock_opt
     },
+    ds_fit_intensity = function(...) mock_fit,
     ds_diagnose = function(...) mock_diag,
     .package = "DiffiScape"
   )
@@ -431,38 +428,33 @@ test_that("diffiscape dispatches to ds_jax_connectivity for gradient solver", {
 
   # "enzyme" should be deprecated to "gradient"
   expect_message(
-    result <- diffiscape(obs_data = obs, rasters = list(layer1 = basis),
-                         output_dir = withr::local_tempdir(),
-                         n_posterior = 0L, plot = FALSE, solver = "enzyme"),
+    diffiscape(obs_data = obs, rasters = list(layer1 = basis),
+               output_dir = withr::local_tempdir(),
+               n_posterior = 0L, plot = FALSE, solver = "enzyme"),
     "deprecated"
   )
 
-  expect_true(jax_called)
+  expect_identical(received_solver, "gradient")
 })
 
 
-test_that("diffiscape uses ds_jax_connectivity for solver='gradient'", {
+test_that("diffiscape diagnoses the connectivity from the gradient refit", {
   skip_on_cran()
   skip_if_not_installed("terra")
 
   mock_opt  <- list(best_params = list(r_0 = 0), bounds = list(r_0 = c(-2, 2)),
                     distribution = "negbin")
-  mock_fit  <- list(loglik = -10, intensity_params = c(0.1, 0.2),
-                    intensity_fit_obj = list(), distribution = "negbin")
-  mock_diag <- list(deviance_residuals = numeric(0))
   mock_conn <- terra::rast(nrows = 2, ncols = 2, vals = 1)
-
-  jax_called <- FALSE
+  diagnosed_connectivity <- NULL
 
   local_mocked_bindings(
     ds_optimize   = function(...) mock_opt,
-    ds_fit_intensity = function(...) mock_fit,
-    create_resistance_surface = function(...) mock_conn,
-    ds_jax_connectivity = function(...) {
-      jax_called <<- TRUE
-      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
+    ds_fit_intensity = function(...) list(loglik = -10, connectivity = mock_conn),
+    ds_jax_connectivity = function(...) stop("unexpected second solve"),
+    ds_diagnose = function(..., connectivity) {
+      diagnosed_connectivity <<- connectivity
+      list()
     },
-    ds_diagnose = function(...) mock_diag,
     .package = "DiffiScape"
   )
 
@@ -472,7 +464,8 @@ test_that("diffiscape uses ds_jax_connectivity for solver='gradient'", {
                        output_dir = withr::local_tempdir(),
                        n_posterior = 0L, plot = FALSE, solver = "gradient")
 
-  expect_true(jax_called)
+  expect_identical(diagnosed_connectivity, mock_conn)
+  expect_null(result$intensity_fit$connectivity)
 })
 
 
