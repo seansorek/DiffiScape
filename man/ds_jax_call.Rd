@@ -2,7 +2,7 @@
 % Please edit documentation in R/jax_bridge.R
 \name{ds_jax_call}
 \alias{ds_jax_call}
-\title{Call a function from the bundled JAX modules}
+\title{Call a function from the installed JAX modules}
 \usage{
 ds_jax_call(module_name, fn_name, ...)
 }

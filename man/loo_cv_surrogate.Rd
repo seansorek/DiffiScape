@@ -20,9 +20,6 @@ reports how many of the \code{n} leave-one-out fits failed and were
 dropped from these vectors and summary statistics.
 }
 \description{
-For the GP surrogate (\code{surrogate_type = "gp"}, the default), this uses
-repeated refitting (one fit per held-out point) with the same Matern
-GP; for the Random Forest surrogate (\code{"rf"}) it likewise refits with
-one point held out each time.  Works with either surrogate backend via
-\code{\link[=predict_surrogate]{predict_surrogate()}}.
+Refits the GP once per held-out evaluation to assess predictive error
+and uncertainty on the observed objective values.
 }

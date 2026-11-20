@@ -1,8 +1,8 @@
 # Tests for R/pipeline.R
 
-test_that("torch is the default solver", {
-  expect_identical(eval(formals(ds_optimize)$solver)[[1]], "torch")
-  expect_identical(eval(formals(diffiscape)$solver)[[1]], "torch")
+test_that("adam is the default solver", {
+  expect_identical(eval(formals(ds_optimize)$solver)[[1]], "adam")
+  expect_identical(eval(formals(diffiscape)$solver)[[1]], "adam")
 })
 
 test_that("ds_load_data reads CSV correctly", {
@@ -148,58 +148,92 @@ test_that("ds_posterior forwards omniscape_settings to laplace and posterior_sam
 })
 
 
-test_that("diffiscape forwards omniscape_settings to refit, posterior, and diagnostics", {
+test_that("diffiscape uses the same windows for optimization, refit and diagnostics", {
   skip_on_cran()
 
-  custom_settings <- list(radius = 25L, block_size = 9L)
-  captured_fit_settings  <- NULL
+  captured_opt_settings <- NULL
   captured_post_settings <- NULL
-  captured_jax_radius    <- NULL
-
-  mock_opt   <- list(best_params = list(r_0 = 0), bounds = list(r_0 = c(-2, 2)),
-                     distribution = "negbin")
-  mock_fit   <- list(loglik = -10, intensity_params = c(0.1, 0.2),
-                     intensity_fit_obj = list(), distribution = "negbin")
-  mock_post  <- list(laplace = list(), samples = data.frame(), summary = data.frame())
-  mock_diag  <- list(deviance_residuals = numeric(0))
-  mock_conn  <- terra::rast(nrows = 2, ncols = 2, vals = 1)
+  solved_windows <- list()
+  diagnosed_connectivity <- NULL
+  basis <- terra::rast(nrows = 2, ncols = 2, vals = 1:4)
+  connectivity <- terra::setValues(basis, c(4, 3, 2, 1))
+  obs <- as.data.frame(terra::xyFromCell(basis, 1:3))
 
   local_mocked_bindings(
-    ds_optimize = function(...) mock_opt,
-    ds_fit_intensity = function(...) {
-      args <- list(...)
-      captured_fit_settings <<- args$omniscape_settings
-      mock_fit
+    ds_optimize = function(..., config) {
+      captured_opt_settings <<- config$omniscape
+      list(best_params = list(r_0 = 0, z_1 = 1), distribution = "poisson", config = config)
     },
-    ds_posterior = function(...) {
-      args <- list(...)
-      captured_post_settings <<- args$omniscape_settings
-      mock_post
+    ds_posterior = function(..., omniscape_settings) {
+      captured_post_settings <<- omniscape_settings
+      list(samples = data.frame())
     },
-    create_resistance_surface = function(...) mock_conn,
-    ds_jax_connectivity = function(resistance, radius = 13L, block_size = 5L, ...) {
-      captured_jax_radius <<- radius
-      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
+    ds_jax_connectivity = function(resistance, radius, block_size) {
+      solved_windows[[length(solved_windows) + 1L]] <<- list(radius = radius, block_size = block_size)
+      list(cum_current = connectivity, elapsed_seconds = 0.1)
     },
-    ds_diagnose = function(...) mock_diag,
+    fit_intensity_nb = function(..., family) {
+      expect_identical(family$name, "poisson")
+      list(loglik = -10, family = family)
+    },
+    ds_diagnose = function(..., connectivity, intensity_fit) {
+      diagnosed_connectivity <<- connectivity
+      expect_identical(intensity_fit$intensity_fit_obj$family$name, "poisson")
+      list()
+    },
     .package = "DiffiScape"
   )
 
-  basis <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
-  obs   <- data.frame(x = c(0, 1), y = c(0, 1))
-
-  result <- diffiscape(
-    obs_data           = obs,
-    rasters            = list(layer1 = basis),
-    omniscape_settings = custom_settings,
-    n_posterior         = 3L,
-    plot               = FALSE,
-    solver             = "surrogate"
+  diffiscape(
+    obs, list(layer1 = basis),
+    optimizer_config = list(omniscape = list(radius = 3L, block_size = 9L)),
+    omniscape_settings = list(radius = 25L),
+    output_dir = withr::local_tempdir(),
+    n_posterior = 3L, plot = FALSE, solver = "surrogate"
   )
 
-  expect_equal(captured_fit_settings, custom_settings)
-  expect_equal(captured_post_settings, custom_settings)
-  expect_equal(captured_jax_radius, 25L)
+  expected_windows <- list(radius = 25L, block_size = 9L)
+  expect_identical(captured_opt_settings, expected_windows)
+  expect_identical(captured_post_settings, expected_windows)
+  expect_identical(solved_windows, list(expected_windows))
+  expect_identical(diagnosed_connectivity, connectivity)
+})
+
+
+test_that("saved profile settings drive standalone intensity and posterior refits", {
+  basis <- terra::rast(nrows = 2, ncols = 2, vals = 1:4)
+  obs <- as.data.frame(terra::xyFromCell(basis, 1:3))
+  opt <- list(
+    best_params = list(r_0 = 0, z_1 = 0),
+    bounds = list(r_0 = c(-1, 1), z_1 = c(-1, 1)),
+    distribution = "negbin",
+    config = list(omniscape = list(radius = 3L, block_size = 2L),
+                  resistance_link = link_softplus(), family = family_poisson(),
+                  intensity_config = list(c_scale = 4))
+  )
+  calls <- list()
+  local_mocked_bindings(
+    evaluate_full_model = function(resistance_params, omniscape_settings,
+                                   intensity_config, link, family, ...) {
+      calls[[length(calls) + 1L]] <<- list(omniscape_settings, intensity_config, link$name, family$name)
+      list(loglik = -sum(unlist(resistance_params)^2),
+           intensity_params = c(alpha = 0, gamma = 1),
+           intensity_se = c(alpha = 0.1, gamma = 0.1), convergence = 0L)
+    },
+    posterior_summary = function(...) data.frame(),
+    .package = "DiffiScape"
+  )
+
+  ds_fit_intensity(opt, basis, obs)
+  result <- ds_posterior(opt, basis, obs, n_draws = 1L, n_inner = 1L)
+  expect_equal(nrow(result$samples), 1L)
+  expect_identical(unique(calls), list(list(opt$config$omniscape, list(c_scale = 4), "softplus", "poisson")))
+
+  ds_fit_intensity(opt, basis, obs, omniscape_settings = list(radius = 6L),
+                   intensity_config = list(c_scale = 2), link = link_identity(),
+                   family = family_zinb())
+  expect_identical(tail(calls, 1L)[[1L]],
+                   list(list(radius = 6L, block_size = 2L), list(c_scale = 2), "identity", "zinb"))
 })
 
 
@@ -367,7 +401,7 @@ test_that("diffiscape skips posterior when n_posterior is 0", {
 })
 
 
-test_that("diffiscape dispatches to ds_jax_connectivity for gradient solver", {
+test_that("diffiscape routes the enzyme alias to the gradient solver", {
   skip_on_cran()
   skip_if_not_installed("terra")
 
@@ -376,18 +410,15 @@ test_that("diffiscape dispatches to ds_jax_connectivity for gradient solver", {
   mock_fit  <- list(loglik = -10, intensity_params = c(0.1, 0.2),
                     intensity_fit_obj = list(), distribution = "negbin")
   mock_diag <- list(deviance_residuals = numeric(0))
-  mock_conn <- terra::rast(nrows = 2, ncols = 2, vals = 1)
 
-  jax_called <- FALSE
+  received_solver <- NULL
 
   local_mocked_bindings(
-    ds_optimize   = function(...) mock_opt,
-    ds_fit_intensity = function(...) mock_fit,
-    create_resistance_surface = function(...) mock_conn,
-    ds_jax_connectivity = function(...) {
-      jax_called <<- TRUE
-      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
+    ds_optimize = function(..., solver) {
+      received_solver <<- solver
+      mock_opt
     },
+    ds_fit_intensity = function(...) mock_fit,
     ds_diagnose = function(...) mock_diag,
     .package = "DiffiScape"
   )
@@ -397,38 +428,33 @@ test_that("diffiscape dispatches to ds_jax_connectivity for gradient solver", {
 
   # "enzyme" should be deprecated to "gradient"
   expect_message(
-    result <- diffiscape(obs_data = obs, rasters = list(layer1 = basis),
-                         output_dir = withr::local_tempdir(),
-                         n_posterior = 0L, plot = FALSE, solver = "enzyme"),
+    diffiscape(obs_data = obs, rasters = list(layer1 = basis),
+               output_dir = withr::local_tempdir(),
+               n_posterior = 0L, plot = FALSE, solver = "enzyme"),
     "deprecated"
   )
 
-  expect_true(jax_called)
+  expect_identical(received_solver, "gradient")
 })
 
 
-test_that("diffiscape uses ds_jax_connectivity for solver='gradient'", {
+test_that("diffiscape diagnoses the connectivity from the gradient refit", {
   skip_on_cran()
   skip_if_not_installed("terra")
 
   mock_opt  <- list(best_params = list(r_0 = 0), bounds = list(r_0 = c(-2, 2)),
                     distribution = "negbin")
-  mock_fit  <- list(loglik = -10, intensity_params = c(0.1, 0.2),
-                    intensity_fit_obj = list(), distribution = "negbin")
-  mock_diag <- list(deviance_residuals = numeric(0))
   mock_conn <- terra::rast(nrows = 2, ncols = 2, vals = 1)
-
-  jax_called <- FALSE
+  diagnosed_connectivity <- NULL
 
   local_mocked_bindings(
     ds_optimize   = function(...) mock_opt,
-    ds_fit_intensity = function(...) mock_fit,
-    create_resistance_surface = function(...) mock_conn,
-    ds_jax_connectivity = function(...) {
-      jax_called <<- TRUE
-      list(cum_current = mock_conn, flow_potential = NULL, elapsed_seconds = 0.1)
+    ds_fit_intensity = function(...) list(loglik = -10, connectivity = mock_conn),
+    ds_jax_connectivity = function(...) stop("unexpected second solve"),
+    ds_diagnose = function(..., connectivity) {
+      diagnosed_connectivity <<- connectivity
+      list()
     },
-    ds_diagnose = function(...) mock_diag,
     .package = "DiffiScape"
   )
 
@@ -438,7 +464,8 @@ test_that("diffiscape uses ds_jax_connectivity for solver='gradient'", {
                        output_dir = withr::local_tempdir(),
                        n_posterior = 0L, plot = FALSE, solver = "gradient")
 
-  expect_true(jax_called)
+  expect_identical(diagnosed_connectivity, mock_conn)
+  expect_null(result$intensity_fit$connectivity)
 })
 
 
@@ -639,11 +666,11 @@ test_that("diffiscape loads obs_data from CSV file path", {
 # diffiscape) -- characterization tests written BEFORE introducing
 # solver_spec() + S3 dispatch generics, per TDD. Sections 1-2 lock in CURRENT
 # if/else behavior; sections 3-4 encode TARGET behavior not yet implemented
-# (ds_fit_intensity() torch/irl guard, diffiscape() torch/irl routing) so
+# (ds_fit_intensity() torch guard, diffiscape() torch routing) so
 # they fail red against the current code and pass once the refactor lands.
 # ============================================================================
 
-# ---- 1. ds_optimize(solver = "torch"/"irl") dispatch into run_torch_pipeline() ----
+# ---- 1. ds_optimize(solver = "torch") dispatch into run_torch_pipeline() ----
 
 test_that("ds_optimize(solver = 'torch') dispatches to run_torch_pipeline() with config$torch args", {
   skip_on_cran()
@@ -681,33 +708,6 @@ test_that("ds_optimize(solver = 'torch') dispatches to run_torch_pipeline() with
 })
 
 
-test_that("ds_optimize(solver = 'irl') dispatches to run_torch_pipeline() with model_type forced to 'irl'", {
-  skip_on_cran()
-
-  basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
-  obs_points  <- data.frame(x = 0, y = 0)
-  mock_result <- list(best_params = data.frame(r_0 = 0), best_loglik = -1)
-
-  captured_args <- NULL
-  local_mocked_bindings(
-    run_torch_pipeline = function(...) {
-      captured_args <<- list(...)
-      mock_result
-    },
-    .package = "DiffiScape"
-  )
-
-  result <- ds_optimize(
-    basis_stack, obs_points,
-    config = list(torch = list(n_epochs = 3L)),
-    solver = "irl"
-  )
-
-  expect_identical(result, mock_result)
-  expect_false(is.null(captured_args))
-  expect_equal(captured_args$model_type, "irl")
-  expect_equal(captured_args$n_epochs, 3L)
-})
 
 
 test_that("ds_optimize(solver = 'torch') errors when available_points is supplied", {
@@ -812,7 +812,7 @@ test_that("diffiscape() 'enzyme' deprecation message text is exact", {
 })
 
 
-# ---- 3. ds_fit_intensity() rejecting torch/irl (TARGET behavior) ----
+# ---- 3. ds_fit_intensity() rejecting torch (TARGET behavior) ----
 # Today these fail with R's generic match.arg error (not in the choices set).
 # These tests assert the NEW, more actionable error message that section 3
 # of the refactor introduces -- written as red tests against current code.
@@ -829,25 +829,15 @@ test_that("ds_fit_intensity(solver = 'torch') stops with an actionable message",
 })
 
 
-test_that("ds_fit_intensity(solver = 'irl') stops with an actionable message", {
-  opt_result  <- list(best_params = list(r_0 = 0), distribution = "negbin")
-  basis_stack <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
-  obs_points  <- data.frame(x = 0, y = 0)
-
-  expect_error(
-    ds_fit_intensity(opt_result, basis_stack, obs_points, solver = "irl"),
-    "does not support solver"
-  )
-})
 
 
-# ---- 4. diffiscape(solver = "torch"/"irl") end-to-end routing (TARGET behavior) ----
+# ---- 4. diffiscape(solver = "torch") end-to-end routing (TARGET behavior) ----
 # diffiscape()'s match.arg currently only accepts c("surrogate", "gradient",
 # "enzyme"), so these fail today with a match.arg error. After the refactor,
-# diffiscape() should call ds_optimize(solver = "torch"/"irl", ...), skip the
-# separate ds_fit_intensity() call entirely (the torch/irl backend already
+# diffiscape() should call ds_optimize(solver = "torch", ...), skip the
+# separate ds_fit_intensity() call entirely (the torch backend already
 # fits resistance + intensity jointly), and assemble the normal return shape
-# from the torch/irl result fields.
+# from the torch result fields.
 
 test_that("diffiscape(solver = 'torch') does not call ds_fit_intensity and returns torch result fields", {
   skip_on_cran()
@@ -887,7 +877,7 @@ test_that("diffiscape(solver = 'torch') does not call ds_fit_intensity and retur
     ds_optimize = function(...) mock_torch_result,
     ds_fit_intensity = function(...) {
       fit_intensity_called <<- TRUE
-      stop("should not be called for torch/irl")
+      stop("should not be called for torch")
     },
     ds_diagnose = function(...) list(deviance_residuals = numeric(0)),
     .package = "DiffiScape"
@@ -905,66 +895,5 @@ test_that("diffiscape(solver = 'torch') does not call ds_fit_intensity and retur
                           "intensity_fit", "posterior", "diagnostics",
                           "ppc", "elapsed_min"),
                ignore.order = TRUE)
-  expect_identical(result$opt_result, mock_torch_result)
-})
-
-
-test_that("diffiscape(solver = 'irl') does not call ds_fit_intensity and routes through ds_optimize", {
-  skip_on_cran()
-  skip_if_not_installed("terra")
-
-  mock_torch_result <- list(
-    best_params         = data.frame(r_0 = 0, z_1 = 0.1),
-    best_loglik         = -5.6,
-    alpha               = 0.9,
-    gamma               = 1.8,
-    resistance_raster   = terra::rast(nrows = 2, ncols = 2, vals = 1),
-    connectivity_raster = terra::rast(nrows = 2, ncols = 2, vals = 1),
-    intensity_raster    = terra::rast(nrows = 2, ncols = 2, vals = 1),
-    loss_history        = c(1, 0.2),
-    best_epoch          = 8L,
-    n_params            = 4L,
-    n_epochs_run        = 15L,
-    total_time          = 2.1,
-    method              = "torch_irl_value_circuit",
-    distribution        = "poisson_parametric",
-    effective_loglinear = c(0, 0.05),
-    model_type          = "irl",
-    partial_effects     = NULL,
-    interaction_effects = NULL,
-    uq_results          = NULL,
-    intensity_params    = c(alpha = 0.9, gamma = 1.8),
-    intensity_se        = c(alpha = NA_real_, gamma = NA_real_),
-    convergence         = 0L,
-    convergence_message = "early_stop_epoch_8",
-    n_evaluations       = 15L,
-    solver              = "circuit_global"
-  )
-
-  fit_intensity_called <- FALSE
-  captured_solver <- NULL
-
-  local_mocked_bindings(
-    ds_optimize = function(..., solver) {
-      captured_solver <<- solver
-      mock_torch_result
-    },
-    ds_fit_intensity = function(...) {
-      fit_intensity_called <<- TRUE
-      stop("should not be called for torch/irl")
-    },
-    ds_diagnose = function(...) list(deviance_residuals = numeric(0)),
-    .package = "DiffiScape"
-  )
-
-  basis <- terra::rast(nrows = 2, ncols = 2, nlyrs = 1, vals = 1)
-  obs   <- data.frame(x = c(0, 1), y = c(0, 1))
-
-  result <- diffiscape(obs_data = obs, rasters = list(layer1 = basis),
-                       output_dir = withr::local_tempdir(),
-                       n_posterior = 0L, plot = FALSE, solver = "irl")
-
-  expect_false(fit_intensity_called)
-  expect_equal(captured_solver, "irl")
   expect_identical(result$opt_result, mock_torch_result)
 })

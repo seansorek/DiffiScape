@@ -1,8 +1,8 @@
 ---
-title: "Neural Network Resistance via PyTorch (MLP)"
+title: "MLP resistance with the JAX core"
 output: rmarkdown::html_vignette
 vignette: >
-  %\VignetteIndexEntry{Neural Network Resistance via PyTorch (MLP)}
+  %\VignetteIndexEntry{MLP resistance with the JAX core}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
@@ -11,175 +11,24 @@ vignette: >
 knitr::opts_chunk$set(echo = TRUE, eval = FALSE, message = FALSE, warning = FALSE)
 ```
 
-This vignette fits a small neural resistance model to a synthetic 100 x 100
-urban landscape. Parks are represented by high canopy cover, while roads and
-built areas have high impervious cover. The example is designed to exercise
-the full differentiable circuit pipeline on a CPU, rather than to provide a
-real ecological analysis.
+The historical vignette filename is retained. Fitting uses Flax, Optax and the installed Python package. No Torch installation is used.
 
-## Simulate the urban landscape and point process
+Install the matching Python package as described in the README and set
+RETICULATE_PYTHON before starting R. These synthetic examples use a projected
+CPU grid. Short runs demonstrate the API; assess convergence and sampler
+diagnostics before scientific use.
 
-The two input rasters are canopy cover and impervious surface, each scaled to
-[0, 1]. The data-generating resistance model is
-
-\[\log R = -1 * \mathrm{canopy} + 1 * \mathrm{impervious}.\]
-
-We solve the global-absorption circuit on that true resistance surface. The
-point-process model is \(\log \lambda = 2\log(1 + C) + u(s)\), where \(u(s)\)
-is a smooth, spatially autocorrelated random effect. Finally, we condition on
-1,000 observed events and sample their cells in proportion to \(\lambda\).
-
-```{r data}
+```{r example}
 library(DiffiScape)
 library(terra)
-
-withr::local_seed(42)
-template <- terra::rast(
-  nrows = 100L, ncols = 100L,
-  xmin = 0, xmax = 10000, ymin = 0, ymax = 10000, crs = "EPSG:3857"
-)
-coords <- terra::crds(template, df = TRUE)
-x <- (coords$x - min(coords$x)) / diff(range(coords$x))
-y <- (coords$y - min(coords$y)) / diff(range(coords$y))
-layer <- function(values) {
-  raster <- template
-  terra::values(raster) <- values
-  raster
-}
-
-# Four irregular parks embedded in an urban matrix, plus a simple road grid.
-parks <- pmin(1, exp(-((x - 0.20)^2 + (y - 0.76)^2) / 0.012) +
-                 exp(-((x - 0.72)^2 + (y - 0.72)^2) / 0.020) +
-                 exp(-((x - 0.30)^2 + (y - 0.25)^2) / 0.010) +
-                 exp(-((x - 0.78)^2 + (y - 0.30)^2) / 0.014))
-roads <- as.numeric(abs(sin(8 * pi * x)) < 0.08 |
-                    abs(sin(8 * pi * y)) < 0.08)
-canopy <- pmin(1, pmax(0, 0.08 + 0.90 * parks - 0.20 * roads +
-                          rnorm(terra::ncell(template), sd = 0.04)))
-impervious <- pmin(1, pmax(0, 0.15 + 0.25 * (1 - parks) + 0.40 * roads + 0.25 * x +
-                              rnorm(terra::ncell(template), sd = 0.04)))
-basis_stack <- create_basis_stack(list(
-  canopy = layer(canopy),
-  impervious = layer(impervious)
-), rescale = TRUE)
-
-# Smooth white noise twice to create a spatially autocorrelated log-intensity
-# effect. It is deliberately omitted from the fitted model.
-spatial_effect <- terra::focal(layer(rnorm(terra::ncell(template))),
-                               w = matrix(1, 9, 9), fun = "mean",
-                               na.rm = TRUE, fillvalue = 0)
-spatial_effect <- terra::focal(spatial_effect, w = matrix(1, 9, 9),
-                               fun = "mean", na.rm = TRUE, fillvalue = 0)
-spatial_effect <- 0.35 * as.numeric(scale(terra::values(spatial_effect)))
-
-true_log_resistance <- -1 * canopy + 1 * impervious
-true_resistance <- layer(exp(true_log_resistance))
-ds_torch_setup()
-circuit_solver <- DiffiScape:::.ds_env$torch_module$`_get_circuit_module`()
-truth <- circuit_solver$solve_circuit_absorption(
-  terra::as.matrix(true_resistance, wide = TRUE), absorption = 0.20,
-  source_spacing = 1L, source_from_resistance = TRUE
-)
-true_connectivity <- layer(as.numeric(reticulate::py_to_r(truth$current_density)))
-log_lambda <- 2 * log1p(terra::values(true_connectivity)) + spatial_effect
-sampling_weight <- exp(log_lambda - max(log_lambda))
-obs_cells <- sample(seq_len(terra::ncell(template)), 1000L,
-                    replace = TRUE, prob = sampling_weight)
-obs_points <- coords[obs_cells, c("x", "y")]
-output_dir <- file.path(tempdir(), "diffiscape-torch-mlp")
-```
-
-## Inspect the simulated truth
-
-```{r simulated-truth, fig.width=12, fig.height=4, dpi=96}
-op <- par(mfrow = c(1, 3))
-plot(basis_stack[["canopy"]], main = "Canopy cover")
-plot(basis_stack[["impervious"]], main = "Impervious surface")
-plot(true_connectivity, main = "True connectivity")
-par(op)
-```
-
-## Verify gradients and fit a compact MLP
-
-The gradient check uses a 12 x 12 centre crop. The model itself runs on the
-full 100 x 100 landscape, but uses a narrow one-hidden-layer MLP and at most
-10 epochs with a relatively local absorption term to remain practical on a
-weak CPU. The short run uses a conservative sign-correct warm start
-`c(0, -0.5, 0.5)`, rather than the true coefficients, so the example does not
-mistake a cold-start numerical transient for an ecological conclusion.
-
-```{r fit}
-gradient_check <- verify_torch_gradient(
-  basis_stack, crop_size = 12L, solver = "global_absorption", absorption = 0.20
-)
-stopifnot(isTRUE(gradient_check$pass))
-
-cfg <- default_torch_config()
-cfg$solver <- "global_absorption"
-cfg$absorption <- 0.20
-cfg$source_spacing <- 1L
-cfg$model_type <- "mlp"
-cfg$hidden_dim <- 4L
-cfg$n_hidden_layers <- 1L
-cfg$lr <- 0.005
-cfg$n_epochs <- 10L
-cfg$patience <- 5L
-cfg$warmup_epochs <- 1L
-cfg$reg_mean <- 0.2
-cfg$reg_var <- 0.0
-cfg$reg_skip <- 0.05
-cfg$log_R_baseline <- 0.0
-cfg$seed <- 42L
-cfg$device <- "cpu"
-
-results <- run_torch_pipeline(
-  basis_stack = basis_stack, obs_points = obs_points,
-  config = cfg, output_dir = output_dir,
-  warm_start_theta = c(0, -0.5, 0.5)
-)
-```
-
-## Diagnostic and visual checks
-
-The fitted model intentionally omits the simulated spatial random effect, so
-it should recover broad resistance/connectivity structure rather than every
-local intensity fluctuation. The assertions catch numerical failures; the
-loss trace and side-by-side maps make broad agreement visually inspectable.
-
-```{r diagnostics, fig.width=12, fig.height=4, dpi=96}
-stopifnot(
-  all(is.finite(results$loss_history)),
-  all(is.finite(terra::values(results$resistance_raster))),
-  all(is.finite(terra::values(results$connectivity_raster))),
-  all(is.finite(terra::values(results$intensity_raster))),
-  all(terra::values(results$resistance_raster) > 0),
-  all(terra::values(results$intensity_raster) > 0)
-)
-print(data.frame(
-  coefficient = c("canopy", "impervious"),
-  true_log_resistance_effect = c(-1, 1),
-  fitted_effective_loglinear = results$effective_loglinear[-1]
-))
-
-plot(results$loss_history, type = "l", xlab = "Epoch", ylab = "Objective",
-     main = "Training objective")
-op <- par(mfrow = c(1, 3))
-plot(true_resistance, main = "True resistance")
-plot(results$resistance_raster, main = "Fitted resistance")
-plot(results$connectivity_raster, main = "Fitted connectivity")
-par(op)
-```
-
-```{r save}
-saveRDS(
-  list(
-    true_log_resistance = true_log_resistance,
-    true_connectivity = true_connectivity,
-    effective_loglinear = results$effective_loglinear,
-    best_loglik = results$best_loglik,
-    best_epoch = results$best_epoch,
-    total_time = results$total_time
-  ),
-  file.path(output_dir, "torch_optimization_results.rds")
-)
+basis <- rast(nrows = 4L, ncols = 5L, xmin = 0, xmax = 5,
+              ymin = 0, ymax = 4, crs = "EPSG:3857",
+              vals = seq(0, 1, length.out = 20))
+pts <- as.data.frame(xyFromCell(basis, c(1, 3, 3, 5, 8, 12, 15, 18, 20)))
+output_dir <- tempdir()
+results <- run_jax_pipeline(basis, pts, model_type = "mlp",
+  model_config = list(hidden_dim = 4L, n_hidden_layers = 1L),
+  n_epochs = 5L, source_spacing = 2L, output_dir = output_dir)
+plot(results$loss_history, type = "l")
+prediction <- ds_predict(results, basis_stack = basis)
 ```

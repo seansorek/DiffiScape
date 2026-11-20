@@ -75,7 +75,7 @@ test_that("optimize_resistance_gradient's unsupported-argument check does not fa
 test_that("ds_optimize dispatches 'gradient' solver", {
   # Match should succeed without error
   solver <- match.arg("gradient",
-                      c("surrogate", "gradient", "enzyme", "torch", "irl"))
+                      c("surrogate", "gradient", "enzyme", "torch"))
   expect_equal(solver, "gradient")
 })
 
@@ -101,8 +101,6 @@ test_that("optimize_resistance_gradient runs end-to-end", {
           "jax not installed")
   skip_if(!reticulate::py_module_available("jaxscape"),
           "jaxscape not installed")
-  skip_if(!reticulate::py_module_available("jaxopt"),
-          "jaxopt not installed")
   skip_on_cran()
 
   set.seed(42)
@@ -219,8 +217,6 @@ test_that("ds_optimize dispatches gradient solver correctly", {
           "jax not installed")
   skip_if(!reticulate::py_module_available("jaxscape"),
           "jaxscape not installed")
-  skip_if(!reticulate::py_module_available("jaxopt"),
-          "jaxopt not installed")
   skip_on_cran()
 
   set.seed(42)

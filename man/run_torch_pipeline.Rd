@@ -2,7 +2,7 @@
 % Please edit documentation in R/torch_pipeline.R
 \name{run_torch_pipeline}
 \alias{run_torch_pipeline}
-\title{Optimise resistance with a PyTorch neural network}
+\title{Deprecated physical-model fitting entry point}
 \usage{
 run_torch_pipeline(
   basis_stack,
@@ -56,11 +56,7 @@ run_torch_pipeline(
   intensity_n_knots = config$intensity_n_knots,
   intensity_degree = config$intensity_degree,
   lambda_init_intensity = config$lambda_init_intensity,
-  intensity_log1p_max = config$intensity_log1p_max,
-  beta = config$beta,
-  gamma_d = config$gamma_d,
-  n_value_iter = config$n_value_iter,
-  value_scale_init = config$value_scale_init
+  intensity_log1p_max = config$intensity_log1p_max
 )
 }
 \arguments{
@@ -144,8 +140,7 @@ checkpoints.}
 \item{absorption_schedule}{Optional numeric vector for an absorption
 curriculum.}
 
-\item{model_type}{Character; \code{"mlp"}, \code{"conv"}, \code{"spline_gam"}, or \code{"irl"}
-(value-shaped resistance from soft value iteration).}
+\item{model_type}{Character; \code{"loglinear"}, \code{"mlp"}, \code{"conv"}, or \code{"spline_gam"}.}
 
 \item{n_knots}{Integer; spline knots per covariate.}
 
@@ -176,31 +171,10 @@ intensity model.}
 spline.}
 
 \item{intensity_log1p_max}{Numeric; clamp on \code{log1p(connectivity)}.}
-
-\item{beta}{Numeric; soft value-iteration temperature (IRL only).}
-
-\item{gamma_d}{Numeric; MDP discount / leakage for value iteration, \verb{< 1}
-(IRL only).}
-
-\item{n_value_iter}{Integer; unrolled soft value-iteration steps (IRL only).}
-
-\item{value_scale_init}{Numeric; initial scale in \verb{log R = offset - scale*V}
-(IRL only).}
 }
 \value{
-A list with \code{best_params}, \code{best_loglik}, \code{alpha}, \code{gamma},
-\code{resistance_raster}, \code{connectivity_raster}, \code{intensity_raster},
-\code{loss_history}, \code{best_epoch}, \code{n_params}, \code{n_epochs_run},
-\code{total_time}, \code{method}, \code{distribution}, \code{effective_loglinear},
-\code{model_type}, plus the diagnostics returned by the Python optimiser.
+The physical JAX fitting result; no Torch checkpoint is written.
 }
 \description{
-Trains a neural-network resistance surface (MLP / Conv / Spline-GAM) by
-backpropagating through a differentiable circuit solver, maximising a
-Poisson point-process log-likelihood with smoothness regularisation.
-}
-\details{
-Wraps \code{run_torch_optimization()} in the bundled Python module
-\verb{diff_cs/05_torch_pipeline.py}. Requires \code{\link[=ds_torch_setup]{ds_torch_setup()}} to have been
-called.
+Translates supported settings to run_jax_pipeline() using JAX. Old checkpoint UQ, absorption curricula, neural warm starts and Torch-specific devices require migration. Use ds_posterior() for NumPyro uncertainty.
 }

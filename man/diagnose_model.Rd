@@ -26,7 +26,8 @@ diagnose_model(
 
 \item{covariates_rasters}{Named list of covariate rasters.}
 
-\item{family}{An \link{intensity_family} object, or \code{NULL} (uses NB default).}
+\item{family}{An \link{intensity_family} object. By default, use the fitted
+family or negative binomial for older fits without family metadata.}
 
 \item{plot}{Logical; produce diagnostic plots.}
 }

@@ -18,18 +18,20 @@ ds_ppc(
   thin = 1L,
   seed = NULL,
   plot = TRUE,
-  verbose = TRUE
+  verbose = TRUE,
+  basis_stack = NULL
 )
 }
 \arguments{
 \item{posterior_samples}{Data.frame from \code{\link[=posterior_sample]{posterior_sample()}} (one row
 per draw, columns include intensity parameters such as \code{alpha},
-\code{gamma}, \verb{beta_*}, and optionally \code{size}).}
+\code{gamma}, \verb{beta_*}, and optionally \code{size} and \code{pi}). For negative-binomial
+and zero-inflated fits, rows with invalid size or pi are skipped with
+a warning before selecting the simulations.}
 
 \item{intensity_fit}{Result from \code{\link[=fit_intensity_nb]{fit_intensity_nb()}},
 \code{\link[=evaluate_full_model]{evaluate_full_model()}}, or \code{\link[=ds_fit_intensity]{ds_fit_intensity()}}.  Supplies the
-connectivity standardisation constants (\code{c_scale}, \code{log_conn_mean},
-\code{log_conn_sd}).}
+fitted connectivity standardisation and residualisation.}
 
 \item{obs_points}{Data.frame with \verb{x, y}.}
 
@@ -39,7 +41,8 @@ connectivity standardisation constants (\code{c_scale}, \code{log_conn_mean},
 
 \item{covariates_rasters}{Named list of covariate rasters (or \code{NULL}).}
 
-\item{family}{An \link{intensity_family} object, or \code{NULL} (defaults to NB).}
+\item{family}{An \link{intensity_family} object. By default, use the fitted
+family or negative binomial for older fits without family metadata.}
 
 \item{n_sim}{Number of posterior draws to simulate from.}
 
@@ -56,6 +59,9 @@ Supported: \code{"total_count"}, \code{"vmi_ratio"}, \code{"mean_deviance"}.}
 \item{plot}{Logical; produce PPC diagnostic plots.}
 
 \item{verbose}{Logical; emit progress messages.}
+
+\item{basis_stack}{Fitted basis rasters, required for physical posterior prediction.
+Supply covariates in fitted order and match the fitted dimensions, mask, and cell area.}
 }
 \value{
 A list with class \code{"ds_ppc"}:

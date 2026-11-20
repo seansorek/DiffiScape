@@ -71,7 +71,7 @@ A list with \code{best_params}, \code{best_loglik}, \code{bounds},
 \code{n_evaluations}, \code{distribution}, \code{convergence}.
 }
 \description{
-Uses L-BFGS (via jaxopt) or Adam (via optax) optimisation with
+Uses L-BFGS (via SciPy L-BFGS-B) or Adam (via optax) optimisation with
 \code{jax.grad} through the JAXScape differentiable circuit solver.
 This replaces the former Julia/Enzyme.jl optimizer.
 }

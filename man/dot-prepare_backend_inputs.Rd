@@ -4,12 +4,22 @@
 \alias{.prepare_backend_inputs}
 \title{Prepare inputs for JAX/PyTorch-backed sampling and optimisation}
 \usage{
-.prepare_backend_inputs(basis_stack, obs_points)
+.prepare_backend_inputs(
+  basis_stack,
+  obs_points = data.frame(x = numeric(), y = numeric()),
+  fitted_config = NULL,
+  counts_only = FALSE
+)
 }
 \arguments{
 \item{basis_stack}{A \link[terra:SpatRaster]{terra::SpatRaster} with K covariate layers.}
 
-\item{obs_points}{Data.frame with \verb{x, y} columns (projected coords).}
+\item{obs_points}{Data.frame with \verb{x, y} columns (projected coords).
+Omit for prediction without observations.}
+
+\item{fitted_config}{Optional saved Python configuration to validate against.}
+
+\item{counts_only}{Whether the raster is connectivity used to locate counts.}
 }
 \value{
 A named list with:

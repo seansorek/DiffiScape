@@ -6,36 +6,29 @@
 \usage{
 solver_spec(
   solver,
-  choices = c("surrogate", "gradient", "enzyme", "torch", "irl")
+  choices = c("adam", "lbfgs", "surrogate", "gradient", "enzyme", "torch")
 )
 }
 \arguments{
-\item{solver}{Character scalar; one of \code{"surrogate"}, \code{"gradient"},
-\code{"enzyme"} (deprecated alias for \code{"gradient"}), \code{"torch"}, \code{"irl"}.}
+\item{solver}{One of \code{"adam"}, \code{"lbfgs"}, \code{"surrogate"}, \code{"gradient"},
+or the deprecated values \code{"enzyme"} and \code{"torch"}.}
 
-\item{choices}{Character vector of valid \code{solver} values for the calling
-function (passed through to \code{match.arg()}'s \code{choices}, so callers with
-a narrower accepted set -- e.g. \code{\link[=ds_fit_intensity]{ds_fit_intensity()}}, which does not
-support \code{"torch"}/\code{"irl"} as a \emph{fitting} solver -- get the right error
-message). Defaults to the full 5-value set.}
+\item{choices}{Character vector of solver values accepted by the caller.}
 }
 \value{
 An object of class \code{c("ds_solver_<canonical>", "ds_solver")}
 with element \code{solver} (the canonical, post-alias-collapse value).
 }
 \description{
-Validates a \code{solver} string, fires the (unchanged) \code{"enzyme"} deprecation
-message when applicable, and returns a small S3 object used to dispatch
-\code{\link[=ds_optimize]{ds_optimize()}} / \code{\link[=ds_fit_intensity]{ds_fit_intensity()}} / \code{\link[=diffiscape]{diffiscape()}} onto their
-per-solver implementations.  This replaces the if/else chains that used
-to live inline in those three functions.
+Resolves the solver for \code{\link[=ds_optimize]{ds_optimize()}}, \code{\link[=ds_fit_intensity]{ds_fit_intensity()}}, and
+\code{\link[=diffiscape]{diffiscape()}} through S3 dispatch. The deprecated \code{enzyme} value resolves
+to \code{gradient} and emits a message.
 }
 \section{Config conventions}{
 
-The three backend families keep their pre-existing, \emph{not unified},
-config conventions -- each \code{.ds_optimize_dispatch()} / S3 method is the
-one place that knows how to pull its own sublist out of \code{config}:
 \describe{
+\item{\code{"adam"} and \code{"lbfgs"}}{The \code{config$fit} sublist supplies
+physical and model settings for \code{\link[=run_jax_pipeline]{run_jax_pipeline()}}.}
 \item{\code{solver = "surrogate"}}{Plain top-level arguments / \code{config}
 entries consumed directly by \code{\link[=optimize_resistance]{optimize_resistance()}} (see
 \code{\link[=default_optimizer_config]{default_optimizer_config()}}). No sublist.}
@@ -44,9 +37,8 @@ entries consumed directly by \code{\link[=optimize_resistance]{optimize_resistan
 \code{config$model_config} and \code{config$optim_config} sublists when
 \code{model_type} selects a neural resistance model (forwarded to
 \code{\link[=optimize_resistance_gradient]{optimize_resistance_gradient()}}).}
-\item{\code{solver = "torch"} / \code{"irl"}}{A \code{config$torch} sublist whose
-entries are forwarded as named arguments to \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.
-\code{"irl"} is \code{"torch"} with \code{model_type} forced to \code{"irl"}.}
+\item{\code{"torch"} (deprecated)}{\code{\link[=run_torch_pipeline]{run_torch_pipeline()}} translates the
+legacy \code{config$torch} settings to the physical JAX pipeline.}
 }
 }
 

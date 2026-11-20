@@ -2,22 +2,18 @@
 % Please edit documentation in R/torch_bridge.R
 \name{ds_torch_setup}
 \alias{ds_torch_setup}
-\title{Initialise the PyTorch backend for DiffiScape}
+\title{Deprecated backend setup}
 \usage{
 ds_torch_setup(python = NULL, force = FALSE)
 }
 \arguments{
-\item{python}{Optional path to a Python binary; passed to
-\code{\link[reticulate:use_python]{reticulate::use_python()}} before module import.}
+\item{python}{Optional Python executable.}
 
-\item{force}{Re-initialise even if the module is already loaded.}
+\item{force}{Reinitialize the installed Python core.}
 }
 \value{
-\code{TRUE} (invisibly) on success.
+Invisible TRUE after JAX setup.
 }
 \description{
-Loads the bundled \verb{diff_cs/05_torch_pipeline.py} module via \pkg{reticulate},
-verifying that the required Python packages (\code{torch}, \code{numpy}, \code{scipy},
-\code{pyamg}) are available. Call once per R session before any of the
-torch-based optimisers or samplers.
+Deprecated backend setup
 }

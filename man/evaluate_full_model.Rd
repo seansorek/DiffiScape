@@ -18,7 +18,8 @@ evaluate_full_model(
   link = link_exp(),
   family = NULL,
   available_points = NULL,
-  available_covariates = NULL
+  available_covariates = NULL,
+  .min_obs = 0L
 )
 }
 \arguments{
@@ -28,10 +29,8 @@ evaluate_full_model(
 
 \item{obs_points}{Data.frame with \verb{x, y} columns.}
 
-\item{distribution}{\code{"negbin"} or \code{"gam"}.  \code{NULL} is treated as
-\code{"negbin"} (the formal default does not protect against an explicit
-\code{NULL} argument, since R argument matching still binds the parameter
-in that case).}
+\item{distribution}{Count family (\code{"negbin"}, \code{"poisson"}, or \code{"zinb"}),
+or \code{"gam"}. \code{family} overrides the count family. \code{NULL} uses \code{"negbin"}.}
 
 \item{omniscape_settings}{List with \code{radius}, \code{block_size}, \code{cleanup}.}
 
@@ -60,10 +59,13 @@ both raises an error.}
 \item{available_covariates}{Named list of covariate vectors at
 \code{available_points} locations.  Required when \code{available_points} is
 supplied and the intensity model includes covariates.}
+
+\item{.min_obs}{Internal minimum valid observation count for Laplace refits.}
 }
 \value{
 A list with \code{loglik}, \code{intensity_params}, \code{intensity_se},
-\code{hessian}, \code{total_time}, \code{omniscape_time}, \code{convergence}, \code{distribution}.
+\code{hessian}, \code{total_time}, \code{omniscape_time}, \code{convergence}, \code{distribution},
+and the \code{connectivity} raster.
 }
 \description{
 Creates a resistance surface, runs connectivity computation, and fits

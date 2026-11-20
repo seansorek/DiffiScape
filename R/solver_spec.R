@@ -7,11 +7,9 @@
 #
 #   solver_spec(solver)  ->  object of class c("ds_solver_<canonical>", "ds_solver")
 #
-# classes: ds_solver_surrogate, ds_solver_gradient, ds_solver_torch,
-# ds_solver_irl.  "enzyme" is a deprecated alias for "gradient" and is
-# collapsed into ds_solver_gradient at construction time -- it never gets
-# its own class, matching the pre-refactor behavior exactly (including the
-# deprecation message text, which is intentionally unchanged).
+# Adam and L-BFGS-B fit physical-current models. Surrogate and gradient
+# dispatch to the legacy window workflows. "torch" is a translation for
+# physical-model settings, and "enzyme" aliases "gradient".
 #
 # Two internal generics replace the if/else chains:
 #   .ds_optimize_dispatch(spec, ...)
@@ -23,17 +21,14 @@
 
 #' Construct an internal solver-dispatch spec
 #'
-#' Validates a `solver` string, fires the (unchanged) `"enzyme"` deprecation
-#' message when applicable, and returns a small S3 object used to dispatch
-#' [ds_optimize()] / [ds_fit_intensity()] / [diffiscape()] onto their
-#' per-solver implementations.  This replaces the if/else chains that used
-#' to live inline in those three functions.
+#' Resolves the solver for [ds_optimize()], [ds_fit_intensity()], and
+#' [diffiscape()] through S3 dispatch. The deprecated `enzyme` value resolves
+#' to `gradient` and emits a message.
 #'
 #' @section Config conventions:
-#' The three backend families keep their pre-existing, *not unified*,
-#' config conventions -- each `.ds_optimize_dispatch()` / S3 method is the
-#' one place that knows how to pull its own sublist out of `config`:
 #' \describe{
+#'   \item{`"adam"` and `"lbfgs"`}{The `config$fit` sublist supplies
+#'     physical and model settings for [run_jax_pipeline()].}
 #'   \item{`solver = "surrogate"`}{Plain top-level arguments / `config`
 #'     entries consumed directly by [optimize_resistance()] (see
 #'     [default_optimizer_config()]). No sublist.}
@@ -42,24 +37,19 @@
 #'     `config$model_config` and `config$optim_config` sublists when
 #'     `model_type` selects a neural resistance model (forwarded to
 #'     [optimize_resistance_gradient()]).}
-#'   \item{`solver = "torch"` / `"irl"`}{A `config$torch` sublist whose
-#'     entries are forwarded as named arguments to [run_torch_pipeline()].
-#'     `"irl"` is `"torch"` with `model_type` forced to `"irl"`.}
+#'   \item{`"torch"` (deprecated)}{[run_torch_pipeline()] translates the
+#'     legacy `config$torch` settings to the physical JAX pipeline.}
 #' }
 #'
-#' @param solver Character scalar; one of `"surrogate"`, `"gradient"`,
-#'   `"enzyme"` (deprecated alias for `"gradient"`), `"torch"`, `"irl"`.
-#' @param choices Character vector of valid `solver` values for the calling
-#'   function (passed through to `match.arg()`'s `choices`, so callers with
-#'   a narrower accepted set -- e.g. [ds_fit_intensity()], which does not
-#'   support `"torch"`/`"irl"` as a *fitting* solver -- get the right error
-#'   message). Defaults to the full 5-value set.
+#' @param solver One of `"adam"`, `"lbfgs"`, `"surrogate"`, `"gradient"`,
+#'   or the deprecated values `"enzyme"` and `"torch"`.
+#' @param choices Character vector of solver values accepted by the caller.
 #' @return An object of class `c("ds_solver_<canonical>", "ds_solver")`
 #'   with element `solver` (the canonical, post-alias-collapse value).
 #' @keywords internal
 solver_spec <- function(solver,
-                         choices = c("surrogate", "gradient", "enzyme",
-                                     "torch", "irl")) {
+                         choices = c("adam", "lbfgs", "surrogate", "gradient", "enzyme",
+                                     "torch")) {
   solver <- match.arg(solver, choices)
 
   # Deprecation alias: "enzyme" collapses into "gradient" here, once, for

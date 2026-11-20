@@ -11,13 +11,13 @@ laplace_resistance(
   refit = TRUE,
   step = 0.001,
   omniscape_settings = list(),
-  intensity_config = default_intensity_config(),
+  intensity_config = NULL,
   covariates_obs = NULL,
   covariates_rasters = NULL,
   residualise = FALSE,
   available_points = NULL,
   available_covariates = NULL,
-  link = link_exp(),
+  link = NULL,
   family = NULL
 )
 }
@@ -42,10 +42,11 @@ suppress the warning and force the surrogate path.  Always set to
 
 \item{step}{Finite-difference step size for Hessian computation.}
 
-\item{omniscape_settings}{Named list of solver overrides: \code{radius}
-(default \code{13L}) and \code{block_size} (default \code{5L}). Used when \code{refit = TRUE}.}
+\item{omniscape_settings}{Named window settings that override saved
+optimization settings when \code{refit = TRUE}.}
 
-\item{intensity_config}{Optional \code{\link[=default_intensity_config]{default_intensity_config()}} list.}
+\item{intensity_config}{Intensity config. \code{NULL} uses the saved config or
+\code{\link[=default_intensity_config]{default_intensity_config()}}.}
 
 \item{covariates_obs}{Named list of covariate vectors.}
 
@@ -63,9 +64,10 @@ integration.}
 \code{available_points} locations.  Required when \code{available_points} is
 supplied and the intensity model includes covariates.}
 
-\item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}
+\item{link}{A \link{resistance_link} object. \code{NULL} uses the saved link or \code{\link[=link_exp]{link_exp()}}.}
 
-\item{family}{An \link{intensity_family} object, or \code{NULL}.}
+\item{family}{An \link{intensity_family} object. \code{NULL} uses the saved optimizer
+family or the family from the intensity config or distribution.}
 }
 \value{
 A list with \code{mode}, \code{covariance}, \code{precision}, \code{std_error}.

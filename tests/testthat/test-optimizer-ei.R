@@ -18,7 +18,7 @@ test_that(".expected_improvement returns one EI value per candidate", {
   X <- matrix(runif(20), ncol = 2)
   colnames(X) <- c("r_0", "z_1")
   y <- rowSums(X^2)
-  gp <- .fit_surrogate(X, y)
+  gp <- fit_surrogate(X, y)$model
 
   cand <- matrix(runif(10), ncol = 2)
   colnames(cand) <- c("r_0", "z_1")
@@ -37,7 +37,7 @@ test_that(".expected_improvement xi decays toward xi_min across iterations", {
   X <- matrix(runif(20), ncol = 2)
   colnames(X) <- c("r_0", "z_1")
   y <- rowSums(X^2)
-  gp <- .fit_surrogate(X, y)
+  gp <- fit_surrogate(X, y)$model
 
   cand <- matrix(c(0.5, 0.5), nrow = 1)
   colnames(cand) <- c("r_0", "z_1")
@@ -67,7 +67,7 @@ test_that(".expected_improvement returns 0 when sigma collapses", {
   X <- matrix(runif(20), ncol = 2)
   colnames(X) <- c("r_0", "z_1")
   y <- rowSums(X^2)
-  gp <- .fit_surrogate(X, y)
+  gp <- fit_surrogate(X, y)$model
 
   ei <- .expected_improvement(X[1, , drop = FALSE], gp, y_best = min(y),
                               xi_initial = 0.0,

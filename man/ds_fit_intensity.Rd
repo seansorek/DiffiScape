@@ -9,14 +9,14 @@ ds_fit_intensity(
   basis_stack,
   obs_points,
   omniscape_settings = list(),
-  intensity_config = default_intensity_config(),
+  intensity_config = NULL,
   covariates_obs = NULL,
   covariates_rasters = NULL,
   residualise = FALSE,
   available_points = NULL,
   available_covariates = NULL,
-  solver = c("surrogate", "gradient", "enzyme", "torch", "irl"),
-  link = link_exp(),
+  solver = c("surrogate", "gradient", "adam", "lbfgs", "enzyme", "torch"),
+  link = NULL,
   family = NULL
 )
 }
@@ -27,9 +27,11 @@ ds_fit_intensity(
 
 \item{obs_points}{Data.frame with \verb{x, y}.}
 
-\item{omniscape_settings}{List of Omniscape settings.}
+\item{omniscape_settings}{Named window settings that override settings
+saved with the optimization result.}
 
-\item{intensity_config}{Intensity config.}
+\item{intensity_config}{Intensity config. \code{NULL} uses the saved config or
+\code{\link[=default_intensity_config]{default_intensity_config()}}.}
 
 \item{covariates_obs}{Named list of covariate vectors.}
 
@@ -47,25 +49,16 @@ integration.}
 \code{available_points} locations.  Required when \code{available_points} is
 supplied and the intensity model includes covariates.}
 
-\item{solver}{Character; \code{"surrogate"}, \code{"gradient"}, or \code{"enzyme"}
-(deprecated, alias for \code{"gradient"}).  Retained for compatibility with
-\code{\link[=ds_optimize]{ds_optimize()}}'s solver dispatch and to preserve the \code{"enzyme"}
-deprecation message, but no longer affects this function's internal
-connectivity-computation logic: both \code{"surrogate"} and \code{"gradient"}
-route through the same \code{\link[=evaluate_full_model]{evaluate_full_model()}} call (JAX connectivity
-via \code{\link[=ds_jax_connectivity]{ds_jax_connectivity()}}).  \code{"torch"} and \code{"irl"} are accepted as
-\emph{values} (so a caller forwarding \code{\link[=ds_optimize]{ds_optimize()}}'s solver gets a
-clear, actionable error instead of a generic \code{match.arg()} failure)
-but are \strong{not supported} by this function: those backends fit
-resistance and intensity jointly inside a single \code{\link[=ds_optimize]{ds_optimize()}} /
-\code{\link[=run_torch_pipeline]{run_torch_pipeline()}} call, so there is nothing left for
-\code{ds_fit_intensity()} to do for them -- calling this function with
-\code{solver = "torch"} or \code{"irl"} raises an error directing you to the
-already-complete result from \code{\link[=run_torch_pipeline]{run_torch_pipeline()}}.}
+\item{solver}{Use \code{"surrogate"} (default) or \code{"gradient"} to fit intensity
+against legacy window effective resistance via \code{\link[=evaluate_full_model]{evaluate_full_model()}}.
+The deprecated \code{"enzyme"} aliases \code{"gradient"}. For \code{"adam"}, \code{"lbfgs"},
+and the deprecated \code{"torch"} translation, use the intensity fit already
+returned by \code{\link[=ds_optimize]{ds_optimize()}} or \code{\link[=run_jax_pipeline]{run_jax_pipeline()}}.}
 
-\item{link}{A \link{resistance_link} object (default \code{\link[=link_exp]{link_exp()}}).}
+\item{link}{A \link{resistance_link} object. \code{NULL} uses the saved link or \code{\link[=link_exp]{link_exp()}}.}
 
-\item{family}{An \link{intensity_family} object, or \code{NULL}.}
+\item{family}{An \link{intensity_family} object. \code{NULL} uses the saved optimizer
+family or the family from the intensity config or distribution.}
 }
 \value{
 Result from \code{\link[=evaluate_full_model]{evaluate_full_model()}}.
