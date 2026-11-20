@@ -17,4 +17,4 @@ from .surrogate import optimize_surrogate
 from .diagnostics import posterior_predictive
 
 __all__ = ["connectivity", "fit", "predict", "sample", "cumulative_current", "fit_intensity", "optimize_surrogate", "posterior_predictive"]
-__version__ = "0.1.0"
+__version__ = "0.3.0"

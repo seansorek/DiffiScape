@@ -45,8 +45,8 @@ ds_jax_setup <- function(python = NULL, force = FALSE) {
   tryCatch({
     .jax_env$package <- reticulate::import("diffiscape", delay_load = TRUE, convert = FALSE)
     version <- reticulate::py_to_r(.jax_env$package$`__version__`)
-    if (utils::compareVersion(version, "0.1.0") < 0 || utils::compareVersion(version, "0.2.0") >= 0) {
-      stop("Requires Python diffiscape >=0.1.0,<0.2. Install the matching wheel.")
+    if (utils::compareVersion(version, "0.3.0") < 0 || utils::compareVersion(version, "0.4.0") >= 0) {
+      stop("Requires Python diffiscape >=0.3.0,<0.4. Install the matching wheel.")
     }
     .jax_env$core_module <- reticulate::import("diffiscape.core")
     .jax_env$window_module <- reticulate::import("diffiscape.window")
@@ -348,7 +348,7 @@ ds_install_jax_deps <- function(method  = "auto",
          call. = FALSE)
   }
 
-  pkgs <- "diffiscape>=0.1.0,<0.2"
+  pkgs <- "diffiscape>=0.3.0,<0.4"
   if (isTRUE(gpu)) {
     message("Note: for GPU support, install JAX with CUDA following ",
             "https://jax.readthedocs.io/en/latest/installation.html")

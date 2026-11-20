@@ -37,7 +37,7 @@ test_that("JAX package is installed independently", {
   skip_if_not_installed("reticulate")
   skip_if_not(reticulate::py_module_available("diffiscape"))
   ds_jax_setup(force = TRUE)
-  expect_equal(reticulate::py_to_r(DiffiScape:::.jax_env$package$`__version__`), "0.1.0")
+  expect_equal(reticulate::py_to_r(DiffiScape:::.jax_env$package$`__version__`), "0.3.0")
 })
 
 
